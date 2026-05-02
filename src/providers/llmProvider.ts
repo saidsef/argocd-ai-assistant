@@ -1,0 +1,110 @@
+import { Params } from "react-chatbotify";
+import { QueryContext, QueryProvider, QueryResponse } from "../model/provider";
+
+export class LlmProvider implements QueryProvider {
+
+    setContext(_context: QueryContext) {
+        return;
+    }
+
+    async query(context: QueryContext, prompt: string, params: Params): Promise<QueryResponse> {
+        const settings = context.settings;
+        const baseURL = settings.data?.baseURL || `https://${location.host}/extensions/assistant`;
+        const model = settings.model;
+        const apiKey = settings.data?.apiKey;
+
+        const messages = this.buildMessages(context, prompt);
+
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+        };
+        if (apiKey) {
+            headers['Authorization'] = `Bearer ${apiKey}`;
+        }
+
+        const body = JSON.stringify({
+            model,
+            messages,
+            stream: true,
+        });
+
+        const response = await fetch(`${baseURL}/v1/chat/completions`, {
+            method: 'POST',
+            headers,
+            body,
+        });
+
+        if (!response.ok || !response.body) {
+            const message = response.body
+                ? await response.text()
+                : response.statusText;
+            return {
+                success: false,
+                error: { status: response.status, message },
+            };
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let text = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const data = line.slice(6).trim();
+                if (data === '[DONE]') continue;
+                if (!data) continue;
+
+                try {
+                    const parsed = JSON.parse(data);
+                    const content = parsed.choices?.[0]?.delta?.content;
+                    if (content) {
+                        text += content;
+                        await params.streamMessage(text);
+                    }
+                    if (parsed.error) {
+                        return {
+                            success: false,
+                            error: { status: 500, message: parsed.error.message || 'Unknown error' },
+                        };
+                    }
+                } catch (_e) {
+                    // ignore malformed chunks
+                }
+            }
+        }
+
+        return { success: true };
+    }
+
+    private buildMessages(context: QueryContext, prompt: string): Array<{ role: string; content: string }> {
+        const messages: Array<{ role: string; content: string }> = [];
+
+        if (context.attachments.length > 0) {
+            let contextText = "Context:\n";
+            for (const attachment of context.attachments) {
+                const label = this.attachmentLabel(attachment.type);
+                contextText += `\n[${label} - ${attachment.mimeType}]:\n${attachment.content}\n`;
+            }
+            messages.push({ role: 'system', content: contextText });
+        }
+
+        messages.push({ role: 'user', content: prompt });
+        return messages;
+    }
+
+    private attachmentLabel(type: number): string {
+        switch (type) {
+            case 0: return 'Events';
+            case 1: return 'Log';
+            case 2: return 'Manifest';
+            default: return 'Attachment';
+        }
+    }
+}
