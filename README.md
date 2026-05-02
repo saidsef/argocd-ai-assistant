@@ -12,15 +12,17 @@ The Assistant for Argo CD adds an **Assistant** tab to Argo CD's resource view. 
 
 ## Supported Backends
 
-The extension uses a single, generic LLM provider that communicates via the **OpenAI-compatible chat completions API**. This means it works with virtually any inference backend:
-
-- [Local Inference Server](https://local-inference-server.com/) — local inference
-- [vLLM](https://github.com/vllm-project/vllm) — high-throughput serving
-- [OpenAI](https://openai.com/) — cloud API
-- [Azure OpenAI](https://azure.microsoft.com/en-us/services/cognitive-services/openai-service/) — managed service
-- Any other OpenAI-compatible endpoint
+The extension uses a single, generic LLM provider that communicates via the **OpenAI-compatible chat completions API**. This means it works with virtually any inference backend.
 
 Communication with the backend is proxied through the Argo CD server using the [Proxy Extension](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/) feature to avoid CORS issues.
+
+| Backend | Type |
+|---------|------|
+| Local Inference Server | Local inference |
+| [vLLM](https://github.com/vllm-project/vllm) | High-throughput serving |
+| [OpenAI](https://openai.com/) | Cloud API |
+| [Azure OpenAI](https://azure.microsoft.com/en-us/services/cognitive-services/openai-service/) | Managed service |
+| Any other OpenAI-compatible endpoint | — |
 
 ## Prerequisites
 
