@@ -43,7 +43,7 @@
         "react-chatbotify": "^2.3.2",
         "react-use": "^17.6.0",
         "typescript": "^4.9.3",
-        "uuid": "^11.1.0",
+        "uuid": "^14.0.0",
         "webpack": "^5.75.0",
         "webpack-cli": "^5.0.0",
         "yaml": "^2.7.1"
