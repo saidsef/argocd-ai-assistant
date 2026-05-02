@@ -39,7 +39,7 @@
         "@rcb-plugins/markdown-renderer": "^0.3.1",
         "dompurify": "^3.2.6",
         "llama-stack-client": "https://github.com/llamastack/llama-stack-client-typescript#v0.3.2",
-        "marked": "^15.0.12",
+        "marked": "^18.0.3",
         "react-chatbotify": "^2.3.2",
         "react-use": "^17.6.0",
         "typescript": "^4.9.3",
