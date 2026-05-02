@@ -1,0 +1,16 @@
+.error-message {
+    padding: 10px;
+    border: 1px solid #e74c3c;
+    border-radius: 4px;
+    background-color: #fdf2f2;
+    color: #c0392b;
+}
+
+.error-title {
+    margin: 0 0 5px 0;
+    font-weight: bold;
+}
+
+.error-body {
+    margin: 0;
+}
