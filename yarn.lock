@@ -2092,10 +2092,10 @@ react-markdown@^9.0.3:
     unist-util-visit "^5.0.0"
     vfile "^6.0.0"
 
-react-moment@^0.9.7:
-  version "0.9.7"
-  resolved "https://registry.yarnpkg.com/react-moment/-/react-moment-0.9.7.tgz#ca570466595b1aa4f7619e62da18b3bb2de8b6f3"
-  integrity sha512-ifzUrUGF6KRsUN2pRG5k56kO0mJBr8kRkWb0wNvtFIsBIxOuPxhUpL1YlXwpbQCbHq23hUu6A0VEk64HsFxk9g==
+react-moment@^1.2.2:
+  version "1.2.2"
+  resolved "https://registry.yarnpkg.com/react-moment/-/react-moment-1.2.2.tgz#2c1976269341ec4347ab02d0fb3bc67d8bcc0e68"
+  integrity sha512-F5/YLsygduvR5+mpYdHMD9HzyljQFudcoAfL5XmJhGBkZVzJANIx/5PN+kvWO5KELifXXtndXeMCUxH4eB+E9Q==
 
 react-redux@^5.0.6:
   version "5.1.2"
