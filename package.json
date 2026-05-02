@@ -38,7 +38,7 @@
     "dependencies": {
         "@rcb-plugins/markdown-renderer": "^0.3.1",
         "dompurify": "^3.2.6",
-        "llama-stack-client": "https://github.com/llamastack/llama-stack-client-typescript#v0.3.2",
+        "llama-stack-client": "https://github.com/llamastack/llama-stack-client-typescript#v0.4.3",
         "marked": "^15.0.12",
         "react-chatbotify": "^2.3.2",
         "react-use": "^17.6.0",
