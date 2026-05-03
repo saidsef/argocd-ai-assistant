@@ -290,7 +290,7 @@ The Assistant requires configuration to know which LLM backend to use. Since Arg
 Create a JavaScript file named `extension-settings.js`:
 
 ```javascript
-var argocdAssistantSettings = {
+globalThis.argocdAssistantSettings = {
     provider: "LLM",
     model: "gpt-4",
     data: {
@@ -300,7 +300,6 @@ var argocdAssistantSettings = {
 
 (() => {
     console.log("Initializing Argo CD AI Assistant Settings");
-    console.log(globalThis.argocdAssistantSettings);
 })();
 ```
 
