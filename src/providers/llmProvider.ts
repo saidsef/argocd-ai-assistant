@@ -1,5 +1,6 @@
 import { Params } from "react-chatbotify";
 import { QueryContext, QueryProvider, QueryResponse } from "../model/provider";
+import { getMappedHeaders } from "../util/util";
 
 export class LlmProvider implements QueryProvider {
 
@@ -18,6 +19,12 @@ export class LlmProvider implements QueryProvider {
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
         };
+
+        const argocdHeaders = getMappedHeaders(context.application, true);
+        Object.entries(argocdHeaders).forEach(([key, value]) => {
+            if (value) headers[key] = value;
+        });
+
         if (apiKey) {
             headers['Authorization'] = `Bearer ${apiKey}`;
         }
