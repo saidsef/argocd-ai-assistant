@@ -16,11 +16,14 @@ export const ResourceAssistantExtension = (props: any) => {
     console.log("Properties passed to Extension");
     console.log(props);
 
-    const [settings] = React.useState<AssistantSettings>(globalThis.argocdAssistantSettings != undefined ? globalThis.argocdAssistantSettings: {provider: Provider.LLM});
+    const [settings, setSettings] = React.useState<AssistantSettings>(globalThis.argocdAssistantSettings ?? {provider: Provider.LLM});
     const [provider] = React.useState<QueryProvider>(createProvider(settings.provider as Provider));
     const storage = new ManageStorage(ExtensionScope.Resource);
 
     React.useEffect(() => {
+        if (globalThis.argocdAssistantSettings) {
+            setSettings(globalThis.argocdAssistantSettings);
+        }
         console.log("Using provider: " + settings.provider);
     }, []);
 
