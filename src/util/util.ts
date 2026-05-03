@@ -145,9 +145,6 @@ export function getHeaders(application: any, streaming: boolean): Headers {
         "Argocd-Application-Name": `${applicationNamespace}:${applicationName}`,
         "Argocd-Project-Name": `${project}`,
     });
-    if (streaming) {
-        headers.append('Content-Length', '-1');
-    }
     return headers;
 }
 
