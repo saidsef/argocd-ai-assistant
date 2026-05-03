@@ -111,7 +111,8 @@ export const ResourceAssistantExtension = (props: any) => {
                     )
                 }
 
-                const context = new QueryContextImpl(application, storage.conversationID, storage.data, attachments, settings);
+                const currentSettings = globalThis.argocdAssistantSettings ?? settings;
+                const context = new QueryContextImpl(application, storage.conversationID, storage.data, attachments, currentSettings);
 
                 try {
                     const response: QueryResponse = await provider.query(context, params.userInput, params );

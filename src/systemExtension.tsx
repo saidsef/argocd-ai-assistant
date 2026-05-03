@@ -14,11 +14,14 @@ export const SystemAssistantExtension = (props: any) => {
     console.log("Properties passed to Extension");
     console.log(props);
 
-    const [settings] = React.useState<AssistantSettings>(globalThis.argocdAssistantSettings != undefined ? globalThis.argocdAssistantSettings: {provider: Provider.LLM});
+    const [settings, setSettings] = React.useState<AssistantSettings>(globalThis.argocdAssistantSettings ?? {provider: Provider.LLM});
     const [provider] = React.useState<QueryProvider>(createProvider(settings.provider as Provider));
     const storage = new ManageStorage(ExtensionScope.System);
 
     React.useEffect(() => {
+        if (globalThis.argocdAssistantSettings) {
+            setSettings(globalThis.argocdAssistantSettings);
+        }
         console.log("Using provider: " + settings.provider);
     }, []);
 
@@ -45,7 +48,8 @@ export const SystemAssistantExtension = (props: any) => {
         loop: {
             message: async (params) => {
                 const attachments: Attachment[] = [];
-                const context = new QueryContextImpl(undefined, storage.conversationID, storage.data, attachments, settings);
+                const currentSettings = globalThis.argocdAssistantSettings ?? settings;
+                const context = new QueryContextImpl(undefined, storage.conversationID, storage.data, attachments, currentSettings);
 
                 try {
                     const response: QueryResponse = await provider.query(context, params.userInput, params );

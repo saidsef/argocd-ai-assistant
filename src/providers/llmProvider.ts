@@ -12,6 +12,12 @@ export class LlmProvider implements QueryProvider {
         const settings = context.settings;
         const baseURL = settings.data?.baseURL || `https://${location.host}/extensions/assistant`;
         const model = settings.model;
+        if (!model) {
+            return {
+                success: false,
+                error: { status: 400, message: 'LLM model is not configured. Check extension settings (model field in argocdAssistantSettings).' },
+            };
+        }
         const apiKey = settings.data?.apiKey;
 
         const messages = this.buildMessages(context, prompt);
