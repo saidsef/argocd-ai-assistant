@@ -63,7 +63,7 @@ export const SystemAssistantExtension = (props: any) => {
                     if (response.conversationID !== undefined) storage.conversationID = response.conversationID;
                     if (response.data !== undefined) storage.data = response.data;
                 } catch (error) {
-                    return "Unexpected Error: " + error.message + "";
+                    return "Unexpected Error: " + (error instanceof Error ? error.message : String(error));
                 }
             },
             renderMarkdown: ["BOT"],
@@ -77,8 +77,21 @@ export const SystemAssistantExtension = (props: any) => {
         token: {
             message: "Please enter your Argo CD token to use with an MCP server",
             function: (params) => {
-                storage.mcpToken = params.userInput;
+                if (params.userInput?.trim()) {
+                    storage.mcpToken = params.userInput.trim();
+                }
             },
+            path: (params) => {
+                if (!params.userInput?.trim()) return "token_invalid";
+                return "token_saved";
+            }
+        },
+        token_saved: {
+            message: "Token saved. I will use it for MCP server requests.",
+            path: "loop"
+        },
+        token_invalid: {
+            message: "No token was provided. Please type your token or continue with your question.",
             path: "loop"
         }
     }

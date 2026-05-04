@@ -48,9 +48,25 @@ export class LlmProvider implements QueryProvider {
         });
 
         if (!response.ok || !response.body) {
-            const message = response.body
-                ? await response.text()
-                : response.statusText;
+            let message: string;
+            switch (response.status) {
+                case 401:
+                    message = "Authentication failed (401). Check your API key or token in the extension settings.";
+                    break;
+                case 403:
+                    message = "Access forbidden (403). Your API key or token does not have permission to use this model or endpoint.";
+                    break;
+                case 404:
+                    message = "LLM endpoint not found (404). Check the baseURL in the extension settings.";
+                    break;
+                case 429:
+                    message = "Rate limit exceeded (429). Too many requests — try again shortly.";
+                    break;
+                default:
+                    message = response.status >= 500
+                        ? `LLM backend error (${response.status}). The server returned an internal error.`
+                        : (response.body ? await response.text() : response.statusText);
+            }
             return {
                 success: false,
                 error: { status: response.status, message },
