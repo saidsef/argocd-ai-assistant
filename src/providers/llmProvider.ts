@@ -28,7 +28,12 @@ export class LlmProvider implements QueryProvider {
 
         const argocdHeaders = getMappedHeaders(context.application, true);
         Object.entries(argocdHeaders).forEach(([key, value]) => {
-            if (value) headers[key] = value;
+            if (value) {
+                const lowerKey = key.toLowerCase();
+                if (lowerKey !== 'content-type' && lowerKey !== 'accept') {
+                    headers[key] = value;
+                }
+            }
         });
 
         if (apiKey) {
