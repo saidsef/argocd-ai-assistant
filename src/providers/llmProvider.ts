@@ -41,28 +41,13 @@ export class LlmProvider implements QueryProvider {
             stream: true,
         });
 
-        // DIAGNOSTIC: log exact payload before sending
-        console.log('[Assistant] Request URL:', `${baseURL}/v1/chat/completions`);
-        console.log('[Assistant] Request headers:', JSON.stringify(headers));
-        console.log('[Assistant] Request body:', body);
-
-        // Explicitly set Content-Length to avoid any proxy serialization issues
-        const encoder = new TextEncoder();
-        const bodyBytes = encoder.encode(body);
-        headers['Content-Length'] = String(bodyBytes.length);
-
         const response = await fetch(`${baseURL}/v1/chat/completions`, {
             method: 'POST',
             headers,
             body,
         });
 
-        // DIAGNOSTIC: log response status and body for debugging
-        console.log('[Assistant] Response status:', response.status);
-
         if (!response.ok || !response.body) {
-            const responseText = response.body ? await response.text() : response.statusText;
-            console.log('[Assistant] Response body:', responseText);
             let message: string;
             switch (response.status) {
                 case 401:
@@ -80,7 +65,7 @@ export class LlmProvider implements QueryProvider {
                 default:
                     message = response.status >= 500
                         ? `LLM backend error (${response.status}). The server returned an internal error.`
-                        : responseText;
+                        : (response.body ? await response.text() : response.statusText);
             }
             return {
                 success: false,
