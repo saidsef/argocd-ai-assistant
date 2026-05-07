@@ -72,7 +72,7 @@ cd argocd-ai-assistant
 yarn install --force
 
 # Production build + package with a specific version
-VERSION=0.3.0 yarn run package
+VERSION=0.5.9 yarn run package
 ```
 
 This produces a tar archive at:
@@ -90,10 +90,10 @@ The `VERSION` environment variable overrides the placeholder version in `package
 The Argo CD Extension Installer downloads the extension tar from a URL during pod initialization. Use the GitHub Release asset URL:
 
 ```
-https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/extension-argocd-ai-assistant-<version>.tar
+https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/extension-argocd-ai-assistant-v<version>.tar
 ```
 
-Replace `<version>` with the latest release tag (e.g., `v0.3.0`).
+Replace `<version>` with the latest release tag (e.g., `v0.5.9`).
 
 If you cannot use GitHub Releases, host the tar file on an internal artifact server, S3 bucket, or HTTP server accessible from the cluster.
 
@@ -129,12 +129,12 @@ spec:
       - "--enable-proxy-extension"
     initContainers:
       - name: extension-argocd-ai-assistant
-        image: quay.io/argoprojlabs/argocd-extension-installer:v0.0.8
+        image: quay.io/argoprojlabs/argocd-extension-installer:v1.0.0
         securityContext:
           allowPrivilegeEscalation: false
         env:
           - name: EXTENSION_URL
-            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/extension-argocd-ai-assistant-<version>.tar"
+            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.5.9/extension-argocd-ai-assistant-v0.5.9.tar"
         volumeMounts:
           - name: extensions
             mountPath: /tmp/extensions/
@@ -163,18 +163,33 @@ server:
     - --enable-proxy-extension
   initContainers:
     - name: extension-argocd-ai-assistant
-      image: quay.io/argoprojlabs/argocd-extension-installer:v0.0.8
+      image: quay.io/argoprojlabs/argocd-extension-installer:v1.0.0
       securityContext:
         allowPrivilegeEscalation: false
       env:
         - name: EXTENSION_URL
-          value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.3.0/extension-argocd-ai-assistant-0.3.0.tar"
+          value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.5.9/extension-argocd-ai-assistant-v0.5.9.tar"
       volumeMounts:
         - name: extensions
           mountPath: /tmp/extensions/
   volumes:
     - name: extensions
       emptyDir: {}
+```
+
+**Alternative: using the chart's built-in `extensions` block**
+
+The Helm chart provides a dedicated `server.extensions` block that manages the initContainer for you:
+
+```yaml
+server:
+  extensions:
+    enabled: true
+    extensionList:
+      - name: argocd-ai-assistant
+        env:
+          - name: EXTENSION_URL
+            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.5.9/extension-argocd-ai-assistant-v0.5.9.tar"
 ```
 
 ### Raw Kubernetes Manifests
@@ -212,12 +227,12 @@ spec:
     spec:
       initContainers:
         - name: extension-argocd-ai-assistant
-          image: quay.io/argoprojlabs/argocd-extension-installer:v0.0.8
+          image: quay.io/argoprojlabs/argocd-extension-installer:v1.0.0
           securityContext:
             allowPrivilegeEscalation: false
           env:
             - name: EXTENSION_URL
-              value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/extension-argocd-ai-assistant-<version>.tar"
+              value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.5.9/extension-argocd-ai-assistant-v0.5.9.tar"
           volumeMounts:
             - name: extensions
               mountPath: /tmp/extensions/
@@ -325,22 +340,26 @@ tar -cvf argocd-ai-assistant-settings.tar resources
 
 ### 3. Host and Deploy the Settings Extension
 
-Upload `argocd-ai-assistant-settings.tar` to a reachable URL, then add a second initContainer:
+There are two ways to deploy the settings extension:
+
+#### Option A: Second initContainer (tar archive)
+
+Package the settings as a tar archive, host it on a reachable URL, and add a second initContainer:
 
 ```yaml
 initContainers:
   - name: extension-argocd-ai-assistant
-    image: quay.io/argoprojlabs/argocd-extension-installer:v0.0.8
+    image: quay.io/argoprojlabs/argocd-extension-installer:v1.0.0
     securityContext:
       allowPrivilegeEscalation: false
     env:
       - name: EXTENSION_URL
-        value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.3.0/extension-argocd-ai-assistant-0.3.0.tar"
+        value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.5.9/extension-argocd-ai-assistant-v0.5.9.tar"
     volumeMounts:
       - name: extensions
         mountPath: /tmp/extensions/
   - name: extension-argocd-ai-assistant-settings
-    image: quay.io/argoprojlabs/argocd-extension-installer:v0.0.8
+    image: quay.io/argoprojlabs/argocd-extension-installer:v1.0.0
     securityContext:
       allowPrivilegeEscalation: false
     env:
@@ -351,9 +370,46 @@ initContainers:
         mountPath: /tmp/extensions/
 ```
 
+#### Option B: ConfigMap volume mount (recommended)
+
+Create a ConfigMap containing the settings JavaScript file, then mount it directly into the Argo CD server pod. This avoids hosting a second tar archive and is simpler to manage with GitOps.
+
+**ConfigMap:**
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-ai-assistant-settings
+data:
+  extension-settings.js: |
+    globalThis.argocdAssistantSettings = {
+        provider: "LLM",
+        model: "deepseek-v4-flash",
+        data: {
+            baseURL: "https://api.deepseek.com/v1"
+        }
+    };
+    (() => { console.log("Argo CD AI Assistant Settings loaded"); })();
+```
+
+**Server volumes and volumeMounts:**
+
+```yaml
+server:
+  volumes:
+    - name: ai-assistant-settings
+      configMap:
+        name: argocd-ai-assistant-settings
+  volumeMounts:
+    - name: ai-assistant-settings
+      mountPath: /tmp/extensions/resources/argocd-ai-assistant-settings
+      readOnly: true
+```
+
 **Note:** Never put API keys directly in the settings JS file if it will be hosted publicly. The file is readable in the browser. Instead:
 - Inject the API key via a Kubernetes Secret mounted as an environment variable and referenced in the JS.
-- Or use a backend proxy (like the Argo CD Proxy Extension) that handles authentication.
+- Or use a backend proxy (like the Argo CD Proxy Extension) that handles authentication via `headers` in `extension.config.assistant`.
 
 ---
 
@@ -385,7 +441,33 @@ extension.config.assistant: |
   - url: http://vllm.vllm.svc.cluster.local:8000
 ```
 
-### Example: OpenAI (external)
+### Example: OpenAI / DeepSeek (external) with proxy headers
+
+If using an external provider, it is recommended to route through the proxy and inject the Authorization header server-side so the API key never reaches the browser.
+
+```yaml
+extension.config.assistant: |
+  connectionTimeout: 2s
+  keepAlive: 15s
+  idleConnectionTimeout: 60s
+  maxIdleConnections: 30
+  services:
+  - url: https://api.deepseek.com
+    headers:
+    - name: Authorization
+      value: '$openai-api-key'
+```
+
+!!! important "Secret value must include the `Bearer` prefix"
+    The `$` prefix is required for Argo CD template injection — without it the value is treated as a literal string. The placeholder `$openai-api-key` is resolved from an environment variable or secret configured on the Argo CD server.
+
+    **The secret value itself must include the `Bearer ` prefix** (e.g. `Bearer sk-xxxx`). Argo CD injects the raw secret contents into the header, so if you store only the key (`sk-xxxx`) the proxy will send an invalid `Authorization: sk-xxxx` header. Store the full header value in the secret:
+
+    ```
+    Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    ```
+
+    This keeps the API key out of the settings JavaScript file and out of any ConfigMap.
 
 If using OpenAI or another external provider, you may not need the proxy extension at all if the provider is CORS-enabled and reachable directly. However, for security and to avoid exposing API keys to the browser, it is recommended to route through the proxy or use a backend gateway.
 
@@ -447,8 +529,8 @@ kubectl exec -n argocd deployment/argocd-server -c argocd-server -- ls -la /tmp/
 
 ### Streaming does not work / responses are buffered
 
-- The extension sets `Content-Length: -1` to work around Go reverse proxy buffering. This is handled automatically.
-- If responses still buffer, verify your Argo CD version supports proxy extensions with streaming.
+- Verify your Argo CD version supports proxy extensions with streaming (requires Argo CD >= v2.13).
+- Check that the proxy extension configuration includes a reasonable `connectionTimeout` and that the LLM backend supports streaming.
 
 ### CORS errors in the browser console
 

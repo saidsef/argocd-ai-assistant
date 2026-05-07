@@ -14,16 +14,40 @@ It was a conscious decision when creating this tool to focus on a generic OpenAI
 
 ### Architecture
 
-The architecture and communication channels the extension utilizes are as per the diagram below:
+The extension is composed of two main parts: the UI extension bundle (JavaScript/React) loaded by the Argo CD server, and the backend LLM service accessed through the Argo CD Proxy Extension.
 
+```
+ +-------------------+        +------------------------+        +------------------+
+ |   User Browser    |        |   Argo CD Server Pod   |        |   LLM Backend    |
+ |                   |        |                        |        |                  |
+ |  Argo CD UI  +----------> |  Extension JS Bundle   |        |  (OpenAI-compat) |
+ |                   |   |    |  (/tmp/extensions/...) |        |                  |
+ |  Assistant Tab    |   |    |                        |        |  Local/Ollama    |
+ |  (React Chatbot)  |   |    |  Proxy Extension       +------> |  vLLM            |
+ |                   |   |    |  (/extensions/assistant)       |  OpenAI          |
+ |  Attach Logs      |   |    |                        |        |  DeepSeek        |
+ |  (guided flow)    |   |    |  Settings ConfigMap    |        |  Azure           |
+ +-------------------+   |    |  (argocd-ai-assistant-  |        +------------------+
+                         |    |   settings)            |
+                         |    +------------------------+
+                         |
+                         +--> Argo CD API (events, logs, manifests)
+```
+
+**Communication flow:**
+
+1. The Argo CD server loads the extension JS bundle via an initContainer at startup.
+2. When a user opens a resource and clicks the **Assistant** tab, the extension renders a chatbot interface.
+3. The extension fetches the resource manifest (provided by Argo CD), events (via Argo CD API), and optionally container logs.
+4. User queries + context are sent to the LLM backend through the Argo CD [Proxy Extension](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/), avoiding CORS issues.
+5. The proxy forwards requests to the configured LLM service. Responses stream back via SSE.
 
 Argo CD leverages Cross-Origin Resource Sharing (CORS) to prevent malicious extensions or code from
 communicating outside of the domain being used for the UI. In order to communicate with the back-end
-the extension leverages the Argo CD [Proxy Extension](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/) to do so.
+the extension leverages the Argo CD Proxy Extension to do so.
 
 The Proxy Extension enables traffic intended for the back-end such as LLM to be proxied through the argocd-server pod fulfilling CORS
-requirements. To support streaming responses, the extension sets the content-length header for requests to -1, this informs the Go Proxy
-to immediately stream responses rather then buffer them.
+requirements. Streaming responses are handled natively by the proxy without additional client-side header workarounds.
 
 ### Query Context
 
@@ -58,10 +82,7 @@ implies, loops on itself after every query. Users can opt to go to other flows b
 3. Entering the `attach` keyword will start the Attach Logs guided conversation flow. The Chatbot will prompt
 the user with a list of containers from which they can select one container for which to attach logs. Next they
 are prompted to select the number of lines to attach to maximum configurable limit.
-4. (In Development) If the MCP feature flag is enabled (off by default), a Token flow can be initiated
-by the user to provide an Argo CD token that an MCP server, such as
-[mcp-for-argocd](https://github.com/saidsef/mcp-for-argocd), can use to interact with Argo CD. This flow
-is temporary to develop MCP integration and will be removed at a later date once token passing issues are resolved.
+4. If the MCP feature flag is enabled (off by default), a `token` flow can be initiated by the user to provide an Argo CD API token. The token is stored in `sessionStorage` and can be used by an MCP server such as [mcp-for-argocd](https://github.com/saidsef/mcp-for-argocd) to interact with Argo CD on the user's behalf.
 
 While React ChatBotify does have direct support for LLM providers these are not used as additional features
 were needed over and above what the component provided such as attaching context.
