@@ -37,7 +37,7 @@ export class LlmProvider implements QueryProvider {
         });
 
         if (apiKey) {
-            headers['Authorization'] = `Bearer ${apiKey}`;
+            headers['Authorization'] = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
         }
 
         const body = JSON.stringify({
