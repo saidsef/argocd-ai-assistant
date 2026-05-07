@@ -15,7 +15,7 @@ The LLM provider requires minimal configuration. The key settings are:
 | Setting | Required | Description |
 |---------|----------|-------------|
 | `baseURL` | No | The base URL of the OpenAI-compatible API. Defaults to `https://<argo-host>/extensions/assistant` (via Argo CD proxy). |
-| `apiKey` | No | API key for authentication. Required for cloud providers like OpenAI or Azure. |
+| `apiKey` | No | API key for authentication. Required for cloud providers like OpenAI or Azure. **Raw token only** (e.g. `sk-xxxx`) — the provider code prepends `Bearer `. |
 | `model` | No | The model to use. If omitted, the provider may use a default model. |
 
 ### Example Settings
