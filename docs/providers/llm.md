@@ -31,7 +31,7 @@ var argocdAssistantSettings = {
 };
 ```
 
-#### OpenAI
+#### OpenAI / DeepSeek
 ```javascript
 var argocdAssistantSettings = {
     provider: "LLM",
@@ -47,54 +47,13 @@ var argocdAssistantSettings = {
 ```javascript
 var argocdAssistantSettings = {
     provider: "LLM",
-    model: "my-model",
+    model: "deepseek-v4-flash",
     data: {
         baseURL: "/extensions/assistant/v1"
     }
 };
 ```
 
-### Installation
+### Installing the Extension
 
-Install the extension into the Argo CD instance by adding the following in the appropriate spots, note here we are using
-the Argo CD Operator but feel free to adapt it for the `argocd-cm` ConfigMap if you have deployed Argo CD using the Helm chart.
-
-Replace `<version>` with the latest release tag from the [GitHub Releases page](https://github.com/saidsef/argocd-ai-assistant/releases):
-
-```yaml
-apiVersion: argoproj.io/v1beta1
-kind: ArgoCD
-metadata:
-  name: openshift-gitops
-  namespace: openshift-gitops
-spec:
-  rbac:
-    ...
-    p, role:readonly, extensions, invoke, assistant, allow
-  extraConfig:
-    extension.config.assistant: |
-      connectionTimeout: 2s
-      keepAlive: 360s
-      idleConnectionTimeout: 360s
-      maxIdleConnections: 30
-      services:
-        # Adjust this URL to wherever your LLM backend is running.
-      - url: http://llm-backend.llm.svc.cluster.local:8080
-  server:
-    extraCommandArgs:
-      - "--enable-proxy-extension"
-    initContainers:
-      - env:
-          - name: EXTENSION_URL
-            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/extension-argocd-ai-assistant-<version>.tar"
-        image: "quay.io/argoprojlabs/argocd-extension-installer:v0.0.8"
-        name: extension-argocd-ai-assistant
-        securityContext:
-          allowPrivilegeEscalation: false
-        volumeMounts:
-          - name: extensions
-            mountPath: /tmp/extensions/
-    volumes:
-      - name: extensions
-        emptyDir: {}
-```
+See the [Deployment Guide](../deployment.md) for full installation instructions, including Helm, Operator, and raw manifest examples.

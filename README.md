@@ -21,7 +21,7 @@ Communication with the backend is proxied through the Argo CD server using the [
 | Local Inference Server | Local inference |
 | [vLLM](https://github.com/vllm-project/vllm) | High-throughput serving |
 | [OpenAI](https://openai.com/) | Cloud API |
-| [Azure OpenAI](https://azure.microsoft.com/en-us/services/cognitive-services/openai-service/) | Managed service |
+| [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service/) | Managed service |
 | Any other OpenAI-compatible endpoint | — |
 
 ## Prerequisites
@@ -59,7 +59,7 @@ See the [Deployment Guide](docs/deployment.md) for step-by-step instructions on 
 
 ## Documentation
 
-Full documentation is available at [argocd-ai-assistant.readthedocs.io](https://argocd-ai-assistant.readthedocs.io/en/latest/).
+Full documentation is in the [`docs/`](./docs) directory and built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/).
 
 ## Source
 
