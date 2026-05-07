@@ -61,6 +61,8 @@ See the [Deployment Guide](docs/deployment.md) for step-by-step instructions on 
 
 Full documentation is in the [`docs/`](./docs) directory and built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/).
 
+Live docs: [argocd-ai-assistant.readthedocs.io](https://argocd-ai-assistant.readthedocs.io/)
+
 ## Source
 
 Our latest source can be found on [GitHub](https://github.com/saidsef/argocd-ai-assistant). Fork us!
