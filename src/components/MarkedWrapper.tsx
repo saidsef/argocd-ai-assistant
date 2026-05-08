@@ -17,7 +17,7 @@ const MarkedWrapper = ({
             .replace(/"/g, "&quot;")
             .replace(/'/g, "&#039;") :
         "";
-    const text = marked.parse(purifier.sanitize(markdown), { async: false });
+    const text = purifier.sanitize(marked.parse(markdown, { async: false }));
     return (
         <div dangerouslySetInnerHTML={{ __html: text }} />
     );
