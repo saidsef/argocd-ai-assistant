@@ -6,14 +6,6 @@ export enum ExtensionScope {
 }
 
 export const CHAT_STYLES: Styles = {
-    botBubbleStyle: {
-        backgroundColor: "#6D7F8B",
-        color: "#F8F8FB"
-    },
-    userBubbleStyle: {
-        background: "#00A2B3",
-        color: "#ffffff"
-    }
 };
 
 export const chatSettings = (chatHistoryKey: string): Settings => {

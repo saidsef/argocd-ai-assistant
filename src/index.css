@@ -5,3 +5,57 @@
     border: none;
     box-shadow: none;
 }
+
+/*
+  react-chatbotify applies inline styles (e.g. backgroundColor) directly on
+  bubble elements. !important is required here because inline styles have higher
+  specificity than regular CSS rules. If the library is ever updated to stop
+  injecting inline bubble colours, these !important declarations can be removed.
+*/
+
+/* Tighter spacing between messages */
+:is(#chatbot-resource, #chatbot-system) .rcb-bot-message,
+:is(#chatbot-resource, #chatbot-system) .rcb-user-message {
+    margin-top: 4px;
+    padding: 10px 14px;
+}
+
+/* Light-mode bubble colours */
+:is(#chatbot-resource, #chatbot-system) .rcb-bot-message {
+    background-color: #EFF2F5 !important;
+    color: #1E2A36 !important;
+}
+
+:is(#chatbot-resource, #chatbot-system) .rcb-user-message {
+    background-color: #00A2B3 !important;
+    color: #FFFFFF !important;
+}
+
+/*
+  Dark-mode colours depend on Argo CD's body.theme-dark class.
+  If a future Argo CD release renames this class (e.g. to .dark-theme),
+  these rules will silently fall back to the light-mode palette above.
+  Monitor upstream Argo CD UI changes when upgrading.
+*/
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .rcb-bot-message {
+    background-color: #2E3238 !important;
+    color: #E8EAED !important;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .rcb-user-message {
+    background-color: #007A87 !important;
+    color: #FFFFFF !important;
+}
+
+/* Reset markdown-generated margins inside bubbles */
+:is(#chatbot-resource, #chatbot-system) .marked-content :is(p, ul, ol, pre, blockquote, hr, h1, h2, h3, h4, h5, h6) {
+    margin: 0.3em 0;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content :is(p, ul, ol, pre, blockquote, hr, h1, h2, h3, h4, h5, h6):first-child {
+    margin-top: 0;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content :is(p, ul, ol, pre, blockquote, hr, h1, h2, h3, h4, h5, h6):last-child {
+    margin-bottom: 0;
+}
