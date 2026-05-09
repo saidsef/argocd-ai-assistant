@@ -5,3 +5,114 @@
     border: none;
     box-shadow: none;
 }
+
+/* Tighter spacing between messages */
+#chatbot-resource .rcb-bot-message,
+#chatbot-system .rcb-bot-message,
+#chatbot-resource .rcb-user-message,
+#chatbot-system .rcb-user-message {
+    margin-top: 4px;
+    padding: 10px 14px;
+}
+
+/* Light-mode bubble colours — !important to override react-chatbotify inline defaults */
+#chatbot-resource .rcb-bot-message,
+#chatbot-system .rcb-bot-message {
+    background-color: #EFF2F5 !important;
+    color: #1E2A36 !important;
+}
+
+#chatbot-resource .rcb-user-message,
+#chatbot-system .rcb-user-message {
+    background-color: #00A2B3 !important;
+    color: #FFFFFF !important;
+}
+
+/* Dark-mode bubble colours (Argo CD uses body.theme-dark) */
+body.theme-dark #chatbot-resource .rcb-bot-message,
+body.theme-dark #chatbot-system .rcb-bot-message {
+    background-color: #2E3238 !important;
+    color: #E8EAED !important;
+}
+
+body.theme-dark #chatbot-resource .rcb-user-message,
+body.theme-dark #chatbot-system .rcb-user-message {
+    background-color: #007A87 !important;
+    color: #FFFFFF !important;
+}
+
+/* Reset markdown-generated margins inside bubbles */
+#chatbot-resource .marked-content p,
+#chatbot-system .marked-content p,
+#chatbot-resource .marked-content ul,
+#chatbot-system .marked-content ul,
+#chatbot-resource .marked-content ol,
+#chatbot-system .marked-content ol,
+#chatbot-resource .marked-content pre,
+#chatbot-system .marked-content pre,
+#chatbot-resource .marked-content blockquote,
+#chatbot-system .marked-content blockquote,
+#chatbot-resource .marked-content h1,
+#chatbot-system .marked-content h1,
+#chatbot-resource .marked-content h2,
+#chatbot-system .marked-content h2,
+#chatbot-resource .marked-content h3,
+#chatbot-system .marked-content h3,
+#chatbot-resource .marked-content h4,
+#chatbot-system .marked-content h4,
+#chatbot-resource .marked-content h5,
+#chatbot-system .marked-content h5,
+#chatbot-resource .marked-content h6,
+#chatbot-system .marked-content h6 {
+    margin: 0.3em 0;
+}
+
+#chatbot-resource .marked-content p:first-child,
+#chatbot-system .marked-content p:first-child,
+#chatbot-resource .marked-content ul:first-child,
+#chatbot-system .marked-content ul:first-child,
+#chatbot-resource .marked-content ol:first-child,
+#chatbot-system .marked-content ol:first-child,
+#chatbot-resource .marked-content pre:first-child,
+#chatbot-system .marked-content pre:first-child,
+#chatbot-resource .marked-content blockquote:first-child,
+#chatbot-system .marked-content blockquote:first-child,
+#chatbot-resource .marked-content h1:first-child,
+#chatbot-system .marked-content h1:first-child,
+#chatbot-resource .marked-content h2:first-child,
+#chatbot-system .marked-content h2:first-child,
+#chatbot-resource .marked-content h3:first-child,
+#chatbot-system .marked-content h3:first-child,
+#chatbot-resource .marked-content h4:first-child,
+#chatbot-system .marked-content h4:first-child,
+#chatbot-resource .marked-content h5:first-child,
+#chatbot-system .marked-content h5:first-child,
+#chatbot-resource .marked-content h6:first-child,
+#chatbot-system .marked-content h6:first-child {
+    margin-top: 0;
+}
+
+#chatbot-resource .marked-content p:last-child,
+#chatbot-system .marked-content p:last-child,
+#chatbot-resource .marked-content ul:last-child,
+#chatbot-system .marked-content ul:last-child,
+#chatbot-resource .marked-content ol:last-child,
+#chatbot-system .marked-content ol:last-child,
+#chatbot-resource .marked-content pre:last-child,
+#chatbot-system .marked-content pre:last-child,
+#chatbot-resource .marked-content blockquote:last-child,
+#chatbot-system .marked-content blockquote:last-child,
+#chatbot-resource .marked-content h1:last-child,
+#chatbot-system .marked-content h1:last-child,
+#chatbot-resource .marked-content h2:last-child,
+#chatbot-system .marked-content h2:last-child,
+#chatbot-resource .marked-content h3:last-child,
+#chatbot-system .marked-content h3:last-child,
+#chatbot-resource .marked-content h4:last-child,
+#chatbot-system .marked-content h4:last-child,
+#chatbot-resource .marked-content h5:last-child,
+#chatbot-system .marked-content h5:last-child,
+#chatbot-resource .marked-content h6:last-child,
+#chatbot-system .marked-content h6:last-child {
+    margin-bottom: 0;
+}

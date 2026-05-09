@@ -19,7 +19,7 @@ const MarkedWrapper = ({
         "";
     const text = purifier.sanitize(marked.parse(markdown, { async: false }));
     return (
-        <div dangerouslySetInnerHTML={{ __html: text }} />
+        <div className="marked-content" dangerouslySetInnerHTML={{ __html: text }} />
     );
 };
 
