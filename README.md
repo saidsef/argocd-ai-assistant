@@ -42,15 +42,6 @@ yarn run build
 yarn run build-dev
 ```
 
-### Local Preview
-
-A `preview.html` file is included for local UI testing. After running `yarn run build-dev`, start a local HTTP server and open `preview.html` in a browser to inspect chat bubble colours, spacing, and light/dark theme behaviour without deploying to Argo CD.
-
-```shell
-python3 -m http.server 8080
-# Open http://localhost:8080/preview.html
-```
-
 ## Release
 
 Releases are handled automatically via GitHub Actions. When a change is merged to `main` and the CI workflow passes, the release workflow:
