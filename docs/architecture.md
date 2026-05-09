@@ -82,7 +82,13 @@ implies, loops on itself after every query. Users can opt to go to other flows b
 3. Entering the `attach` keyword will start the Attach Logs guided conversation flow. The Chatbot will prompt
 the user with a list of containers from which they can select one container for which to attach logs. Next they
 are prompted to select the number of lines to attach to maximum configurable limit.
-4. If the MCP feature flag is enabled (off by default), a `token` flow can be initiated by the user to provide an Argo CD API token. The token is stored in `sessionStorage` and can be used by an MCP server such as [mcp-for-argocd](https://github.com/saidsef/mcp-for-argocd) to interact with Argo CD on the user's behalf.
+4. If the MCP feature flag is enabled, a `token` flow can be initiated by the user to provide an Argo CD API token. The token is stored in `sessionStorage` and can be used by an MCP server such as [mcp-for-argocd](https://github.com/saidsef/mcp-github-pr-issue-analyser) to interact with Argo CD on the user's behalf.
+
+### Feature Flags
+
+Experimental features are gated behind feature flags in `src/featureFlags.ts`:
+
+- **`mcp-for-argocd`** - Controls the system-level MCP extension and the `token` conversation flow. **Disabled by default.** When enabled, the extension registers a system-level extension at `/assistant` in addition to the per-resource tab, allowing users to manage an Argo CD API token for MCP server access from the top-level navigation.
 
 While React ChatBotify does have direct support for LLM providers these are not used as additional features
 were needed over and above what the component provided such as attaching context.

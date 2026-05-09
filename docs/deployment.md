@@ -57,7 +57,7 @@ When a change is merged to `main` and the CI workflow passes, the release workfl
 3. Builds and packages the extension
 4. Publishes a GitHub Release with the extension tar as an asset and auto-generated release notes
 
-No manual version bumping is required. Find the latest release tag on the [GitHub Releases page](https://github.com/saidsef/argocd-ai-assistant/releases) and use it in place of the `<version>` placeholder in the examples below.
+No manual version bumping is required. Find the latest release tag on the [GitHub Releases page](https://github.com/saidsef/argocd-ai-assistant/releases) and use it in place of the `<version>` placeholder in the examples below. The latest release is [v0.8.0](https://github.com/saidsef/argocd-ai-assistant/releases/tag/v0.8.0).
 
 ### Manual Build
 
@@ -72,7 +72,7 @@ cd argocd-ai-assistant
 yarn install --force
 
 # Production build + package with a specific version
-VERSION=0.5.9 yarn run package
+VERSION=0.8.0 yarn run package
 ```
 
 This produces a tar archive at:
@@ -93,7 +93,7 @@ The Argo CD Extension Installer downloads the extension tar from a URL during po
 https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/extension-argocd-ai-assistant-v<version>.tar
 ```
 
-Replace `<version>` with the latest release tag (e.g., `v0.5.9`).
+Replace `<version>` with the latest release tag (e.g., `v0.8.0`).
 
 If you cannot use GitHub Releases, host the tar file on an internal artifact server, S3 bucket, or HTTP server accessible from the cluster.
 
@@ -134,7 +134,7 @@ spec:
           allowPrivilegeEscalation: false
         env:
           - name: EXTENSION_URL
-            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.5.9/extension-argocd-ai-assistant-v0.5.9.tar"
+            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.8.0/extension-argocd-ai-assistant-v0.8.0.tar"
         volumeMounts:
           - name: extensions
             mountPath: /tmp/extensions/
@@ -168,7 +168,7 @@ server:
         allowPrivilegeEscalation: false
       env:
         - name: EXTENSION_URL
-          value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.5.9/extension-argocd-ai-assistant-v0.5.9.tar"
+          value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.8.0/extension-argocd-ai-assistant-v0.8.0.tar"
       volumeMounts:
         - name: extensions
           mountPath: /tmp/extensions/
@@ -189,7 +189,7 @@ server:
       - name: argocd-ai-assistant
         env:
           - name: EXTENSION_URL
-            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.5.9/extension-argocd-ai-assistant-v0.5.9.tar"
+            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.8.0/extension-argocd-ai-assistant-v0.8.0.tar"
 ```
 
 ### Raw Kubernetes Manifests
@@ -232,7 +232,7 @@ spec:
             allowPrivilegeEscalation: false
           env:
             - name: EXTENSION_URL
-              value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.5.9/extension-argocd-ai-assistant-v0.5.9.tar"
+              value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.8.0/extension-argocd-ai-assistant-v0.8.0.tar"
           volumeMounts:
             - name: extensions
               mountPath: /tmp/extensions/
@@ -354,7 +354,7 @@ initContainers:
       allowPrivilegeEscalation: false
     env:
       - name: EXTENSION_URL
-        value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.5.9/extension-argocd-ai-assistant-v0.5.9.tar"
+        value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v0.8.0/extension-argocd-ai-assistant-v0.8.0.tar"
     volumeMounts:
       - name: extensions
         mountPath: /tmp/extensions/
@@ -394,6 +394,20 @@ data:
 ```
 
 **Server volumes and volumeMounts:**
+
+```yaml
+server:
+  volumes:
+    - name: ai-assistant-settings
+      configMap:
+        name: argocd-ai-assistant-settings
+  volumeMounts:
+    - name: ai-assistant-settings
+      mountPath: /tmp/extensions/resources/argocd-ai-assistant-settings
+      readOnly: true
+```
+
+**Helm chart (`values.yaml`):**
 
 ```yaml
 server:
@@ -470,6 +484,36 @@ extension.config.assistant: |
     This keeps the API key out of the browser, the settings JavaScript file, and any ConfigMap.
 
 If using OpenAI or another external provider, you may not need the proxy extension at all if the provider is CORS-enabled and reachable directly. However, for security and to avoid exposing API keys to the browser, it is recommended to route through the proxy or use a backend gateway.
+
+### Enabling the Proxy Extension
+
+The proxy extension can be enabled via server command arguments or Argo CD configuration parameters.
+
+**Via server `extraArgs` / `extraCommandArgs`:**
+
+```yaml
+server:
+  extraArgs:
+    - --enable-proxy-extension
+```
+
+**Via Argo CD Operator `extraCommandArgs`:**
+
+```yaml
+spec:
+  server:
+    extraCommandArgs:
+      - "--enable-proxy-extension"
+```
+
+**Via Helm chart `configs.cm` parameters:**
+
+```yaml
+configs:
+  cm:
+    params:
+      server.enable.proxy.extension: 'true'
+```
 
 ### Proxy Extension with TLS
 

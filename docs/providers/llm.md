@@ -14,15 +14,17 @@ The LLM provider requires minimal configuration. The key settings are:
 
 | Setting | Required | Description |
 |---------|----------|-------------|
+| `provider` | Yes | Must be `"LLM"`. |
 | `baseURL` | No | The base URL of the OpenAI-compatible API. Defaults to `https://<argo-host>/extensions/assistant` (via Argo CD proxy). |
 | `apiKey` | No | API key for authentication. Required for cloud providers like OpenAI or Azure. **Raw token only** (e.g. `sk-xxxx`) - the provider code prepends `Bearer `. |
 | `model` | No | The model to use. If omitted, the provider may use a default model. |
+| `maximumLogLines` | No | Max log lines attachable (default: 250). |
 
 ### Example Settings
 
 #### Local Inference Server (in-cluster)
 ```javascript
-var argocdAssistantSettings = {
+globalThis.argocdAssistantSettings = {
     provider: "LLM",
     model: "gpt-4",
     data: {
@@ -33,7 +35,7 @@ var argocdAssistantSettings = {
 
 #### OpenAI / DeepSeek
 ```javascript
-var argocdAssistantSettings = {
+globalThis.argocdAssistantSettings = {
     provider: "LLM",
     model: "gpt-4",
     data: {
@@ -45,12 +47,24 @@ var argocdAssistantSettings = {
 
 #### Via Argo CD Proxy Extension
 ```javascript
-var argocdAssistantSettings = {
+globalThis.argocdAssistantSettings = {
     provider: "LLM",
     model: "deepseek-v4-flash",
     data: {
-        baseURL: "/extensions/assistant/v1"
+        baseURL: "/extensions/assistant"
     }
+};
+```
+
+#### With Custom Log Limit
+```javascript
+globalThis.argocdAssistantSettings = {
+    provider: "LLM",
+    model: "gpt-4",
+    data: {
+        baseURL: "http://local.local.svc.cluster.local:11434/v1"
+    },
+    maximumLogLines: 500
 };
 ```
 

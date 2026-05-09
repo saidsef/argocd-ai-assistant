@@ -10,6 +10,7 @@ The Argo CD AI Assistant is a UI extension that adds an AI chatbot to the Argo C
 - **Streaming Responses** - Real-time streaming replies via Server-Sent Events (SSE).
 - **Proxy Extension** - All backend traffic is routed through the Argo CD server to avoid CORS and expose API keys.
 - **Theme-Aware UI** - Chat bubble colours adapt automatically to Argo CD's light and dark themes.
+- **MCP Integration (Experimental)** - Optional system-level extension for MCP server token provisioning, gated by the `mcp-for-argocd` feature flag.
 
 ## Quick Links
 
