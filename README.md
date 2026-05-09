@@ -6,9 +6,9 @@ An Argo CD UI Extension that adds an AI-powered Assistant chatbot to the Argo CD
 
 The Assistant for Argo CD adds an **Assistant** tab to Argo CD's resource view. When a user opens the tab, they can ask questions about the selected resource in natural language. The extension enriches each query with contextual data:
 
-1. **Resource Manifest** — the live Kubernetes resource object provided by Argo CD.
-2. **Events** — automatically fetched from the Argo CD API and attached to the query.
-3. **Logs** (optional) — fetched via a guided flow for resources with containers (Pod, Deployment, StatefulSet, Job, Rollout).
+1. **Resource Manifest** - the live Kubernetes resource object provided by Argo CD.
+2. **Events** - automatically fetched from the Argo CD API and attached to the query.
+3. **Logs** (optional) - fetched via a guided flow for resources with containers (Pod, Deployment, StatefulSet, Job, Rollout).
 
 ## Supported Backends
 
@@ -22,7 +22,7 @@ Communication with the backend is proxied through the Argo CD server using the [
 | [vLLM](https://github.com/vllm-project/vllm) | High-throughput serving |
 | [OpenAI](https://openai.com/) | Cloud API |
 | [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service/) | Managed service |
-| Any other OpenAI-compatible endpoint | — |
+| Any other OpenAI-compatible endpoint | - |
 
 ## Prerequisites
 
@@ -40,6 +40,15 @@ yarn run build
 
 # Development build
 yarn run build-dev
+```
+
+### Local Preview
+
+A `preview.html` file is included for local UI testing. After running `yarn run build-dev`, start a local HTTP server and open `preview.html` in a browser to inspect chat bubble colours, spacing, and light/dark theme behaviour without deploying to Argo CD.
+
+```shell
+python3 -m http.server 8080
+# Open http://localhost:8080/preview.html
 ```
 
 ## Release

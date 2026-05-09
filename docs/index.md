@@ -4,17 +4,18 @@ The Argo CD AI Assistant is a UI extension that adds an AI chatbot to the Argo C
 
 ## Features
 
-- **Per-Resource Chat** — Ask questions about any Kubernetes resource directly from its detail panel.
-- **Context-Aware** — Automatically attaches the resource manifest, events, and optional container logs to every query.
-- **Generic LLM Backend** — Works with any OpenAI-compatible API (Ollama, vLLM, OpenAI, Azure, DeepSeek, etc.).
-- **Streaming Responses** — Real-time streaming replies via Server-Sent Events (SSE).
-- **Proxy Extension** — All backend traffic is routed through the Argo CD server to avoid CORS and expose API keys.
+- **Per-Resource Chat** - Ask questions about any Kubernetes resource directly from its detail panel.
+- **Context-Aware** - Automatically attaches the resource manifest, events, and optional container logs to every query.
+- **Generic LLM Backend** - Works with any OpenAI-compatible API (Ollama, vLLM, OpenAI, Azure, DeepSeek, etc.).
+- **Streaming Responses** - Real-time streaming replies via Server-Sent Events (SSE).
+- **Proxy Extension** - All backend traffic is routed through the Argo CD server to avoid CORS and expose API keys.
+- **Theme-Aware UI** - Chat bubble colours adapt automatically to Argo CD's light and dark themes.
 
 ## Quick Links
 
-- [Architecture](architecture.md) — How the extension is structured and communicates.
-- [Deployment](deployment.md) — Build, package, host, and deploy the extension.
-- [LLM Provider](providers/llm.md) — Configure the generic OpenAI-compatible provider.
+- [Architecture](architecture.md) - How the extension is structured and communicates.
+- [Deployment](deployment.md) - Build, package, host, and deploy the extension.
+- [LLM Provider](providers/llm.md) - Configure the generic OpenAI-compatible provider.
 
 ## Repository
 

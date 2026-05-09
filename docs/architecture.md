@@ -8,7 +8,7 @@ an additional tab on the Resource slide-out that appears when a Resource is clic
 
 To provide the query functionality the Assistant supports a generic LLM provider that interfaces with any OpenAI-compatible inference backend:
 
-- **Generic LLM** — Uses standard OpenAI-compatible chat completions API. Works with Local Inference Server, vLLM, OpenAI, Azure OpenAI, or any other OpenAI-compatible endpoint.
+- **Generic LLM** - Uses standard OpenAI-compatible chat completions API. Works with Local Inference Server, vLLM, OpenAI, Azure OpenAI, or any other OpenAI-compatible endpoint.
 
 It was a conscious decision when creating this tool to focus on a generic OpenAI-compatible API rather than tying to specific backends. This allows maximum flexibility in choosing inference providers while maintaining a simple, unified interface.
 
