@@ -32,6 +32,9 @@
         "ts-loader": "^9.5.7",
         "ts-node": "^10.9.2"
     },
+    "resolutions": {
+        "fast-uri": "^3.1.2"
+    },
     "dependencies": {
         "@rcb-plugins/markdown-renderer": "^0.3.1",
         "dompurify": "^3.2.6",
