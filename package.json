@@ -21,13 +21,14 @@
         "set-version": "npm version --no-git-tag-version"
     },
     "devDependencies": {
+        "@types/node": "^22.15.0",
         "@types/react": "^18.3.20",
         "css-loader": "^7.1.4",
         "raw-loader": "^4.0.2",
         "react": "^18.3.1",
         "react-dom": "^18.3.1",
         "sass": "^1.99.0",
-        "sass-loader": "^16.0.7",
+        "sass-loader": "^16.0.8",
         "style-loader": "^4.0.0",
         "ts-loader": "^9.5.7",
         "ts-node": "^10.9.2"
@@ -42,6 +43,6 @@
         "react-chatbotify": "^2.3.2",
         "typescript": "^5.8.3",
         "webpack": "^5.106.2",
-        "webpack-cli": "^6.0.1"
+        "webpack-cli": "^7.0.2"
     }
 }
