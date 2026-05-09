@@ -459,7 +459,7 @@ extension.config.assistant: |
 ```
 
 !!! important "Secret value must include the `Bearer` prefix"
-    The `$` prefix is required for Argo CD template injection — without it the value is treated as a literal string. The placeholder `$openai-api-key` is resolved from an environment variable or secret configured on the Argo CD server.
+    The `$` prefix is required for Argo CD template injection - without it the value is treated as a literal string. The placeholder `$openai-api-key` is resolved from an environment variable or secret configured on the Argo CD server.
 
     **The secret value itself must include the `Bearer ` prefix** (e.g. `Bearer sk-xxxx`). The proxy is a generic reverse proxy: it performs raw string substitution and does not inspect, validate, or transform headers. If the secret contains only the token (`sk-xxxx`), the proxy forwards `Authorization: sk-xxxx` verbatim, which the LLM backend rejects as malformed. Store the full header value:
 
