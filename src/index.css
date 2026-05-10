@@ -24,6 +24,7 @@
 :is(#chatbot-resource, #chatbot-system) .rcb-bot-message {
     background-color: #EFF2F5 !important;
     color: #1E2A36 !important;
+    white-space: normal !important;
 }
 
 :is(#chatbot-resource, #chatbot-system) .rcb-user-message {
