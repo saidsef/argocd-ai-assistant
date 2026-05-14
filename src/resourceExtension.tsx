@@ -127,6 +127,8 @@ export const ResourceAssistantExtension = (props: any) => {
                     if (response.data !== undefined) storage.data = response.data;
                 } catch (error) {
                     return "Unexpected Error: " + (error instanceof Error ? error.message : String(error));
+                } finally {
+                    await params.endStreamMessage("BOT");
                 }
             },
             renderMarkdown: ["BOT"],
