@@ -1,0 +1,39 @@
+name: PR Release Cleanup
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+  schedule:
+    - cron: '0 3 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup-closed-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete pre-release for closed PR
+        run: gh release delete pr-${{ github.event.pull_request.number }} --cleanup-tag --yes 2>/dev/null || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+  cleanup-stale-releases:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete PR pre-releases older than 3 days
+        run: |
+          CUTOFF=$(date -d '3 days ago' --utc +%Y-%m-%dT%H:%M:%SZ)
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,createdAt,isPrerelease \
+            | jq -r --arg cutoff "$CUTOFF" \
+              '.[] | select(.isPrerelease and (.tagName | startswith("pr-")) and .createdAt < $cutoff) | .tagName' \
+            | while read -r tag; do
+                echo "Deleting stale pre-release: $tag"
+                gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+              done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

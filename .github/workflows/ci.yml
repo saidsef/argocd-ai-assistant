@@ -35,10 +35,14 @@ jobs:
         if: github.event_name == 'pull_request'
         run: tar -C dist -cvf dist/extension-argocd-ai-assistant-pr-${{ github.event.pull_request.number }}.tar resources
 
-      - name: Upload PR tar artifact
+      - name: Publish PR pre-release
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v7
-        with:
-          name: extension-pr-${{ github.event.pull_request.number }}
-          path: dist/extension-argocd-ai-assistant-pr-${{ github.event.pull_request.number }}.tar
-          retention-days: 3
+        run: |
+          gh release delete pr-${{ github.event.pull_request.number }} --cleanup-tag --yes 2>/dev/null || true
+          gh release create pr-${{ github.event.pull_request.number }} \
+            dist/extension-argocd-ai-assistant-pr-${{ github.event.pull_request.number }}.tar \
+            --title "PR #${{ github.event.pull_request.number }} test build" \
+            --notes "Temporary pre-release for testing PR #${{ github.event.pull_request.number }}. Auto-deleted 3 days after creation or on PR close." \
+            --prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
