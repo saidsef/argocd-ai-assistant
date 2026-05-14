@@ -287,9 +287,10 @@ export const ResourceAssistantExtension = (props: any) => {
                                 type="number"
                                 placeholder={`Max ${maxLogLines}`}
                                 value={form.lines || ""}
-                                onChange={(e) =>
-                                    setForm((prev) => ({ ...prev, lines: e.target.value }))
-                                }
+                                onChange={(e) => {
+                                    const value = e.target.value;
+                                    setForm((prev) => ({ ...prev, lines: value }));
+                                }}
                                 onKeyDown={(e) => {
                                     if (e.key === "Enter") {
                                         e.preventDefault();
