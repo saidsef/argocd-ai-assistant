@@ -93,6 +93,22 @@ const ChatInterface = ({
         }
     });
 
+    // Compute initial messages once per mount. welcomeMessage is intentionally
+    // excluded from deps — remounting via key={resourceID} in the parent
+    // ensures a fresh computation whenever the resource changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const initialMessages = React.useMemo(() => {
+        const stored = storage.loadMessages();
+        if (stored.length === 0 && welcomeMessage) {
+            return [{
+                id: generateId(),
+                role: "assistant" as const,
+                parts: [{ type: "text" as const, text: welcomeMessage }]
+            }];
+        }
+        return stored;
+    }, []);
+
     const {
         messages,
         status,
@@ -102,7 +118,7 @@ const ChatInterface = ({
         sendMessage
     } = useChat({
         transport: transport.current,
-        messages: storage.loadMessages()
+        messages: initialMessages
     });
 
     const [input, setInput] = React.useState("");
@@ -115,18 +131,6 @@ const ChatInterface = ({
     React.useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
     }, [messages]);
-
-    React.useEffect(() => {
-        if (messages.length === 0 && welcomeMessage) {
-            setMessages([
-                {
-                    id: generateId(),
-                    role: "assistant",
-                    parts: [{ type: "text" as const, text: welcomeMessage }]
-                }
-            ]);
-        }
-    }, [messages.length, welcomeMessage, setMessages]);
 
     const isBusy = status === "submitted" || status === "streaming";
 

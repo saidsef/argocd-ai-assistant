@@ -68,13 +68,20 @@ export const ResourceAssistantExtension = (props: any) => {
     const maxLogLines: number =
         settings.maximumLogLines != undefined ? settings.maximumLogLines : MAX_LINES;
 
-    React.useEffect(() => {
-        if (storageRef.current.resourceID !== resourceID) {
+    // Clear storage synchronously so the ChatInterface remount (triggered by
+    // key={resourceID} below) reads an empty store and shows the welcome message.
+    const prevResourceIDRef = React.useRef<string | null>(null);
+    if (prevResourceIDRef.current !== resourceID) {
+        if (prevResourceIDRef.current !== null) {
             storageRef.current.clear();
-            storageRef.current.resourceID = resourceID;
-            setFlowNode("start");
-            setForm({});
         }
+        prevResourceIDRef.current = resourceID;
+        storageRef.current.resourceID = resourceID;
+    }
+
+    React.useEffect(() => {
+        setFlowNode("start");
+        setForm({});
     }, [resourceID]);
 
     const getContext = React.useCallback(() => {
@@ -349,6 +356,7 @@ export const ResourceAssistantExtension = (props: any) => {
 
     return (
         <ChatInterface
+            key={resourceID}
             id="chatbot-resource"
             provider={provider}
             getContext={getContext}
