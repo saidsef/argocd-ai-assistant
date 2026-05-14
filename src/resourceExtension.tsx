@@ -68,24 +68,19 @@ export const ResourceAssistantExtension = (props: any) => {
     const maxLogLines: number =
         settings.maximumLogLines != undefined ? settings.maximumLogLines : MAX_LINES;
 
-    // Clear storage synchronously before ChatInterface remounts (key={resourceID}).
-    // On first mount compare against the stored resourceID so stale data from a
-    // different resource or application is evicted. On subsequent renders the
-    // in-memory ref is enough to detect same-session switches.
-    const prevResourceIDRef = React.useRef<string | null>(null);
-    if (prevResourceIDRef.current === null) {
+    const [chatKey, setChatKey] = React.useState<string | null>(null);
+
+    // Run after the resource is fully resolved so getResourceIdentifier is stable.
+    // Clears storage when we land on a different resource than what was last saved,
+    // then sets chatKey to mount (or remount) ChatInterface with clean storage.
+    React.useEffect(() => {
         if (storageRef.current.resourceID !== null && storageRef.current.resourceID !== resourceID) {
             storageRef.current.clear();
         }
-    } else if (prevResourceIDRef.current !== resourceID) {
-        storageRef.current.clear();
-    }
-    prevResourceIDRef.current = resourceID;
-    storageRef.current.resourceID = resourceID;
-
-    React.useEffect(() => {
+        storageRef.current.resourceID = resourceID;
         setFlowNode("start");
         setForm({});
+        setChatKey(resourceID);
     }, [resourceID]);
 
     const getContext = React.useCallback(() => {
@@ -358,9 +353,11 @@ export const ResourceAssistantExtension = (props: any) => {
         [flowNode, containers, form, maxLogLines, flowError, handleCancel, handleContainerSelect, handleLinesSubmit, handleTokenSubmit]
     );
 
+    if (chatKey === null) return null;
+
     return (
         <ChatInterface
-            key={resourceID}
+            key={chatKey}
             id="chatbot-resource"
             provider={provider}
             getContext={getContext}
