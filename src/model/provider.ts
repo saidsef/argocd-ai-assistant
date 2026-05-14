@@ -49,5 +49,5 @@ export type QueryResponse = {
 
 export interface QueryProvider {
     setContext(context: QueryContext): void;
-    query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void): Promise<QueryResponse>
+    query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal): Promise<QueryResponse>
 }

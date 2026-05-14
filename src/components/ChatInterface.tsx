@@ -1,10 +1,10 @@
 import * as React from "react";
-import { QueryContext, QueryProvider } from "../model/provider";
+import { QueryContext, QueryProvider, QueryResponse } from "../model/provider";
 import { ManageStorage } from "../util/storage";
 import { generateId } from "../util/util";
 import ChatInput from "./ChatInput";
 import ChatMessage from "./ChatMessage";
-import { useChat, type ChatMessage as ChatMessageType } from "./useChat";
+import { useChat, type ChatMessage as ChatMessageType, type ChatChunk, type UseChatOptions } from "./useChat";
 
 export interface ChatInterfaceProps {
     id: string;
@@ -12,6 +12,7 @@ export interface ChatInterfaceProps {
     getContext: () => QueryContext;
     welcomeMessage?: string;
     storage: ManageStorage;
+    onQueryComplete?: (response: QueryResponse) => void;
     onCommand?: (
         input: string,
         messages: ChatMessageType[],
@@ -26,6 +27,7 @@ const ChatInterface = ({
     getContext,
     welcomeMessage,
     storage,
+    onQueryComplete,
     onCommand,
     children
 }: ChatInterfaceProps) => {
@@ -35,17 +37,15 @@ const ChatInterface = ({
     const providerRef = React.useRef(provider);
     providerRef.current = provider;
 
-    const transportRef = React.useRef({
-        async sendMessages({ messages }: { messages: ChatMessageType[]; abortSignal: AbortSignal }) {
+    const onQueryCompleteRef = React.useRef(onQueryComplete);
+    onQueryCompleteRef.current = onQueryComplete;
+
+    const transport = React.useRef<UseChatOptions["transport"]>({
+        async sendMessages({ messages, abortSignal }) {
             const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
             const prompt = lastUserMessage?.parts?.find((p) => p.type === "text")?.text || "";
 
-            const stream = new ReadableStream<{
-                type: string;
-                id?: string;
-                delta?: string;
-                errorText?: string;
-            }>({
+            const stream = new ReadableStream<ChatChunk>({
                 async start(controller) {
                     const msgId = generateId();
                     controller.enqueue({ type: "text-start", id: msgId });
@@ -62,7 +62,8 @@ const ChatInterface = ({
                                 if (delta) {
                                     controller.enqueue({ type: "text-delta", id: msgId, delta });
                                 }
-                            }
+                            },
+                            abortSignal
                         );
 
                         if (!response.success) {
@@ -70,6 +71,8 @@ const ChatInterface = ({
                                 type: "error",
                                 errorText: response.error?.message || "Unknown error"
                             });
+                        } else {
+                            onQueryCompleteRef.current?.(response);
                         }
                     } catch (err) {
                         controller.enqueue({
@@ -95,16 +98,20 @@ const ChatInterface = ({
         setMessages,
         sendMessage
     } = useChat({
-        id,
-        transport: transportRef.current as any,
+        transport: transport.current,
         messages: storage.loadMessages()
     });
 
     const [input, setInput] = React.useState("");
+    const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
     React.useEffect(() => {
         storage.saveMessages(messages);
     }, [messages, storage]);
+
+    React.useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+    }, [messages]);
 
     React.useEffect(() => {
         if (messages.length === 0 && welcomeMessage) {
@@ -152,6 +159,7 @@ const ChatInterface = ({
                         <span>{error.message}</span>
                     </div>
                 )}
+                <div ref={messagesEndRef} />
             </div>
             {typeof children === "function" ? children({ setMessages }) : children}
             <ChatInput

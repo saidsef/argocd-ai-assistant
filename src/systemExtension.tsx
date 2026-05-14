@@ -3,7 +3,7 @@ import ChatInterface from "./components/ChatInterface";
 import { generateId, isTokenRequest, QueryContextImpl } from "./util/util";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
-import { AssistantSettings } from "./model/provider";
+import { AssistantSettings, QueryResponse } from "./model/provider";
 import { createProvider, Provider } from "./providers/providerFactory";
 import { FeatureFlags, isFeatureEnabled } from "./featureFlags";
 import { type ChatMessage } from "./components/useChat";
@@ -11,22 +11,18 @@ import { type ChatMessage } from "./components/useChat";
 type FlowNode = "start" | "loop" | "token" | "token_saved" | "token_invalid";
 
 export const SystemAssistantExtension = (props: any) => {
-    console.log("Properties passed to Extension");
-    console.log(props);
-
     const [settings, setSettings] = React.useState<AssistantSettings>(
         globalThis.argocdAssistantSettings ?? { provider: Provider.LLM }
     );
     const [provider] = React.useState(
         createProvider(settings.provider as Provider)
     );
-    const storage = new ManageStorage(ExtensionScope.System);
+    const storageRef = React.useRef(new ManageStorage(ExtensionScope.System));
 
     React.useEffect(() => {
         if (globalThis.argocdAssistantSettings) {
             setSettings(globalThis.argocdAssistantSettings);
         }
-        console.log("Using provider: " + settings.provider);
     }, []);
 
     const [form, setForm] = React.useState<{ token?: string }>({});
@@ -36,12 +32,17 @@ export const SystemAssistantExtension = (props: any) => {
         const currentSettings = globalThis.argocdAssistantSettings ?? settings;
         return new QueryContextImpl(
             undefined,
-            storage.conversationID,
-            storage.data,
+            storageRef.current.conversationID,
+            storageRef.current.data,
             [],
             currentSettings
         );
-    }, [settings, storage]);
+    }, [settings]);
+
+    const handleQueryComplete = React.useCallback((response: QueryResponse) => {
+        if (response.conversationID !== undefined) storageRef.current.conversationID = response.conversationID;
+        if (response.data !== undefined) storageRef.current.data = response.data;
+    }, []);
 
     const welcomeMessage = "How can I help you with Argo CD today?";
 
@@ -92,7 +93,7 @@ export const SystemAssistantExtension = (props: any) => {
             setFlowNode("token_invalid");
             return;
         }
-        storage.mcpToken = input.trim();
+        storageRef.current.mcpToken = input.trim();
         setMessages(injectMessage("Token saved. I will use it for MCP server requests."));
         setFlowNode("token_saved");
     };
@@ -131,7 +132,8 @@ export const SystemAssistantExtension = (props: any) => {
             provider={provider}
             getContext={getContext}
             welcomeMessage={welcomeMessage}
-            storage={storage}
+            storage={storageRef.current}
+            onQueryComplete={handleQueryComplete}
             onCommand={handleCommand}
         >
             {(helpers) => flowUI(helpers.setMessages)}

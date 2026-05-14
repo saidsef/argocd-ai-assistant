@@ -12,7 +12,7 @@ export class LlmProvider implements QueryProvider {
         return;
     }
 
-    async query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void): Promise<QueryResponse> {
+    async query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal): Promise<QueryResponse> {
         const settings = context.settings;
         const baseURL = settings.data?.baseURL || `https://${location.host}/extensions/assistant`;
         const model = settings.model;
@@ -132,6 +132,7 @@ export class LlmProvider implements QueryProvider {
             method: 'POST',
             headers,
             body,
+            signal,
         });
 
         if (!response.ok || !response.body) {

@@ -16,6 +16,7 @@ import {
     Attachment,
     AttachmentType,
     QueryProvider,
+    QueryResponse,
     AssistantSettings
 } from "./model/provider";
 import { createProvider, Provider } from "./providers/providerFactory";
@@ -34,22 +35,18 @@ type FlowNode =
     | "no_attach";
 
 export const ResourceAssistantExtension = (props: any) => {
-    console.log("Properties passed to Extension");
-    console.log(props);
-
     const [settings, setSettings] = React.useState<AssistantSettings>(
         globalThis.argocdAssistantSettings ?? { provider: Provider.LLM }
     );
     const [provider] = React.useState<QueryProvider>(
         createProvider(settings.provider as Provider)
     );
-    const storage = new ManageStorage(ExtensionScope.Resource);
+    const storageRef = React.useRef(new ManageStorage(ExtensionScope.Resource));
 
     React.useEffect(() => {
         if (globalThis.argocdAssistantSettings) {
             setSettings(globalThis.argocdAssistantSettings);
         }
-        console.log("Using provider: " + settings.provider);
     }, []);
 
     const { resource, application } = props;
@@ -66,18 +63,18 @@ export const ResourceAssistantExtension = (props: any) => {
     const application_name = application?.metadata?.name || "";
     const resource_name = resource?.metadata?.name || "";
     const resource_kind = resource?.kind || "";
-
-    const currentResourceID = storage.resourceID;
     const resourceID = getResourceIdentifier(resource);
     const maxLogLines: number =
         settings.maximumLogLines != undefined ? settings.maximumLogLines : MAX_LINES;
 
-    if (currentResourceID !== resourceID) {
-        storage.clear();
-        storage.resourceID = resourceID;
-        setFlowNode("start");
-        setForm({});
-    }
+    React.useEffect(() => {
+        if (storageRef.current.resourceID !== resourceID) {
+            storageRef.current.clear();
+            storageRef.current.resourceID = resourceID;
+            setFlowNode("start");
+            setForm({});
+        }
+    }, [resourceID]);
 
     const getContext = React.useCallback(() => {
         const attachments: Attachment[] = [];
@@ -98,9 +95,9 @@ export const ResourceAssistantExtension = (props: any) => {
             });
         }
 
-        if (storage.hasLogs()) {
+        if (storageRef.current.hasLogs()) {
             attachments.push({
-                content: storage.logs,
+                content: storageRef.current.logs,
                 mimeType: "application/json",
                 type: AttachmentType.LOG
             });
@@ -109,12 +106,17 @@ export const ResourceAssistantExtension = (props: any) => {
         const currentSettings = globalThis.argocdAssistantSettings ?? settings;
         return new QueryContextImpl(
             application,
-            storage.conversationID,
-            storage.data,
+            storageRef.current.conversationID,
+            storageRef.current.data,
             attachments,
             currentSettings
         );
-    }, [application, resource, events, settings, storage]);
+    }, [application, resource, events, settings]);
+
+    const handleQueryComplete = React.useCallback((response: QueryResponse) => {
+        if (response.conversationID !== undefined) storageRef.current.conversationID = response.conversationID;
+        if (response.data !== undefined) storageRef.current.data = response.data;
+    }, []);
 
     const welcomeMessage =
         "How can I help you with the resource **" +
@@ -199,10 +201,8 @@ export const ResourceAssistantExtension = (props: any) => {
         setFlowNode("get_logs");
         getLogs(application, resource, form.container, Number(form.lines))
             .then((result: LogEntry[]) => {
-                storage.logs = JSON.stringify(result);
-                setMessages(
-                    injectMessage("Requested logs have been attached")
-                );
+                storageRef.current.logs = JSON.stringify(result);
+                setMessages(injectMessage("Requested logs have been attached"));
                 setFlowNode("loop");
             })
             .catch((error) => {
@@ -229,7 +229,7 @@ export const ResourceAssistantExtension = (props: any) => {
             setFlowNode("token_invalid");
             return;
         }
-        storage.mcpToken = input.trim();
+        storageRef.current.mcpToken = input.trim();
         setMessages(injectMessage("Token saved. I will use it for MCP server requests."));
         setFlowNode("token_saved");
     };
@@ -337,7 +337,8 @@ export const ResourceAssistantExtension = (props: any) => {
             provider={provider}
             getContext={getContext}
             welcomeMessage={welcomeMessage}
-            storage={storage}
+            storage={storageRef.current}
+            onQueryComplete={handleQueryComplete}
             onCommand={handleCommand}
         >
             {(helpers) => flowUI(helpers.setMessages)}
