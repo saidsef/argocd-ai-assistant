@@ -1,6 +1,6 @@
 import * as React from "react";
 import ChatInterface from "./components/ChatInterface";
-import { generateId, isTokenRequest, QueryContextImpl } from "./util/util";
+import { injectMessage, isTokenRequest, QueryContextImpl } from "./util/util";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
 import { AssistantSettings, QueryResponse } from "./model/provider";
@@ -46,20 +46,6 @@ export const SystemAssistantExtension = (props: any) => {
 
     const welcomeMessage = "How can I help you with Argo CD today?";
 
-    const injectMessage = React.useCallback(
-        (msg: string, role: "user" | "assistant" = "assistant") => {
-            return (prev: ChatMessage[]) => [
-                ...prev,
-                {
-                    id: generateId(),
-                    role,
-                    parts: [{ type: "text" as const, text: msg }]
-                } as ChatMessage
-            ];
-        },
-        []
-    );
-
     const handleCommand = React.useCallback(
         (input: string, _messages: ChatMessage[], setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
             if (flowNode !== "start" && flowNode !== "loop" && flowNode !== "token_saved") {
@@ -73,58 +59,65 @@ export const SystemAssistantExtension = (props: any) => {
                     injectMessage("Please enter your Argo CD token to use with an MCP server")
                 );
                 setFlowNode("token");
+                setForm({});
                 return true;
             }
             return false;
         },
-        [flowNode, injectMessage]
+        [flowNode]
     );
 
-    const handleTokenSubmit = (
-        input: string,
-        setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
-    ) => {
-        if (!input?.trim()) {
-            setMessages(
-                injectMessage(
-                    "No token was provided. Please type your token or continue with your question."
-                )
-            );
-            setFlowNode("token_invalid");
-            return;
-        }
-        storageRef.current.mcpToken = input.trim();
-        setMessages(injectMessage("Token saved. I will use it for MCP server requests."));
-        setFlowNode("token_saved");
-    };
+    const handleTokenSubmit = React.useCallback(
+        (input: string, setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
+            if (!input?.trim()) {
+                setMessages(
+                    injectMessage(
+                        "No token was provided. Please type your token or continue with your question."
+                    )
+                );
+                setFlowNode("token_invalid");
+                return;
+            }
+            storageRef.current.mcpToken = input.trim();
+            setMessages(injectMessage("Token saved. I will use it for MCP server requests."));
+            setForm({});
+            setFlowNode("token_saved");
+        },
+        []
+    );
 
-    const flowUI = (setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
-        if (flowNode === "token" || flowNode === "token_invalid") {
-            return (
-                <div className="chat-flow-ui">
-                    <input
-                        type="password"
-                        placeholder="Enter token"
-                        onChange={(e) => setForm({ token: e.target.value })}
-                        onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                                e.preventDefault();
-                                handleTokenSubmit(form.token || "", setMessages);
-                            }
-                        }}
-                        className="chat-flow-input"
-                    />
-                    <button
-                        onClick={() => handleTokenSubmit(form.token || "", setMessages)}
-                        className="chat-flow-button"
-                    >
-                        Save
-                    </button>
-                </div>
-            );
-        }
-        return null;
-    };
+    const flowUI = React.useCallback(
+        (setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
+            if (flowNode === "token" || flowNode === "token_invalid") {
+                return (
+                    <div className="chat-flow-ui">
+                        <input
+                            type="password"
+                            placeholder="Enter token"
+                            value={form.token || ""}
+                            onChange={(e) => setForm({ token: e.target.value })}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    handleTokenSubmit(form.token || "", setMessages);
+                                }
+                            }}
+                            className="chat-flow-input"
+                            aria-label="Argo CD token"
+                        />
+                        <button
+                            onClick={() => handleTokenSubmit(form.token || "", setMessages)}
+                            className="chat-flow-button"
+                        >
+                            Save
+                        </button>
+                    </div>
+                );
+            }
+            return null;
+        },
+        [flowNode, form, handleTokenSubmit]
+    );
 
     return (
         <ChatInterface

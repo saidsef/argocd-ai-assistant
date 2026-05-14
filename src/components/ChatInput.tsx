@@ -16,11 +16,13 @@ const ChatInput = ({ input, handleInputChange, handleSubmit, disabled }: ChatInp
                 disabled={disabled}
                 placeholder="Type a message..."
                 className="chat-input"
+                aria-label="Chat message"
             />
             <button
                 type="submit"
                 disabled={disabled || !input.trim()}
                 className="chat-send-button"
+                aria-label="Send message"
             >
                 Send
             </button>

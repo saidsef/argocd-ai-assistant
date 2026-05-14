@@ -2,10 +2,11 @@ import * as React from "react";
 import ChatInterface from "./components/ChatInterface";
 import { getLogs, hasLogs, MAX_LINES } from "./service/logs";
 import {
-    generateId,
     getContainers,
     getResourceIdentifier,
+    injectMessage,
     isAttachRequest,
+    isCancelRequest,
     isTokenRequest,
     QueryContextImpl
 } from "./util/util";
@@ -128,23 +129,21 @@ export const ResourceAssistantExtension = (props: any) => {
             ? " I notice this resource has logs available, to attach one or more container logs type *Attach* at any time."
             : "");
 
-    const injectMessage = React.useCallback(
-        (msg: string, role: "user" | "assistant" = "assistant") => {
-            return (prev: ChatMessage[]) => [
-                ...prev,
-                {
-                    id: generateId(),
-                    role,
-                    parts: [{ type: "text" as const, text: msg }]
-                } as ChatMessage
-            ];
-        },
-        []
-    );
+    const handleCancel = React.useCallback(() => {
+        setFlowNode("loop");
+        setForm({});
+        setFlowError(null);
+    }, []);
 
     const handleCommand = React.useCallback(
         (input: string, _messages: ChatMessage[], setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
             if (flowNode !== "start" && flowNode !== "loop" && flowNode !== "token_saved") {
+                if (isCancelRequest(input)) {
+                    setFlowNode("loop");
+                    setForm({});
+                    setFlowError(null);
+                    return true;
+                }
                 if (!isAttachRequest(input) && !isTokenRequest(input)) {
                     setFlowNode("loop");
                     return false;
@@ -169,70 +168,73 @@ export const ResourceAssistantExtension = (props: any) => {
                     injectMessage("Please enter your Argo CD token to use with an MCP server")
                 );
                 setFlowNode("token");
+                setForm({});
                 setFlowError(null);
                 return true;
             }
             return false;
         },
-        [flowNode, resource, injectMessage]
+        [flowNode, resource]
     );
 
-    const handleContainerSelect = (container: string) => {
+    const handleContainerSelect = React.useCallback((container: string) => {
         setForm({ container });
         setFlowNode("ask_lines");
         setFlowError(null);
-    };
+    }, []);
 
-    const handleLinesSubmit = (
-        setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
-    ) => {
-        const lines = Number(form.lines);
-        if (isNaN(lines)) {
-            setFlowError("The number of lines needs to be a valid number.");
-            return;
-        }
-        if (lines === 0 || lines > maxLogLines) {
-            setFlowError(
-                "The number of lines needs to be more than 0 and " + maxLogLines + " or less"
-            );
-            return;
-        }
-        setFlowError(null);
-        setFlowNode("get_logs");
-        getLogs(application, resource, form.container, Number(form.lines))
-            .then((result: LogEntry[]) => {
-                storageRef.current.logs = JSON.stringify(result);
-                setMessages(injectMessage("Requested logs have been attached"));
-                setFlowNode("loop");
-            })
-            .catch((error) => {
+    const handleLinesSubmit = React.useCallback(
+        (setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
+            const lines = Number(form.lines);
+            if (isNaN(lines)) {
+                setFlowError("The number of lines needs to be a valid number.");
+                return;
+            }
+            if (lines === 0 || lines > maxLogLines) {
+                setFlowError(
+                    "The number of lines needs to be more than 0 and " + maxLogLines + " or less"
+                );
+                return;
+            }
+            setFlowError(null);
+            setFlowNode("get_logs");
+            getLogs(application, resource, form.container, lines)
+                .then((result: LogEntry[]) => {
+                    storageRef.current.logs = JSON.stringify(result);
+                    setMessages(injectMessage("Requested logs have been attached"));
+                    setFlowNode("loop");
+                })
+                .catch((error) => {
+                    setMessages(
+                        injectMessage(
+                            "Unexpected Error: " +
+                                (error instanceof Error ? error.message : String(error))
+                        )
+                    );
+                    setFlowNode("loop");
+                });
+        },
+        [form, maxLogLines, application, resource]
+    );
+
+    const handleTokenSubmit = React.useCallback(
+        (input: string, setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
+            if (!input?.trim()) {
                 setMessages(
                     injectMessage(
-                        "Unexpected Error: " +
-                            (error instanceof Error ? error.message : String(error))
+                        "No token was provided. Please type your token or continue with your question."
                     )
                 );
-                setFlowNode("loop");
-            });
-    };
-
-    const handleTokenSubmit = (
-        input: string,
-        setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
-    ) => {
-        if (!input?.trim()) {
-            setMessages(
-                injectMessage(
-                    "No token was provided. Please type your token or continue with your question."
-                )
-            );
-            setFlowNode("token_invalid");
-            return;
-        }
-        storageRef.current.mcpToken = input.trim();
-        setMessages(injectMessage("Token saved. I will use it for MCP server requests."));
-        setFlowNode("token_saved");
-    };
+                setFlowNode("token_invalid");
+                return;
+            }
+            storageRef.current.mcpToken = input.trim();
+            setMessages(injectMessage("Token saved. I will use it for MCP server requests."));
+            setForm({});
+            setFlowNode("token_saved");
+        },
+        []
+    );
 
     React.useEffect(() => {
         let url = `/api/v1/applications/${application_name}/events?resourceUID=${resource.metadata.uid}&resourceNamespace=${resource.metadata.namespace}&resourceName=${resource.metadata.name}`;
@@ -257,79 +259,92 @@ export const ResourceAssistantExtension = (props: any) => {
             });
     }, [application, resource, application_name]);
 
-    const flowUI = (setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
-        switch (flowNode) {
-            case "attach":
-                return (
-                    <div className="chat-flow-ui">
-                        {containers.map((c) => (
+    const flowUI = React.useCallback(
+        (setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
+            switch (flowNode) {
+                case "attach":
+                    return (
+                        <div className="chat-flow-ui">
+                            {containers.map((c) => (
+                                <button
+                                    key={c}
+                                    onClick={() => handleContainerSelect(c)}
+                                    className="chat-flow-button"
+                                    aria-label={`Select container ${c}`}
+                                >
+                                    {c}
+                                </button>
+                            ))}
+                            <button onClick={handleCancel} className="chat-flow-button-cancel">
+                                Cancel
+                            </button>
+                        </div>
+                    );
+                case "ask_lines":
+                    return (
+                        <div className="chat-flow-ui">
+                            <input
+                                type="number"
+                                placeholder={`Max ${maxLogLines}`}
+                                value={form.lines || ""}
+                                onChange={(e) =>
+                                    setForm((prev) => ({ ...prev, lines: e.target.value }))
+                                }
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        handleLinesSubmit(setMessages);
+                                    }
+                                }}
+                                className="chat-flow-input"
+                                aria-label="Number of log lines"
+                            />
                             <button
-                                key={c}
-                                onClick={() => handleContainerSelect(c)}
+                                onClick={() => handleLinesSubmit(setMessages)}
                                 className="chat-flow-button"
                             >
-                                {c}
+                                OK
                             </button>
-                        ))}
-                    </div>
-                );
-            case "ask_lines":
-                return (
-                    <div className="chat-flow-ui">
-                        <input
-                            type="number"
-                            placeholder={`Max ${maxLogLines}`}
-                            value={form.lines || ""}
-                            onChange={(e) =>
-                                setForm({ ...form, lines: e.target.value })
-                            }
-                            onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    handleLinesSubmit(setMessages);
+                            <button onClick={handleCancel} className="chat-flow-button-cancel">
+                                Cancel
+                            </button>
+                            {flowError && <span className="chat-flow-error" role="alert">{flowError}</span>}
+                        </div>
+                    );
+                case "token":
+                case "token_invalid":
+                    return (
+                        <div className="chat-flow-ui">
+                            <input
+                                type="password"
+                                placeholder="Enter token"
+                                value={form.token || ""}
+                                onChange={(e) => setForm({ token: e.target.value })}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        handleTokenSubmit(form.token || "", setMessages);
+                                    }
+                                }}
+                                className="chat-flow-input"
+                                aria-label="Argo CD token"
+                            />
+                            <button
+                                onClick={() =>
+                                    handleTokenSubmit(form.token || "", setMessages)
                                 }
-                            }}
-                            className="chat-flow-input"
-                        />
-                        <button
-                            onClick={() => handleLinesSubmit(setMessages)}
-                            className="chat-flow-button"
-                        >
-                            OK
-                        </button>
-                        {flowError && <span className="chat-flow-error">{flowError}</span>}
-                    </div>
-                );
-            case "token":
-            case "token_invalid":
-                return (
-                    <div className="chat-flow-ui">
-                        <input
-                            type="password"
-                            placeholder="Enter token"
-                            onChange={(e) => setForm({ token: e.target.value })}
-                            onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    handleTokenSubmit(form.token || "", setMessages);
-                                }
-                            }}
-                            className="chat-flow-input"
-                        />
-                        <button
-                            onClick={() =>
-                                handleTokenSubmit(form.token || "", setMessages)
-                            }
-                            className="chat-flow-button"
-                        >
-                            Save
-                        </button>
-                    </div>
-                );
-            default:
-                return null;
-        }
-    };
+                                className="chat-flow-button"
+                            >
+                                Save
+                            </button>
+                        </div>
+                    );
+                default:
+                    return null;
+            }
+        },
+        [flowNode, containers, form, maxLogLines, flowError, handleCancel, handleContainerSelect, handleLinesSubmit, handleTokenSubmit]
+    );
 
     return (
         <ChatInterface

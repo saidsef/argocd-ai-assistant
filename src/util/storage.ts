@@ -1,3 +1,4 @@
+import type { ChatMessage } from "../components/useChat";
 import { FeatureFlags, isFeatureEnabled } from "../featureFlags";
 import { ExtensionScope } from "./extensions";
 
@@ -31,17 +32,17 @@ export class ManageStorage {
         }
     }
 
-    public loadMessages(): any[] {
+    public loadMessages(): ChatMessage[] {
         const raw = sessionStorage.getItem(this.CHAT_HISTORY_KEY);
         if (!raw) return [];
         try {
-            return JSON.parse(raw);
+            return JSON.parse(raw) as ChatMessage[];
         } catch (_e) {
             return [];
         }
     }
 
-    public saveMessages(messages: any[]) {
+    public saveMessages(messages: ChatMessage[]) {
         sessionStorage.setItem(this.CHAT_HISTORY_KEY, JSON.stringify(messages));
     }
 

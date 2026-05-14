@@ -1,4 +1,5 @@
 import { marked, Renderer } from "marked";
+import type { ChatMessage } from "../components/useChat";
 import { AssistantSettings, Attachment, AttachmentType, QueryContext } from "../model/provider";
 
 export function generateId(): string {
@@ -104,6 +105,20 @@ export function getContainers(resource: any): string[] {
         }
     }
     return result;
+}
+
+export function injectMessage(
+    msg: string,
+    role: "user" | "assistant" = "assistant"
+): (prev: ChatMessage[]) => ChatMessage[] {
+    return (prev) => [
+        ...prev,
+        {
+            id: generateId(),
+            role,
+            parts: [{ type: "text" as const, text: msg }]
+        }
+    ];
 }
 
 export function isAttachRequest(input: string): boolean {

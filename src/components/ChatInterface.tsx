@@ -147,18 +147,18 @@ const ChatInterface = ({
 
     return (
         <div id={id}>
-            <div className="chat-message-list">
+            <div className="chat-message-list" aria-live="polite" aria-label="Chat messages">
                 {messages.map((message) => (
                     <ChatMessage key={message.id} message={message} />
                 ))}
                 {isBusy && (
                     <div className="chat-loading">
                         <span>Assistant is thinking...</span>
-                        <button onClick={stop}>Stop</button>
+                        <button onClick={stop} aria-label="Stop response">Stop</button>
                     </div>
                 )}
                 {error && (
-                    <div className="chat-error">
+                    <div className="chat-error" role="alert">
                         <span>{error.message}</span>
                     </div>
                 )}

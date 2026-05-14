@@ -14,15 +14,11 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
 
     return (
         <div className={`chat-message ${className}`}>
-            {textParts.map((part, i) => {
-                if (part.type === "text") {
-                    if (isUser) {
-                        return <span key={i}>{part.text}</span>;
-                    }
-                    return <MarkedWrapper key={i}>{part.text}</MarkedWrapper>;
-                }
-                return null;
-            })}
+            {textParts.map((part, i) =>
+                isUser
+                    ? <span key={i}>{part.text}</span>
+                    : <MarkedWrapper key={i}>{part.text}</MarkedWrapper>
+            )}
         </div>
     );
 };
