@@ -1,5 +1,3 @@
-import { Params } from "react-chatbotify";
-
 export type AssistantSettings = {
     model?: string;
     provider: string;
@@ -51,5 +49,5 @@ export type QueryResponse = {
 
 export interface QueryProvider {
     setContext(context: QueryContext): void;
-    query(context: QueryContext, prompt: string, params: Params): Promise<QueryResponse>
+    query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void): Promise<QueryResponse>
 }

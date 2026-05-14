@@ -1,6 +1,13 @@
 import { marked, Renderer } from "marked";
 import { AssistantSettings, Attachment, AttachmentType, QueryContext } from "../model/provider";
 
+export function generateId(): string {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
+
 export const HttpHeader = {
     CONTENT_TYPE: 'Content-Type',
 };

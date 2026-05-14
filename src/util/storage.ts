@@ -12,7 +12,7 @@ export class ManageStorage {
 
     constructor(scope: ExtensionScope) {
         this._scope = scope;
-        this.CHAT_HISTORY_KEY = `${this.scope}-argocd-assistant-chat-history`;
+        this.CHAT_HISTORY_KEY = `${this.scope}-argocd-assistant-chat-history-v2`;
         this.RESOURCE_ID_KEY = `${this.scope}-argocd-assistant-resource-id`;
         this.LOGS_KEY = `${this.scope}-argocd-assistant-logs`;
         this.CONVERSATION_ID_KEY = `${this.scope}-argocd-assistant-conversation-id`;
@@ -29,6 +29,20 @@ export class ManageStorage {
         if (isFeatureEnabled(FeatureFlags.ArgoCDMCP)) {
             sessionStorage.removeItem(this.ARGOCD_MCP_TOKEN);
         }
+    }
+
+    public loadMessages(): any[] {
+        const raw = sessionStorage.getItem(this.CHAT_HISTORY_KEY);
+        if (!raw) return [];
+        try {
+            return JSON.parse(raw);
+        } catch (_e) {
+            return [];
+        }
+    }
+
+    public saveMessages(messages: any[]) {
+        sessionStorage.setItem(this.CHAT_HISTORY_KEY, JSON.stringify(messages));
     }
 
     get scope(): ExtensionScope {

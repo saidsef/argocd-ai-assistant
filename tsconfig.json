@@ -13,7 +13,9 @@
         "allowJs": true,
         "strict": false,
         "noUnusedLocals": true,
-        "sourceMap": true
+        "sourceMap": true,
+        "types": ["node"],
+        "ignoreDeprecations": "6.0"
     },
     "include": ["src/*"],
     "exclude": ["node_modules"]
