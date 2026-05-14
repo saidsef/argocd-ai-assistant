@@ -183,7 +183,7 @@ export class LlmProvider implements QueryProvider {
                     const content = parsed.choices?.[0]?.delta?.content;
                     if (content) {
                         text += content;
-                        await onStreamUpdate(text);
+                        onStreamUpdate(text);
                     }
                     if (parsed.error) {
                         return {

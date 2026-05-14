@@ -75,10 +75,13 @@ const ChatInterface = ({
                             onQueryCompleteRef.current?.(response);
                         }
                     } catch (err) {
-                        controller.enqueue({
-                            type: "error",
-                            errorText: err instanceof Error ? err.message : String(err)
-                        });
+                        // Don't surface AbortError - stop() already set status to "ready".
+                        if (!(err instanceof Error && err.name === "AbortError")) {
+                            controller.enqueue({
+                                type: "error",
+                                errorText: err instanceof Error ? err.message : String(err)
+                            });
+                        }
                     } finally {
                         controller.enqueue({ type: "text-end", id: msgId });
                         controller.close();
@@ -143,7 +146,7 @@ const ChatInterface = ({
     };
 
     return (
-        <div className="chat-interface" id={id}>
+        <div id={id}>
             <div className="chat-message-list">
                 {messages.map((message) => (
                     <ChatMessage key={message.id} message={message} />
