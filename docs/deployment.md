@@ -326,6 +326,7 @@ globalThis.argocdAssistantSettings = {
 | `model` | No | Model name (e.g., `gpt-4`, `gpt-4`). |
 | `data.baseURL` | No | OpenAI-compatible API base URL. Defaults to Argo CD proxy if omitted. |
 | `data.apiKey` | No | API key for authentication (OpenAI, Azure, etc.). |
+| `data.mcpServers` | No | Array of MCP server HTTP endpoints (e.g., `["https://mcp.example.com"]`). When configured, the assistant discovers and uses tools exposed by these servers. No authentication is supported. |
 | `maximumLogLines` | No | Max log lines attachable (default: 250). |
 
 ### 2. Package the Settings Extension

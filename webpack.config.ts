@@ -25,6 +25,10 @@ const config: WebpackConfiguration = {
     externals: {
         react: 'React',
     },
+    performance: {
+        maxAssetSize: 512000,
+        maxEntrypointSize: 512000,
+    },
     module: {
         rules: [
             {
