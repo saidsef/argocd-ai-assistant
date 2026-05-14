@@ -30,3 +30,15 @@ jobs:
         with:
           name: extension-build
           path: dist/
+
+      - name: Package extension for PR testing
+        if: github.event_name == 'pull_request'
+        run: tar -C dist -cvf dist/extension-argocd-ai-assistant-pr-${{ github.event.pull_request.number }}.tar resources
+
+      - name: Upload PR tar artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: extension-pr-${{ github.event.pull_request.number }}
+          path: dist/extension-argocd-ai-assistant-pr-${{ github.event.pull_request.number }}.tar
+          retention-days: 3
