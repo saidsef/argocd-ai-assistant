@@ -205,3 +205,112 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-flow-error {
 :is(#chatbot-resource, #chatbot-system) .marked-content :is(p, ul, ol, pre, blockquote, hr, h1, h2, h3, h4, h5, h6):last-child {
     margin-bottom: 0;
 }
+
+/* Lists */
+:is(#chatbot-resource, #chatbot-system) .marked-content ul,
+:is(#chatbot-resource, #chatbot-system) .marked-content ol {
+    padding-left: 1.5em;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content ul {
+    list-style-type: disc;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content ol {
+    list-style-type: decimal;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content li {
+    margin: 0.15em 0;
+}
+
+/* Code blocks and inline code */
+:is(#chatbot-resource, #chatbot-system) .marked-content pre {
+    background-color: #f4f4f5;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    font-family: monospace;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content code {
+    background-color: #f4f4f5;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 2px 5px;
+    font-family: monospace;
+    font-size: 13px;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content pre code {
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+}
+
+/* Links */
+:is(#chatbot-resource, #chatbot-system) .marked-content a {
+    color: #00A2B3;
+    text-decoration: underline;
+}
+
+/* Blockquotes */
+:is(#chatbot-resource, #chatbot-system) .marked-content blockquote {
+    border-left: 3px solid #ccc;
+    padding-left: 10px;
+    color: #555;
+}
+
+/* Tables */
+:is(#chatbot-resource, #chatbot-system) .marked-content table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14px;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content th,
+:is(#chatbot-resource, #chatbot-system) .marked-content td {
+    border: 1px solid #ddd;
+    padding: 6px 10px;
+    text-align: left;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content th {
+    background-color: #f4f4f5;
+    font-weight: 600;
+}
+
+/* Dark mode overrides for markdown content */
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content pre {
+    background-color: #1e1e1e;
+    border-color: #444;
+    color: #e8eaed;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content code {
+    background-color: #1e1e1e;
+    border-color: #444;
+    color: #e8eaed;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content a {
+    color: #4dd0e1;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content blockquote {
+    border-left-color: #555;
+    color: #aaa;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content th,
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content td {
+    border-color: #444;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content th {
+    background-color: #2e3238;
+}
