@@ -14,7 +14,7 @@ const ChatInput = ({ input, handleInputChange, handleSubmit, disabled }: ChatInp
                 value={input}
                 onChange={handleInputChange}
                 disabled={disabled}
-                placeholder="Type a message..."
+                placeholder="How can I assist you today?"
                 className="chat-input"
                 aria-label="Chat message"
             />
