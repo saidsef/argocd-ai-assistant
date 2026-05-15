@@ -56,7 +56,7 @@ export class LlmProvider implements QueryProvider {
 
         const messages = this.buildMessages(context, prompt, mcpTools);
 
-        const response = await this.sendChatCompletion(baseURL, model, apiKey, context, messages, params);
+        const response = await this.sendChatCompletion(baseURL, model, apiKey, context, messages, signal, onStreamUpdate);
         if (!response.success) {
             return response;
         }
@@ -76,7 +76,7 @@ export class LlmProvider implements QueryProvider {
                             content: `Tool result for ${toolCall.name}:\n${toolResult}\n\nPlease answer the original question using this result.`
                         }
                     ];
-                    const followUpResponse = await this.sendChatCompletion(baseURL, model, apiKey, context, followUpMessages, params);
+                    const followUpResponse = await this.sendChatCompletion(baseURL, model, apiKey, context, followUpMessages, signal, onStreamUpdate);
                     return { success: followUpResponse.success, error: followUpResponse.error };
                 } catch (err) {
                     const errMsg = err instanceof Error ? err.message : String(err);
@@ -93,7 +93,7 @@ export class LlmProvider implements QueryProvider {
             }
         }
 
-        return { success: true };
+        return { success: true, data: fullText };
     }
 
     private async sendChatCompletion(
@@ -102,7 +102,8 @@ export class LlmProvider implements QueryProvider {
         apiKey: string | undefined,
         context: QueryContext,
         messages: Array<{ role: string; content: string }>,
-        params: Params
+        signal: AbortSignal | undefined,
+        onStreamUpdate: (text: string) => void
     ): Promise<QueryResponse & { data?: string }> {
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
