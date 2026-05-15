@@ -1,4 +1,3 @@
-import { Params } from "react-chatbotify";
 import { QueryContext, QueryProvider, QueryResponse } from "../model/provider";
 import { getMappedHeaders } from "../util/util";
 import { FeatureFlags, isFeatureEnabled } from "../featureFlags";
@@ -13,7 +12,7 @@ export class LlmProvider implements QueryProvider {
         return;
     }
 
-    async query(context: QueryContext, prompt: string, params: Params): Promise<QueryResponse> {
+    async query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal): Promise<QueryResponse> {
         const settings = context.settings;
         const baseURL = settings.data?.baseURL || `https://${location.host}/extensions/assistant`;
         const model = settings.model;
@@ -133,6 +132,7 @@ export class LlmProvider implements QueryProvider {
             method: 'POST',
             headers,
             body,
+            signal,
         });
 
         if (!response.ok || !response.body) {
@@ -183,7 +183,7 @@ export class LlmProvider implements QueryProvider {
                     const content = parsed.choices?.[0]?.delta?.content;
                     if (content) {
                         text += content;
-                        await params.streamMessage(text);
+                        onStreamUpdate(text);
                     }
                     if (parsed.error) {
                         return {

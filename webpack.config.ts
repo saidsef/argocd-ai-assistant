@@ -1,6 +1,7 @@
+/// <reference types="node" />
 /* eslint-env node */
 
-import { Configuration as WebpackConfiguration } from "webpack";
+import type { Configuration as WebpackConfiguration } from "webpack";
 import * as path from "path";
 
 var PACKAGE = require('./package.json');
@@ -25,9 +26,9 @@ const config: WebpackConfiguration = {
     externals: {
         react: 'React',
     },
-    performance: {
-        maxAssetSize: 512000,
-        maxEntrypointSize: 512000,
+    optimization: {
+        usedExports: true,
+        sideEffects: true,
     },
     module: {
         rules: [

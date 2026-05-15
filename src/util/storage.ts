@@ -1,3 +1,4 @@
+import type { ChatMessage } from "../components/useChat";
 import { FeatureFlags, isFeatureEnabled } from "../featureFlags";
 import { ExtensionScope } from "./extensions";
 
@@ -9,15 +10,18 @@ export class ManageStorage {
     private DATA_KEY: string;
     private ARGOCD_MCP_TOKEN: string;
     private _scope: ExtensionScope;
+    private _namespace?: string;
 
-    constructor(scope: ExtensionScope) {
+    constructor(scope: ExtensionScope, namespace?: string) {
         this._scope = scope;
-        this.CHAT_HISTORY_KEY = `${this.scope}-argocd-assistant-chat-history`;
-        this.RESOURCE_ID_KEY = `${this.scope}-argocd-assistant-resource-id`;
-        this.LOGS_KEY = `${this.scope}-argocd-assistant-logs`;
-        this.CONVERSATION_ID_KEY = `${this.scope}-argocd-assistant-conversation-id`;
-        this.DATA_KEY = `${this.scope}-argocd-assistant-data`;
-        this.ARGOCD_MCP_TOKEN = `${this.scope}-argocd-mcp-token`;
+        this._namespace = namespace;
+        const prefix = namespace ? `${scope}-${namespace}` : scope;
+        this.CHAT_HISTORY_KEY = `${prefix}-argocd-assistant-chat-history-v2`;
+        this.RESOURCE_ID_KEY = `${prefix}-argocd-assistant-resource-id`;
+        this.LOGS_KEY = `${prefix}-argocd-assistant-logs`;
+        this.CONVERSATION_ID_KEY = `${prefix}-argocd-assistant-conversation-id`;
+        this.DATA_KEY = `${prefix}-argocd-assistant-data`;
+        this.ARGOCD_MCP_TOKEN = `${prefix}-argocd-mcp-token`;
     }
 
     public clear() {
@@ -31,8 +35,26 @@ export class ManageStorage {
         }
     }
 
+    public loadMessages(): ChatMessage[] {
+        const raw = sessionStorage.getItem(this.CHAT_HISTORY_KEY);
+        if (!raw) return [];
+        try {
+            return JSON.parse(raw) as ChatMessage[];
+        } catch (_e) {
+            return [];
+        }
+    }
+
+    public saveMessages(messages: ChatMessage[]) {
+        sessionStorage.setItem(this.CHAT_HISTORY_KEY, JSON.stringify(messages));
+    }
+
     get scope(): ExtensionScope {
         return this._scope;
+    }
+
+    get namespace(): string | undefined {
+        return this._namespace;
     }
 
     get conversationID(): string | null {

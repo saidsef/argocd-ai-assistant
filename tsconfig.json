@@ -13,8 +13,10 @@
         "allowJs": true,
         "strict": false,
         "noUnusedLocals": true,
-        "sourceMap": true
+        "sourceMap": true,
+        "types": ["node"],
+        "ignoreDeprecations": "6.0"
     },
-    "include": ["src/*"],
+    "include": ["src/**/*"],
     "exclude": ["node_modules"]
 }

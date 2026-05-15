@@ -1,51 +1,208 @@
-#chatbot-resource .rcb-chat-window,
-#chatbot-system .rcb-chat-window {
+#chatbot-resource,
+#chatbot-system {
     width: 100%;
     height: 80vh;
     border: none;
     box-shadow: none;
+    display: flex;
+    flex-direction: column;
 }
 
-/*
-  react-chatbotify applies inline styles (e.g. backgroundColor) directly on
-  bubble elements. !important is required here because inline styles have higher
-  specificity than regular CSS rules. If the library is ever updated to stop
-  injecting inline bubble colours, these !important declarations can be removed.
-*/
+:is(#chatbot-resource, #chatbot-system) .chat-message-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+}
 
 /* Tighter spacing between messages */
-:is(#chatbot-resource, #chatbot-system) .rcb-bot-message,
-:is(#chatbot-resource, #chatbot-system) .rcb-user-message {
+:is(#chatbot-resource, #chatbot-system) .chat-message {
     margin-top: 4px;
     padding: 10px 14px;
+    border-radius: 12px;
+    max-width: 80%;
+    word-wrap: break-word;
 }
 
-/* Light-mode bubble colours */
-:is(#chatbot-resource, #chatbot-system) .rcb-bot-message {
-    background-color: #EFF2F5 !important;
-    color: #1E2A36 !important;
-    white-space: normal !important;
+:is(#chatbot-resource, #chatbot-system) .chat-message-user {
+    margin-left: auto;
+    background-color: #00A2B3;
+    color: #FFFFFF;
 }
 
-:is(#chatbot-resource, #chatbot-system) .rcb-user-message {
-    background-color: #00A2B3 !important;
-    color: #FFFFFF !important;
+:is(#chatbot-resource, #chatbot-system) .chat-message-assistant {
+    margin-right: auto;
+    background-color: #EFF2F5;
+    color: #1E2A36;
+    border: 1px solid #ddd;
 }
 
-/*
-  Dark-mode colours depend on Argo CD's body.theme-dark class.
-  If a future Argo CD release renames this class (e.g. to .dark-theme),
-  these rules will silently fall back to the light-mode palette above.
-  Monitor upstream Argo CD UI changes when upgrading.
+/* Dark-mode colours depend on Argo CD's body.theme-dark class.
+   If a future Argo CD release renames this class (e.g. to .dark-theme),
+   these rules will silently fall back to the light-mode palette above.
+   Monitor upstream Argo CD UI changes when upgrading.
 */
-body.theme-dark :is(#chatbot-resource, #chatbot-system) .rcb-bot-message {
-    background-color: #2E3238 !important;
-    color: #E8EAED !important;
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-message-assistant {
+    background-color: #2E3238;
+    color: #E8EAED;
+    border: 1px solid #444;
 }
 
-body.theme-dark :is(#chatbot-resource, #chatbot-system) .rcb-user-message {
-    background-color: #007A87 !important;
-    color: #FFFFFF !important;
+/* Ensure marked-content inherits the bubble background so Argo CD global
+   div styles do not override it and make the content area transparent. */
+:is(#chatbot-resource, #chatbot-system) .marked-content {
+    background-color: #EFF2F5;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content {
+    background-color: #2E3238;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-message-user {
+    background-color: #007A87;
+    color: #FFFFFF;
+}
+
+/* Input area */
+:is(#chatbot-resource, #chatbot-system) .chat-input-form {
+    display: flex;
+    gap: 8px;
+    padding: 10px;
+    border-top: 1px solid #ddd;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-input-form {
+    border-top-color: #444;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 14px;
+    background-color: #fff;
+    color: #1E2A36;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-input {
+    background-color: #2E3238;
+    border-color: #555;
+    color: #E8EAED;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-send-button {
+    padding: 8px 16px;
+    background-color: #00A2B3;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-send-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-send-button:not(:disabled) {
+    background-color: #007A87;
+}
+
+/* Loading and error states */
+:is(#chatbot-resource, #chatbot-system) .chat-loading,
+:is(#chatbot-resource, #chatbot-system) .chat-error {
+    padding: 8px 14px;
+    margin-top: 4px;
+    border-radius: 12px;
+    font-size: 14px;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-loading {
+    color: #666;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-loading {
+    color: #aaa;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-error {
+    background-color: #ffebee;
+    color: #c62828;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-error {
+    background-color: #3c1a1a;
+    color: #ef9a9a;
+}
+
+/* Flow UI overlays */
+:is(#chatbot-resource, #chatbot-system) .chat-flow-ui {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px;
+    border-top: 1px solid #eee;
+    align-items: center;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-flow-ui {
+    border-top-color: #444;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-flow-button {
+    padding: 6px 12px;
+    background-color: #00A2B3;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-flow-button {
+    background-color: #007A87;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-flow-button-cancel {
+    padding: 6px 12px;
+    background-color: transparent;
+    color: #666;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-flow-button-cancel {
+    color: #aaa;
+    border-color: #555;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-flow-input {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 14px;
+    min-width: 120px;
+    background-color: #fff;
+    color: #1E2A36;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-flow-input {
+    background-color: #2E3238;
+    border-color: #555;
+    color: #E8EAED;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-flow-error {
+    color: #c62828;
+    font-size: 13px;
+    width: 100%;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-flow-error {
+    color: #ef9a9a;
 }
 
 /* Reset markdown-generated margins inside bubbles */
@@ -59,4 +216,113 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .rcb-user-message {
 
 :is(#chatbot-resource, #chatbot-system) .marked-content :is(p, ul, ol, pre, blockquote, hr, h1, h2, h3, h4, h5, h6):last-child {
     margin-bottom: 0;
+}
+
+/* Lists */
+:is(#chatbot-resource, #chatbot-system) .marked-content ul,
+:is(#chatbot-resource, #chatbot-system) .marked-content ol {
+    padding-left: 1.5em;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content ul {
+    list-style-type: disc;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content ol {
+    list-style-type: decimal;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content li {
+    margin: 0.15em 0;
+}
+
+/* Code blocks and inline code */
+:is(#chatbot-resource, #chatbot-system) .marked-content pre {
+    background-color: #f4f4f5;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    font-family: monospace;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content code {
+    background-color: #f4f4f5;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 2px 5px;
+    font-family: monospace;
+    font-size: 13px;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content pre code {
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+}
+
+/* Links */
+:is(#chatbot-resource, #chatbot-system) .marked-content a {
+    color: #00A2B3;
+    text-decoration: underline;
+}
+
+/* Blockquotes */
+:is(#chatbot-resource, #chatbot-system) .marked-content blockquote {
+    border-left: 3px solid #ccc;
+    padding-left: 10px;
+    color: #555;
+}
+
+/* Tables */
+:is(#chatbot-resource, #chatbot-system) .marked-content table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14px;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content th,
+:is(#chatbot-resource, #chatbot-system) .marked-content td {
+    border: 1px solid #ddd;
+    padding: 6px 10px;
+    text-align: left;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content th {
+    background-color: #f4f4f5;
+    font-weight: 600;
+}
+
+/* Dark mode overrides for markdown content */
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content pre {
+    background-color: #1e1e1e;
+    border-color: #444;
+    color: #e8eaed;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content code {
+    background-color: #1e1e1e;
+    border-color: #444;
+    color: #e8eaed;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content a {
+    color: #4dd0e1;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content blockquote {
+    border-left-color: #555;
+    color: #aaa;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content th,
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content td {
+    border-color: #444;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content th {
+    background-color: #2e3238;
 }

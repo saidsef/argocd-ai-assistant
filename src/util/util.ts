@@ -1,5 +1,13 @@
 import { marked, Renderer } from "marked";
+import type { ChatMessage } from "../components/useChat";
 import { AssistantSettings, Attachment, AttachmentType, QueryContext } from "../model/provider";
+
+export function generateId(): string {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
 
 export const HttpHeader = {
     CONTENT_TYPE: 'Content-Type',
@@ -71,10 +79,12 @@ export class QueryContextImpl implements QueryContext {
 
 export function getResourceIdentifier(resource: any): string {
     if (resource == undefined) return "Undefined";
-    const namespace = resource.metadata.namespace != undefined ? resource.metadata.namespace : "";
-    const version = resource.apiVersion != undefined ? resource.apiVersion.replace(/\//g, "-") : "";
-    const kind = resource.kind != undefined ? resource.kind : "";
-    return version + "-" + kind + "-" + namespace + "-" + resource.metadata.name;
+    const uid = resource.metadata?.uid;
+    if (uid) return uid;
+    const namespace = resource.metadata?.namespace ?? "";
+    const kind = resource.kind ?? "";
+    const name = resource.metadata?.name ?? "";
+    return kind + "-" + namespace + "-" + name;
 }
 
 export function getContainers(resource: any): string[] {
@@ -97,6 +107,20 @@ export function getContainers(resource: any): string[] {
         }
     }
     return result;
+}
+
+export function injectMessage(
+    msg: string,
+    role: "user" | "assistant" = "assistant"
+): (prev: ChatMessage[]) => ChatMessage[] {
+    return (prev) => [
+        ...prev,
+        {
+            id: generateId(),
+            role,
+            parts: [{ type: "text" as const, text: msg }]
+        }
+    ];
 }
 
 export function isAttachRequest(input: string): boolean {
