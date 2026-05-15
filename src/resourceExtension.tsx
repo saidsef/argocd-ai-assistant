@@ -42,7 +42,7 @@ export const ResourceAssistantExtension = (props: any) => {
     const [provider] = React.useState<QueryProvider>(
         createProvider(settings.provider as Provider)
     );
-    const storageRef = React.useRef(new ManageStorage(ExtensionScope.Resource));
+    const storageRef = React.useRef<ManageStorage | null>(null);
 
     React.useEffect(() => {
         if (globalThis.argocdAssistantSettings) {
@@ -75,10 +75,9 @@ export const ResourceAssistantExtension = (props: any) => {
     // then sets chatKey to mount (or remount) ChatInterface with clean storage.
     React.useEffect(() => {
         if (resourceID === "Undefined") return;
-        if (storageRef.current.resourceID !== null && storageRef.current.resourceID !== resourceID) {
-            storageRef.current.clear();
+        if (!storageRef.current || storageRef.current.namespace !== resourceID) {
+            storageRef.current = new ManageStorage(ExtensionScope.Resource, resourceID);
         }
-        storageRef.current.resourceID = resourceID;
         setFlowNode("start");
         setForm({});
         setChatKey(resourceID);
@@ -103,9 +102,9 @@ export const ResourceAssistantExtension = (props: any) => {
             });
         }
 
-        if (storageRef.current.hasLogs()) {
+        if (storageRef.current!.hasLogs()) {
             attachments.push({
-                content: storageRef.current.logs,
+                content: storageRef.current!.logs,
                 mimeType: "application/json",
                 type: AttachmentType.LOG
             });
@@ -114,16 +113,16 @@ export const ResourceAssistantExtension = (props: any) => {
         const currentSettings = globalThis.argocdAssistantSettings ?? settings;
         return new QueryContextImpl(
             application,
-            storageRef.current.conversationID,
-            storageRef.current.data,
+            storageRef.current!.conversationID,
+            storageRef.current!.data,
             attachments,
             currentSettings
         );
     }, [application, resource, events, settings]);
 
     const handleQueryComplete = React.useCallback((response: QueryResponse) => {
-        if (response.conversationID !== undefined) storageRef.current.conversationID = response.conversationID;
-        if (response.data !== undefined) storageRef.current.data = response.data;
+        if (response.conversationID !== undefined) storageRef.current!.conversationID = response.conversationID;
+        if (response.data !== undefined) storageRef.current!.data = response.data;
     }, []);
 
     const welcomeMessage =
@@ -207,7 +206,7 @@ export const ResourceAssistantExtension = (props: any) => {
             setFlowNode("get_logs");
             getLogs(application, resource, form.container, lines)
                 .then((result: LogEntry[]) => {
-                    storageRef.current.logs = JSON.stringify(result);
+                    storageRef.current!.logs = JSON.stringify(result);
                     setMessages(injectMessage("Requested logs have been attached"));
                     setFlowNode("loop");
                 })
@@ -235,7 +234,7 @@ export const ResourceAssistantExtension = (props: any) => {
                 setFlowNode("token_invalid");
                 return;
             }
-            storageRef.current.mcpToken = input.trim();
+            storageRef.current!.mcpToken = input.trim();
             setMessages(injectMessage("Token saved. I will use it for MCP server requests."));
             setForm({});
             setFlowNode("token_saved");
@@ -363,7 +362,7 @@ export const ResourceAssistantExtension = (props: any) => {
             provider={provider}
             getContext={getContext}
             welcomeMessage={welcomeMessage}
-            storage={storageRef.current}
+            storage={storageRef.current!}
             onQueryComplete={handleQueryComplete}
             onCommand={handleCommand}
         >

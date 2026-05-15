@@ -10,15 +10,18 @@ export class ManageStorage {
     private DATA_KEY: string;
     private ARGOCD_MCP_TOKEN: string;
     private _scope: ExtensionScope;
+    private _namespace?: string;
 
-    constructor(scope: ExtensionScope) {
+    constructor(scope: ExtensionScope, namespace?: string) {
         this._scope = scope;
-        this.CHAT_HISTORY_KEY = `${this.scope}-argocd-assistant-chat-history-v2`;
-        this.RESOURCE_ID_KEY = `${this.scope}-argocd-assistant-resource-id`;
-        this.LOGS_KEY = `${this.scope}-argocd-assistant-logs`;
-        this.CONVERSATION_ID_KEY = `${this.scope}-argocd-assistant-conversation-id`;
-        this.DATA_KEY = `${this.scope}-argocd-assistant-data`;
-        this.ARGOCD_MCP_TOKEN = `${this.scope}-argocd-mcp-token`;
+        this._namespace = namespace;
+        const prefix = namespace ? `${scope}-${namespace}` : scope;
+        this.CHAT_HISTORY_KEY = `${prefix}-argocd-assistant-chat-history-v2`;
+        this.RESOURCE_ID_KEY = `${prefix}-argocd-assistant-resource-id`;
+        this.LOGS_KEY = `${prefix}-argocd-assistant-logs`;
+        this.CONVERSATION_ID_KEY = `${prefix}-argocd-assistant-conversation-id`;
+        this.DATA_KEY = `${prefix}-argocd-assistant-data`;
+        this.ARGOCD_MCP_TOKEN = `${prefix}-argocd-mcp-token`;
     }
 
     public clear() {
@@ -48,6 +51,10 @@ export class ManageStorage {
 
     get scope(): ExtensionScope {
         return this._scope;
+    }
+
+    get namespace(): string | undefined {
+        return this._namespace;
     }
 
     get conversationID(): string | null {
