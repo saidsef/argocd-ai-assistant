@@ -79,10 +79,12 @@ export class QueryContextImpl implements QueryContext {
 
 export function getResourceIdentifier(resource: any): string {
     if (resource == undefined) return "Undefined";
-    const namespace = resource.metadata.namespace != undefined ? resource.metadata.namespace : "";
-    const version = resource.apiVersion != undefined ? resource.apiVersion.replace(/\//g, "-") : "";
-    const kind = resource.kind != undefined ? resource.kind : "";
-    return version + "-" + kind + "-" + namespace + "-" + resource.metadata.name;
+    const uid = resource.metadata?.uid;
+    if (uid) return uid;
+    const namespace = resource.metadata?.namespace ?? "";
+    const kind = resource.kind ?? "";
+    const name = resource.metadata?.name ?? "";
+    return kind + "-" + namespace + "-" + name;
 }
 
 export function getContainers(resource: any): string[] {

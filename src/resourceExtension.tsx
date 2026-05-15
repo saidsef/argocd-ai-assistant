@@ -74,6 +74,7 @@ export const ResourceAssistantExtension = (props: any) => {
     // Clears storage when we land on a different resource than what was last saved,
     // then sets chatKey to mount (or remount) ChatInterface with clean storage.
     React.useEffect(() => {
+        if (resourceID === "Undefined") return;
         if (storageRef.current.resourceID !== null && storageRef.current.resourceID !== resourceID) {
             storageRef.current.clear();
         }
