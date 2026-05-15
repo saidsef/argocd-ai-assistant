@@ -33,6 +33,7 @@
     margin-right: auto;
     background-color: #EFF2F5;
     color: #1E2A36;
+    border: 1px solid #ddd;
 }
 
 /* Dark-mode colours depend on Argo CD's body.theme-dark class.
@@ -43,6 +44,17 @@
 body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-message-assistant {
     background-color: #2E3238;
     color: #E8EAED;
+    border: 1px solid #444;
+}
+
+/* Ensure marked-content inherits the bubble background so Argo CD global
+   div styles do not override it and make the content area transparent. */
+:is(#chatbot-resource, #chatbot-system) .marked-content {
+    background-color: #EFF2F5;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content {
+    background-color: #2E3238;
 }
 
 body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-message-user {
