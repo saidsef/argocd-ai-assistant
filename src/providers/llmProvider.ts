@@ -1,8 +1,13 @@
 import { Params } from "react-chatbotify";
 import { QueryContext, QueryProvider, QueryResponse } from "../model/provider";
 import { getMappedHeaders } from "../util/util";
+import { FeatureFlags, isFeatureEnabled } from "../featureFlags";
+import { McpClient, McpTool } from "./mcpClient";
 
 export class LlmProvider implements QueryProvider {
+
+    private mcpClient?: McpClient;
+    private mcpTools?: McpTool[];
 
     setContext(_context: QueryContext) {
         return;
@@ -19,9 +24,87 @@ export class LlmProvider implements QueryProvider {
             };
         }
         const apiKey = settings.data?.apiKey;
+        const mcpServerUrls: string[] | undefined = settings.data?.mcpServers;
 
-        const messages = this.buildMessages(context, prompt);
+        let mcpTools: McpTool[] | undefined;
+        if (isFeatureEnabled(FeatureFlags.ArgoCDMCP) && mcpServerUrls && mcpServerUrls.length > 0) {
+            try {
+                if (!this.mcpClient) {
+                    this.mcpClient = new McpClient(mcpServerUrls);
+                    const connectErrors = await this.mcpClient.connect();
+                    if (connectErrors.length > 0) {
+                        console.error("MCP connection errors:", connectErrors);
+                    }
+                }
+                if (!this.mcpTools) {
+                    this.mcpTools = await this.mcpClient.listAllTools();
+                }
+                mcpTools = this.mcpTools;
+                if (!mcpTools || mcpTools.length === 0) {
+                    return {
+                        success: false,
+                        error: { status: 500, message: "MCP servers are configured but no tools were discovered. Check that the servers are running and expose tools." }
+                    };
+                }
+            } catch (err) {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                return {
+                    success: false,
+                    error: { status: 500, message: `MCP initialization failed: ${errMsg}` }
+                };
+            }
+        }
 
+        const messages = this.buildMessages(context, prompt, mcpTools);
+
+        const response = await this.sendChatCompletion(baseURL, model, apiKey, context, messages, params);
+        if (!response.success) {
+            return response;
+        }
+
+        const fullText = response.data || "";
+        const toolCall = this.parseToolCall(fullText);
+        if (toolCall && this.mcpClient && mcpTools) {
+            const tool = mcpTools.find(t => t.name === toolCall.name);
+            if (tool) {
+                try {
+                    const toolResult = await this.mcpClient.callTool(tool.serverIndex, toolCall.name, toolCall.arguments);
+                    const followUpMessages = [
+                        ...messages,
+                        { role: "assistant", content: fullText },
+                        {
+                            role: "user",
+                            content: `Tool result for ${toolCall.name}:\n${toolResult}\n\nPlease answer the original question using this result.`
+                        }
+                    ];
+                    const followUpResponse = await this.sendChatCompletion(baseURL, model, apiKey, context, followUpMessages, params);
+                    return { success: followUpResponse.success, error: followUpResponse.error };
+                } catch (err) {
+                    const errMsg = err instanceof Error ? err.message : String(err);
+                    return {
+                        success: false,
+                        error: { status: 500, message: `Tool call failed: ${errMsg}` }
+                    };
+                }
+            } else {
+                return {
+                    success: false,
+                    error: { status: 500, message: `Tool '${toolCall.name}' is not available. The model attempted to use a tool that was not discovered from any configured MCP server.` }
+                };
+            }
+        }
+
+        return { success: true };
+    }
+
+    private async sendChatCompletion(
+        baseURL: string,
+        model: string,
+        apiKey: string | undefined,
+        context: QueryContext,
+        messages: Array<{ role: string; content: string }>,
+        params: Params
+    ): Promise<QueryResponse & { data?: string }> {
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
         };
@@ -65,7 +148,7 @@ export class LlmProvider implements QueryProvider {
                     message = "LLM endpoint not found (404). Check the baseURL in the extension settings.";
                     break;
                 case 429:
-                    message = "Rate limit exceeded (429). Too many requests — try again shortly.";
+                    message = "Rate limit exceeded (429). Too many requests - try again shortly.";
                     break;
                 default:
                     message = response.status >= 500
@@ -114,23 +197,56 @@ export class LlmProvider implements QueryProvider {
             }
         }
 
-        return { success: true };
+        return { success: true, data: text };
     }
 
-    private buildMessages(context: QueryContext, prompt: string): Array<{ role: string; content: string }> {
+    private buildMessages(context: QueryContext, prompt: string, mcpTools?: McpTool[]): Array<{ role: string; content: string }> {
         const messages: Array<{ role: string; content: string }> = [];
 
+        let contextText = "";
         if (context.attachments.length > 0) {
-            let contextText = "Context:\n";
+            contextText = "Context:\n";
             for (const attachment of context.attachments) {
                 const label = this.attachmentLabel(attachment.type);
                 contextText += `\n[${label} - ${attachment.mimeType}]:\n${attachment.content}\n`;
             }
+        }
+
+        if (mcpTools && mcpTools.length > 0) {
+            if (contextText) contextText += "\n";
+            contextText += "Available tools:\n";
+            for (const tool of mcpTools) {
+                contextText += `- ${tool.name}: ${tool.description || "No description"}\n`;
+                if (tool.inputSchema) {
+                    contextText += `  Arguments schema: ${JSON.stringify(tool.inputSchema)}\n`;
+                }
+            }
+            contextText += "\nIf you need to use a tool, respond ONLY with:\n";
+            contextText += '<tool name="TOOL_NAME">\n{JSON arguments matching the schema}\n</tool>\n';
+            contextText += "Do not include any other text when using a tool.";
+        }
+
+        if (contextText) {
             messages.push({ role: 'system', content: contextText });
         }
 
         messages.push({ role: 'user', content: prompt });
         return messages;
+    }
+
+    private parseToolCall(text: string): { name: string; arguments: any } | null {
+        const trimmed = text.trim();
+        const match = trimmed.match(/^<tool\s+name="([^"]+)">\s*([\s\S]*?)\s*<\/tool>$/);
+        if (!match) return null;
+
+        const name = match[1];
+        const argsText = match[2].trim();
+        try {
+            const args = JSON.parse(argsText);
+            return { name, arguments: args };
+        } catch (_e) {
+            return { name, arguments: {} };
+        }
     }
 
     private attachmentLabel(type: number): string {

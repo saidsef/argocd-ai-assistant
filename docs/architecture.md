@@ -90,5 +90,17 @@ Experimental features are gated behind feature flags in `src/featureFlags.ts`:
 
 - **`mcp-for-argocd`** - Controls the system-level MCP extension and the `token` conversation flow. **Disabled by default.** When enabled, the extension registers a system-level extension at `/assistant` in addition to the per-resource tab, allowing users to manage an Argo CD API token for MCP server access from the top-level navigation.
 
+### MCP Tool Integration
+
+When `data.mcpServers` is configured in the settings, the LLM provider lazily connects to each MCP server using an HTTP-streamable JSON-RPC transport. The provider:
+
+1. Sends an `initialize` handshake to each server on first use.
+2. Aggregates available tools from all servers via `tools/list`.
+3. Injects a "Tools" section into the system message describing each tool and its JSON schema.
+4. After the LLM responds, scans for a `<tool>` tag in the response text.
+5. If a tool call is detected, routes the call to the correct server via `tools/call` and appends the result to the conversation as a follow-up query.
+
+The assistant limits itself to a single tool-call round-trip per user query to keep response times predictable. MCP servers are assumed to require no authentication. If a server is unreachable or returns an error, the provider logs the failure and falls back to normal LLM-only behaviour.
+
 While React ChatBotify does have direct support for LLM providers these are not used as additional features
 were needed over and above what the component provided such as attaching context.
