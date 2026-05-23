@@ -39,7 +39,7 @@
         "dompurify": "^3.4.3",
         "marked": "^18.0.3",
         "typescript": "^6.0.3",
-        "webpack": "^5.106.2",
+        "webpack": "^5.107.1",
         "webpack-cli": "^7.0.2"
     }
 }
