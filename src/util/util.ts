@@ -1,4 +1,3 @@
-import { marked, Renderer } from "marked";
 import type { ChatMessage } from "../components/useChat";
 import { AssistantSettings, Attachment, AttachmentType, QueryContext } from "../model/provider";
 
@@ -170,13 +169,4 @@ export function getHeaders(application: any, streaming: boolean): Headers {
         "Argocd-Project-Name": `${project}`,
     });
     return headers;
-}
-
-export function convertToHTML(markdown: string, render: Renderer): string {
-    const sanitized = markdown.replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-    return marked(sanitized, { renderer: render, async: false });
 }

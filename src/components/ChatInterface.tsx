@@ -138,7 +138,7 @@ const ChatInterface = ({
         setInput(e.target.value);
     };
 
-    const wrappedSubmit = (e?: React.FormEvent<HTMLFormElement>) => {
+    const wrappedSubmit = (e?: React.SubmitEvent<HTMLFormElement>) => {
         e?.preventDefault();
         if (!input.trim()) return;
         if (onCommand && onCommand(input.trim(), messages, setMessages)) {

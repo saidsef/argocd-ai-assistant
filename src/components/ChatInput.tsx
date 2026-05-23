@@ -3,7 +3,7 @@ import * as React from "react";
 interface ChatInputProps {
     input: string;
     handleInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-    handleSubmit: (e?: React.FormEvent<HTMLFormElement>) => void;
+    handleSubmit: (e?: React.SubmitEvent<HTMLFormElement>) => void;
     disabled: boolean;
 }
 

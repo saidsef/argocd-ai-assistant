@@ -1,9 +1,6 @@
 import * as React from "react";
-import * as dompurify from 'dompurify';
-
+import DOMPurify from 'dompurify';
 import { marked } from "marked";
-
-const purifier = dompurify['default'] as dompurify.DOMPurify;
 
 const MarkedWrapper = ({
     children
@@ -19,10 +16,10 @@ const MarkedWrapper = ({
             .replace(/"/g, "&quot;")
             .replace(/'/g, "&#039;") :
         "";
-    const text = purifier.sanitize(marked.parse(markdown, { async: false }));
+    const text = DOMPurify.sanitize(marked.parse(markdown, { async: false }));
     return (
         <div className="marked-content" dangerouslySetInnerHTML={{ __html: text }} />
     );
 };
 
-export default MarkedWrapper;
+export default React.memo(MarkedWrapper);
