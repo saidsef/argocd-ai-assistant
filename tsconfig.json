@@ -12,10 +12,10 @@
         "jsx": "react",
         "allowJs": true,
         "strict": false,
+        "ignoreDeprecations": "6.0",
         "noUnusedLocals": true,
         "sourceMap": true,
         "types": ["node"],
-        "ignoreDeprecations": "6.0"
     },
     "include": ["src/**/*"],
     "exclude": ["node_modules"]

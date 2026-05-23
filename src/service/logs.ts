@@ -1,4 +1,4 @@
-import { LogEntry } from "src/model/argocd";
+import { LogEntry } from "../model/argocd";
 import { getHeaders, Kinds } from "../util/util";
 
 export const MAX_LINES = 250;
@@ -14,8 +14,6 @@ function getGroup(apiVersion: string): string {
 }
 
 export const getLogs = async (application: any, resource: any, container: string, count: number): Promise<LogEntry[]> => {
-    console.log(resource);
-
     const params = new URLSearchParams({
         appNamespace: application.metadata.namespace,
         namespace: resource.metadata.namespace,
@@ -66,8 +64,6 @@ export const getLogs = async (application: any, resource: any, container: string
         for (const part of parts) {
             try {
                 const jsonObject = JSON.parse(part);
-                console.log("jsonObject");
-                console.log(jsonObject);
                 results.push(jsonObject as LogEntry);
                 index++;
                 if (index > count) break;
