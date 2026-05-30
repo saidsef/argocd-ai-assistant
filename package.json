@@ -29,17 +29,17 @@
         "sass": "^1.100.0",
         "sass-loader": "^17.0.0",
         "style-loader": "^4.0.0",
-        "ts-loader": "^9.5.7",
+        "ts-loader": "^9.6.0",
         "ts-node": "^10.9.2"
     },
     "resolutions": {
         "fast-uri": "^3.1.2"
     },
     "dependencies": {
-        "dompurify": "^3.4.5",
+        "dompurify": "^3.4.7",
         "marked": "^18.0.4",
         "typescript": "^6.0.3",
-        "webpack": "^5.107.1",
-        "webpack-cli": "^7.0.2"
+        "webpack": "^5.107.2",
+        "webpack-cli": "^7.0.3"
     }
 }
