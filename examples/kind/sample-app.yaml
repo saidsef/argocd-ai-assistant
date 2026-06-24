@@ -1,0 +1,16 @@
+# Minimal Application that need only exist (not sync) - the proxy resolves the
+# Argocd-Application-Name/Project headers against it for RBAC during verify.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sample-app
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/argoproj/argocd-example-apps
+    path: guestbook
+    targetRevision: HEAD
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default

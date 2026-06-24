@@ -1,0 +1,32 @@
+# Strategic-merge patch for the argocd-server Deployment (raw method): adds the
+# installer initContainer and the shared `extensions` emptyDir mounted into BOTH
+# the initContainer AND the server container (the server mount is essential),
+# plus the settings ConfigMap mount.
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: extension-argocd-ai-assistant
+          image: quay.io/argoprojlabs/argocd-extension-installer:v1.0.0
+          securityContext:
+            allowPrivilegeEscalation: false
+          env:
+            - name: EXTENSION_URL
+              value: "http://ext-host/extension.tar"
+          volumeMounts:
+            - name: extensions
+              mountPath: /tmp/extensions/
+      containers:
+        - name: argocd-server
+          volumeMounts:
+            - name: extensions
+              mountPath: /tmp/extensions/
+            - name: ai-assistant-settings
+              mountPath: /tmp/extensions/resources/argocd-ai-assistant-settings
+              readOnly: true
+      volumes:
+        - name: extensions
+          emptyDir: {}
+        - name: ai-assistant-settings
+          configMap:
+            name: argocd-ai-assistant-settings

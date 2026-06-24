@@ -1,0 +1,40 @@
+# Helm values for installing Argo CD (argo/argo-cd) with the AI Assistant, using
+# the chart's built-in server.extensions block. Apply settings-configmap.yaml too.
+configs:
+  cm:
+    # Proxy target. Authorization is injected server-side from the labeled Secret
+    # argocd-ai-assistant-secret; point services[].url at your real backend.
+    extension.config.assistant: |
+      connectionTimeout: 5s
+      keepAlive: 360s
+      idleConnectionTimeout: 360s
+      maxIdleConnections: 30
+      services:
+      - url: http://mock-llm:8000
+        headers:
+        - name: Authorization
+          value: '$argocd-ai-assistant-secret:openai-api-key'
+  params:
+    server.enable.proxy.extension: "true"
+  rbac:
+    policy.default: role:readonly
+    policy.csv: |
+      p, role:readonly, extensions, invoke, assistant, allow
+
+server:
+  extensions:
+    enabled: true
+    extensionList:
+      - name: argocd-ai-assistant
+        env:
+          - name: EXTENSION_URL
+            value: "http://ext-host/extension.tar"
+  # Settings extension (Option B).
+  volumes:
+    - name: ai-assistant-settings
+      configMap:
+        name: argocd-ai-assistant-settings
+  volumeMounts:
+    - name: ai-assistant-settings
+      mountPath: /tmp/extensions/resources/argocd-ai-assistant-settings
+      readOnly: true

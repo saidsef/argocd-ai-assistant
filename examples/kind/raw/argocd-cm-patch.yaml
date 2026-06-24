@@ -1,0 +1,14 @@
+# argocd-cm merge patch (raw method): proxy target for /extensions/assistant/*.
+# Authorization is injected from the labeled Secret argocd-ai-assistant-secret;
+# point services[].url at your real backend in production.
+data:
+  extension.config.assistant: |
+    connectionTimeout: 5s
+    keepAlive: 360s
+    idleConnectionTimeout: 360s
+    maxIdleConnections: 30
+    services:
+    - url: http://mock-llm:8000
+      headers:
+      - name: Authorization
+        value: '$argocd-ai-assistant-secret:openai-api-key'

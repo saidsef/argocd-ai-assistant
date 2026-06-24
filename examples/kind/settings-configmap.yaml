@@ -1,0 +1,15 @@
+# Settings extension (Option B): sets globalThis.argocdAssistantSettings, mounted
+# at /tmp/extensions/resources/argocd-ai-assistant-settings. baseURL is omitted so
+# the Assistant uses the proxy path (/extensions/assistant).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-ai-assistant-settings
+data:
+  extension-settings.js: |
+    globalThis.argocdAssistantSettings = {
+        provider: "LLM",
+        model: "mock-model",
+        data: {}
+    };
+    (() => { console.log("Argo CD AI Assistant settings loaded (kind example)"); })();
