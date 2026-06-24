@@ -87,9 +87,8 @@ spec:
 
 Replace `v2.10.0` with the [latest release tag](../deployment.md#build-and-package).
 
-> Ready-to-apply patch files for the ConfigMaps and Deployment are in
-> [`examples/kind/raw/`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/kind/raw)
-> (applied with `kubectl patch ... --patch-file`).
+> Ready-to-apply examples are in [`examples/kind/`](https://github.com/saidsef/argocd-ai-assistant/tree/main/examples/kind)
+> (`raw-cm-patch.yaml`, `raw-server-patch.yaml`, applied via `kubectl patch`; see `setup.sh`).
 
 ## 5. Add the settings extension
 

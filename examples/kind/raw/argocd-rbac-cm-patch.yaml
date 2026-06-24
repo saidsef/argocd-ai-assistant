@@ -1,6 +1,0 @@
-# argocd-rbac-cm merge patch (raw method): lets the readonly role (and above)
-# invoke the `assistant` proxy extension.
-data:
-  policy.default: role:readonly
-  policy.csv: |
-    p, role:readonly, extensions, invoke, assistant, allow

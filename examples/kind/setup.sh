@@ -25,7 +25,7 @@ echo "== [3/5] Namespace + support services (tar host + mock LLM) =="
 $K create namespace "$NS" --dry-run=client -o yaml | $K apply -f -
 $K -n "$NS" delete configmap ext-tar --ignore-not-found
 $K -n "$NS" create configmap ext-tar --from-file=extension.tar="$TAR"
-$K -n "$NS" apply -f "$HERE/ext-host/ext-host.yaml" -f "$HERE/mock-llm/mock-llm.yaml"
+$K -n "$NS" apply -f "$HERE/ext-host.yaml" -f "$HERE/mock-llm.yaml"
 # Labeled Secret the proxy reads via $argocd-ai-assistant-secret:openai-api-key.
 $K -n "$NS" apply -f "$HERE/llm-api-secret.yaml"
 $K -n "$NS" rollout status deploy/ext-host --timeout=120s
@@ -37,10 +37,10 @@ case "$METHOD" in
     $K -n "$NS" apply --server-side --force-conflicts \
       -f "https://raw.githubusercontent.com/argoproj/argo-cd/$ARGOCD_VERSION/manifests/install.yaml"
     $K -n "$NS" apply -f "$HERE/settings-configmap.yaml"
-    $K -n "$NS" patch cm argocd-cm             --type merge     --patch-file "$HERE/raw/argocd-cm-patch.yaml"
-    $K -n "$NS" patch cm argocd-cmd-params-cm  --type merge     --patch-file "$HERE/raw/argocd-cmd-params-cm-patch.yaml"
-    $K -n "$NS" patch cm argocd-rbac-cm        --type merge     --patch-file "$HERE/raw/argocd-rbac-cm-patch.yaml"
-    $K -n "$NS" patch deploy argocd-server     --type strategic --patch-file "$HERE/raw/argocd-server-patch.yaml"
+    $K -n "$NS" patch cm argocd-cm         --type merge     --patch-file "$HERE/raw-cm-patch.yaml"
+    $K -n "$NS" patch cm argocd-cmd-params-cm --type merge -p '{"data":{"server.enable.proxy.extension":"true"}}'
+    $K -n "$NS" patch cm argocd-rbac-cm        --type merge -p '{"data":{"policy.default":"role:readonly","policy.csv":"p, role:readonly, extensions, invoke, assistant, allow"}}'
+    $K -n "$NS" patch deploy argocd-server --type strategic --patch-file "$HERE/raw-server-patch.yaml"
     $K -n "$NS" rollout restart deploy argocd-server
     ;;
   helm)
@@ -48,7 +48,7 @@ case "$METHOD" in
     helm repo update argo >/dev/null
     $K -n "$NS" apply -f "$HERE/settings-configmap.yaml"
     helm --kube-context "$CTX" upgrade --install argocd argo/argo-cd \
-      -n "$NS" -f "$HERE/helm/values.yaml" --wait --timeout 5m
+      -n "$NS" -f "$HERE/helm-values.yaml" --wait --timeout 5m
     ;;
   operator)
     OPERATOR_VERSION="${OPERATOR_VERSION:-v0.18.0}"
@@ -62,7 +62,7 @@ case "$METHOD" in
       | $K apply --server-side --force-conflicts -f -
     $K -n argocd-operator-system rollout status deploy/argocd-operator-controller-manager --timeout=240s
     $K -n "$NS" apply -f "$HERE/settings-configmap.yaml"
-    $K -n "$NS" apply -f "$HERE/operator/argocd-cr.yaml"
+    $K -n "$NS" apply -f "$HERE/operator-cr.yaml"
     # The operator creates argocd-server asynchronously; wait before rollout-status.
     echo "Waiting for the operator to create argocd-server..."
     for _ in $(seq 1 60); do $K -n "$NS" get deploy argocd-server >/dev/null 2>&1 && break; sleep 3; done

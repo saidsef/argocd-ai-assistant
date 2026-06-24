@@ -1,4 +1,0 @@
-# argocd-cmd-params-cm merge patch (raw method): enables the proxy extension
-# (ConfigMap equivalent of --enable-proxy-extension).
-data:
-  server.enable.proxy.extension: "true"

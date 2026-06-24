@@ -54,7 +54,7 @@ Replace `v2.10.0` with the [latest release tag](../deployment.md#build-and-packa
 For an external provider that requires an API key, store it in a labeled Secret (`argocd-ai-assistant-secret`, populated by a secret manager) and reference it from the proxy header - see [Injecting the API token](proxy.md#injecting-the-api-token).
 
 > A complete, tested CR (with the settings extension wired in) lives at
-> [`examples/kind/operator/argocd-cr.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/kind/operator/argocd-cr.yaml).
+> [`examples/kind/operator-cr.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/kind/operator-cr.yaml).
 
 ## Add the settings extension
 

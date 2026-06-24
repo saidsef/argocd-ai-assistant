@@ -90,16 +90,15 @@ kind delete cluster --name argocd-ai-operator
 | Path | Purpose |
 |------|---------|
 | `setup.sh` | create cluster, build + host tar, deploy mock LLM, install Argo CD via a method, verify |
-| `verify.sh` | the six end-to-end checks (method-agnostic) |
-| `kind-config.yaml` | optional single-node kind config (host port mappings) |
-| `ext-host/ext-host.yaml` | nginx serving the locally built tar in-cluster |
-| `mock-llm/mock-llm.yaml` | deterministic OpenAI-compatible mock (SSE streaming) |
+| `verify.sh` | the eight end-to-end checks (method-agnostic) |
+| `ext-host.yaml` | nginx serving the locally built tar in-cluster |
+| `mock-llm.yaml` | deterministic OpenAI-compatible mock (SSE streaming) |
 | `settings-configmap.yaml` | the settings extension (Option B, ConfigMap mount) |
 | `llm-api-secret.yaml` | dedicated labeled Secret the proxy reads (`$argocd-ai-assistant-secret:openai-api-key`) |
 | `sample-app.yaml` | minimal Application used by the proxy RBAC check |
-| `raw/` | argocd-cm / argocd-cmd-params-cm / argocd-rbac-cm / argocd-server patches |
-| `helm/values.yaml` | Helm values (built-in `server.extensions` block) |
-| `operator/argocd-cr.yaml` | ArgoCD custom resource for the argocd-operator |
+| `raw-cm-patch.yaml`, `raw-server-patch.yaml` | raw-method `argocd-cm` + `argocd-server` patches (cmd-params/rbac are inlined in `setup.sh`) |
+| `helm-values.yaml` | Helm values (built-in `server.extensions` block) |
+| `operator-cr.yaml` | ArgoCD custom resource for the argocd-operator |
 
 > The deployment artifacts here are the same ones referenced from
 > [`docs/deployment.md`](../../docs/deployment.md); they have each been verified to
