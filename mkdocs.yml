@@ -24,4 +24,12 @@ nav:
   - Architecture: architecture.md
   - Providers:
     - LLM: providers/llm.md
-  - Deployment: deployment.md
+  - Deployment:
+    - Overview: deployment.md
+    - Argo CD Operator: deployment/operator.md
+    - Helm Chart: deployment/helm.md
+    - Raw Manifests: deployment/raw.md
+    - Settings Extension: deployment/settings.md
+    - Proxy & Backend: deployment/proxy.md
+    - Local Testing (kind): deployment/local-testing.md
+    - Verification & Troubleshooting: deployment/verification.md

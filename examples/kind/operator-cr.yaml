@@ -1,0 +1,50 @@
+# ArgoCD CR (argocd-operator) with the AI Assistant. The argocd-server container
+# must also mount the `extensions` volume (server.volumeMounts), not just the
+# initContainer. Apply settings-configmap.yaml in the same namespace too.
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: argocd
+spec:
+  server:
+    extraCommandArgs:
+      - "--enable-proxy-extension"
+    initContainers:
+      - name: extension-argocd-ai-assistant
+        image: quay.io/argoprojlabs/argocd-extension-installer:v1.0.0
+        securityContext:
+          allowPrivilegeEscalation: false
+        env:
+          - name: EXTENSION_URL
+            value: "http://ext-host/extension.tar"
+        volumeMounts:
+          - name: extensions
+            mountPath: /tmp/extensions/
+    volumeMounts:
+      - name: extensions
+        mountPath: /tmp/extensions/
+      - name: ai-assistant-settings
+        mountPath: /tmp/extensions/resources/argocd-ai-assistant-settings
+        readOnly: true
+    volumes:
+      - name: extensions
+        emptyDir: {}
+      - name: ai-assistant-settings
+        configMap:
+          name: argocd-ai-assistant-settings
+  extraConfig:
+    extension.config.assistant: |
+      connectionTimeout: 5s
+      keepAlive: 360s
+      idleConnectionTimeout: 360s
+      maxIdleConnections: 30
+      services:
+      - url: http://mock-llm:8000
+        headers:
+        # injected from the labeled Secret argocd-ai-assistant-secret (setup.sh applies it)
+        - name: Authorization
+          value: '$argocd-ai-assistant-secret:openai-api-key'
+  rbac:
+    policy: |
+      g, admin, role:admin
+      p, role:readonly, extensions, invoke, assistant, allow

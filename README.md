@@ -55,7 +55,17 @@ No manual version bumping is required.
 
 ## Deployment
 
-See the [Deployment Guide](docs/deployment.md) for step-by-step instructions on building, packaging, hosting, and installing the extension into Argo CD via the Extension Installer.
+See the [Deployment Guide](docs/deployment.md) for step-by-step instructions on building, packaging, hosting, and installing the extension into Argo CD via the Extension Installer. It covers the Argo CD Operator, the community Helm chart, and raw manifests.
+
+### Local testing
+
+To try the extension end to end on a throwaway [kind](https://kind.sigs.k8s.io/) cluster - with a built-in mock LLM, no GPU or API key required - use the harness in [`examples/kind/`](./examples/kind):
+
+```shell
+./examples/kind/setup.sh raw    # or: helm | operator
+```
+
+A successful run installs Argo CD, installs this extension built from source, and verifies the full path (including a streamed proxy request) with `== 6 passed, 0 failed ==`. See [`examples/kind/README.md`](./examples/kind/README.md).
 
 ## Documentation
 

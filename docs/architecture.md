@@ -82,7 +82,7 @@ implies, loops on itself after every query. Users can opt to go to other flows b
 3. Entering the `attach` keyword will start the Attach Logs guided conversation flow. The Chatbot will prompt
 the user with a list of containers from which they can select one container for which to attach logs. Next they
 are prompted to select the number of lines to attach to maximum configurable limit.
-4. If the MCP feature flag is enabled, a `token` flow can be initiated by the user to provide an Argo CD API token. The token is stored in `sessionStorage` and can be used by an MCP server such as [mcp-for-argocd](https://github.com/saidsef/mcp-github-pr-issue-analyser) to interact with Argo CD on the user's behalf.
+4. If the MCP feature flag is enabled, a `token` flow can be initiated by the user to provide an Argo CD API token. The token is stored in `sessionStorage` and can be used by an MCP server such as [mcp-github-pr-issue-analyser](https://github.com/saidsef/mcp-github-pr-issue-analyser) to interact with Argo CD on the user's behalf.
 
 ### Feature Flags
 

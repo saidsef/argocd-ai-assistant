@@ -1,0 +1,52 @@
+# Serves the locally built extension tar in-cluster (local testing only) so the
+# installer initContainer can fetch http://ext-host/extension.tar. setup.sh
+# populates the mounted `ext-tar` ConfigMap from the built tar.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ext-host
+  labels:
+    app: ext-host
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ext-host
+  template:
+    metadata:
+      labels:
+        app: ext-host
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: tar
+              mountPath: /usr/share/nginx/html
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /extension.tar
+              port: 80
+            initialDelaySeconds: 2
+            periodSeconds: 3
+      volumes:
+        - name: tar
+          configMap:
+            name: ext-tar
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ext-host
+  labels:
+    app: ext-host
+spec:
+  selector:
+    app: ext-host
+  ports:
+    - port: 80
+      targetPort: 80

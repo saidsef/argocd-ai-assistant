@@ -2,7 +2,7 @@
 
 The LLM provider uses the standard OpenAI-compatible chat completions API. This allows it to work with any inference backend that supports the OpenAI API format, including:
 
-- **Local Inference Server** - Local inference with `local inference server`
+- **Local Inference Server** - Self-hosted local inference (e.g. Ollama)
 - **vLLM** - High-throughput inference engine
 - **OpenAI** - OpenAI's official API
 - **Azure OpenAI** - Microsoft's hosted OpenAI service
@@ -15,10 +15,13 @@ The LLM provider requires minimal configuration. The key settings are:
 | Setting | Required | Description |
 |---------|----------|-------------|
 | `provider` | Yes | Must be `"LLM"`. |
-| `baseURL` | No | The base URL of the OpenAI-compatible API. Defaults to `https://<argo-host>/extensions/assistant` (via Argo CD proxy). |
-| `apiKey` | No | API key for authentication. Required for cloud providers like OpenAI or Azure. **Raw token only** (e.g. `sk-xxxx`) - the provider code prepends `Bearer `. |
-| `model` | No | The model to use. If omitted, the provider may use a default model. |
+| `model` | Recommended | The model name (e.g. `gpt-4`). If omitted, queries fail with `LLM model is not configured`. |
+| `data.baseURL` | No | Base URL of the OpenAI-compatible API. Defaults to `https://<argo-host>/extensions/assistant` (via the Argo CD proxy). |
+| `data.apiKey` | No | API key sent from the browser (raw token; the provider adds the `Bearer ` prefix if missing). Browser-readable - for production, inject it server-side via the proxy instead: see [Injecting the API token](../deployment/proxy.md#injecting-the-api-token). |
+| `data.mcpServers` | No | Array of MCP server HTTP endpoints. See [MCP Tool Integration](../architecture.md#mcp-tool-integration). |
 | `maximumLogLines` | No | Max log lines attachable (default: 250). |
+
+`baseURL`, `apiKey`, and `mcpServers` live under the `data` object; `provider`, `model`, and `maximumLogLines` are top-level. See the [Settings Extension](../deployment/settings.md) page for how to deploy these settings.
 
 ### Example Settings
 
@@ -40,7 +43,8 @@ globalThis.argocdAssistantSettings = {
     model: "gpt-4",
     data: {
         baseURL: "https://api.openai.com/v1"
-        // apiKey should be injected via a mounted Secret or backend proxy
+        // Do not put the key here - it is readable in the browser. Inject it
+        // server-side via the proxy instead (see Injecting the API token).
     }
 };
 ```
@@ -49,7 +53,7 @@ globalThis.argocdAssistantSettings = {
 ```javascript
 globalThis.argocdAssistantSettings = {
     provider: "LLM",
-    model: "deepseek-v4-flash",
+    model: "deepseek-chat",
     data: {
         baseURL: "/extensions/assistant"
     }
