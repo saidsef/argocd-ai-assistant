@@ -8,15 +8,6 @@ export function generateId(): string {
     return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
 
-export const HttpHeader = {
-    CONTENT_TYPE: 'Content-Type',
-};
-
-export const Protocol = {
-    HTTP: 'http',
-    HTTPS: 'https'
-}
-
 export const Kinds = {
     POD: 'Pod',
     REPLICA_SET: 'ReplicaSet',
@@ -34,11 +25,6 @@ export const ContentType = {
     APPLICATION_FORM_URLENCODED: 'application/x-www-form-urlencoded',
     MULTIPART_FORM_DATA: 'multipart/form-data',
 } as const;
-
-export type Events = {
-    apiVersion: string,
-    items: any[]
-}
 
 export class QueryContextImpl implements QueryContext {
     private _application: any;
@@ -87,25 +73,10 @@ export function getResourceIdentifier(resource: any): string {
 }
 
 export function getContainers(resource: any): string[] {
-    const result: string[] = [];
-    if (resource?.kind === Kinds.POD) {
-        try {
-            resource.spec.containers.forEach((container) => {
-                result.push(container.name);
-            })
-        } catch (error) {
-            console.log("getContainers: This is not a pod")
-        }
-    } else if (resource?.spec?.template?.spec?.containers) {
-        try {
-            resource.spec.template.spec.containers.forEach((container) => {
-                result.push(container.name);
-            })
-        } catch (error) {
-            console.log("getContainers: Invalid pod specification")
-        }
-    }
-    return result;
+    const containers = resource?.kind === Kinds.POD
+        ? resource?.spec?.containers
+        : resource?.spec?.template?.spec?.containers;
+    return Array.isArray(containers) ? containers.map((c: any) => c.name) : [];
 }
 
 export function injectMessage(
@@ -147,8 +118,8 @@ export function getFilename(attachment: Attachment): string {
     }
 }
 
-export function getMappedHeaders(application: any, streaming: boolean): Record<string, string | null | undefined> {
-    const headers: Headers = getHeaders(application, true);
+export function getMappedHeaders(application: any): Record<string, string | null | undefined> {
+    const headers: Headers = getHeaders(application);
     var mappedHeaders: Record<string, string | null | undefined> = {}
     for (const [key, value] of headers.entries()) {
         mappedHeaders[key] = value;
@@ -156,7 +127,7 @@ export function getMappedHeaders(application: any, streaming: boolean): Record<s
     return mappedHeaders;
 }
 
-export function getHeaders(application: any, streaming: boolean): Headers {
+export function getHeaders(application: any): Headers {
     const applicationName = application?.metadata?.name || "";
     const applicationNamespace = application?.metadata?.namespace || "";
     const project = application?.spec?.project || "";

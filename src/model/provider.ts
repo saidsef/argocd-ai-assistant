@@ -10,11 +10,6 @@ export interface Logs {
     entries: string;
 }
 
-export type Events = {
-    apiVersion: string,
-    items: any[]
-}
-
 export enum AttachmentType {
     EVENTS = 0,
     LOG = 1,
@@ -48,6 +43,5 @@ export type QueryResponse = {
 }
 
 export interface QueryProvider {
-    setContext(context: QueryContext): void;
     query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal): Promise<QueryResponse>;
 }

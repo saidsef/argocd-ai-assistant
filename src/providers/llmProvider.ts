@@ -8,10 +8,6 @@ export class LlmProvider implements QueryProvider {
     private mcpClient?: McpClient;
     private mcpTools?: McpTool[];
 
-    setContext(_context: QueryContext) {
-        return;
-    }
-
     async query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal): Promise<QueryResponse> {
         const settings = context.settings;
         const baseURL = settings.data?.baseURL || `https://${location.host}/extensions/assistant`;
@@ -109,7 +105,7 @@ export class LlmProvider implements QueryProvider {
             'Content-Type': 'application/json',
         };
 
-        const argocdHeaders = getMappedHeaders(context.application, true);
+        const argocdHeaders = getMappedHeaders(context.application);
         Object.entries(argocdHeaders).forEach(([key, value]) => {
             if (value) {
                 const lowerKey = key.toLowerCase();
