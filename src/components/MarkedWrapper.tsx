@@ -8,13 +8,7 @@ const MarkedWrapper = ({
     children: React.ReactNode
 }) => {
     const markdown = typeof children === "string" ?
-        children
-            .replace(/\n{3,}/g, "\n\n")
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#039;") :
+        children.replace(/\n{3,}/g, "\n\n") :
         "";
     const text = DOMPurify.sanitize(marked.parse(markdown, { async: false }));
     return (
