@@ -8,7 +8,8 @@ import {
     isAttachRequest,
     isCancelRequest,
     isTokenRequest,
-    QueryContextImpl
+    QueryContextImpl,
+    stripManifestNoise
 } from "./util/util";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
@@ -88,7 +89,7 @@ export const ResourceAssistantExtension = (props: any) => {
 
         if (resource) {
             attachments.push({
-                content: JSON.stringify(resource),
+                content: JSON.stringify(stripManifestNoise(resource)),
                 mimeType: "application/json",
                 type: AttachmentType.MANIFEST
             });
@@ -96,7 +97,7 @@ export const ResourceAssistantExtension = (props: any) => {
 
         if (events?.items?.length > 0) {
             attachments.push({
-                content: JSON.stringify(events),
+                content: JSON.stringify({ ...events, items: events.items.map(stripManifestNoise) }),
                 mimeType: "application/json",
                 type: AttachmentType.EVENTS
             });
