@@ -10,8 +10,7 @@ interface ChatInputProps {
 const ChatInput = ({ input, handleInputChange, handleSubmit, disabled }: ChatInputProps) => {
     const inputRef = React.useRef<HTMLTextAreaElement>(null);
 
-    // Focus on mount and whenever the box re-enables after a reply, so the user
-    // can type the next question without clicking back into it.
+    // Focus on mount and when the box re-enables after a reply.
     React.useEffect(() => {
         if (!disabled) inputRef.current?.focus({ preventScroll: true });
     }, [disabled]);

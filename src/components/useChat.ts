@@ -64,8 +64,7 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
         let assistantText = "";
         let assistantId = "";
 
-        // Coalesce streaming updates to one render per animation frame so a
-        // fast stream doesn't re-parse the whole markdown on every token.
+        // Coalesce streaming updates to one render per frame to avoid per-token re-parses.
         let rafId: number | null = null;
         const renderAssistantText = () => {
             rafId = null;
@@ -117,8 +116,7 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
             setError(errorObj);
             setStatus("error");
         } finally {
-            // Flush any frame still pending so the complete final text always
-            // renders, whatever the exit path (end, error, or abort).
+            // Flush any pending frame so the final text always renders (end, error, or abort).
             if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
             if (assistantId) renderAssistantText();
             abortControllerRef.current = null;
