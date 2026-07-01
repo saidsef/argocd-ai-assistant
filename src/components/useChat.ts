@@ -61,6 +61,23 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
         const controller = new AbortController();
         abortControllerRef.current = controller;
 
+        let assistantText = "";
+        let assistantId = "";
+
+        // Coalesce streaming updates to one render per animation frame so a
+        // fast stream doesn't re-parse the whole markdown on every token.
+        let rafId: number | null = null;
+        const renderAssistantText = () => {
+            rafId = null;
+            setMessages((prev) =>
+                prev.map((m) =>
+                    m.id === assistantId
+                        ? { ...m, parts: [{ type: "text", text: assistantText }] }
+                        : m
+                )
+            );
+        };
+
         try {
             const stream = await transportRef.current.sendMessages({
                 messages: newMessages,
@@ -68,8 +85,6 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
             });
 
             const reader = stream.getReader();
-            let assistantText = "";
-            let assistantId = "";
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -86,13 +101,7 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
                     setStatus("streaming");
                 } else if (value.type === "text-delta" && value.delta) {
                     assistantText += value.delta;
-                    setMessages((prev) =>
-                        prev.map((m) =>
-                            m.id === assistantId
-                                ? { ...m, parts: [{ type: "text", text: assistantText }] }
-                                : m
-                        )
-                    );
+                    if (rafId === null) rafId = requestAnimationFrame(renderAssistantText);
                 } else if (value.type === "error" && value.errorText) {
                     throw new Error(value.errorText);
                 } else if (value.type === "text-end") {
@@ -108,6 +117,10 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
             setError(errorObj);
             setStatus("error");
         } finally {
+            // Flush any frame still pending so the complete final text always
+            // renders, whatever the exit path (end, error, or abort).
+            if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+            if (assistantId) renderAssistantText();
             abortControllerRef.current = null;
         }
     }, []); // stable - reads messages/transport via refs
