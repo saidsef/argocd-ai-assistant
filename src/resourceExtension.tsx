@@ -243,10 +243,7 @@ export const ResourceAssistantExtension = (props: any) => {
 
     React.useEffect(() => {
         let cancelled = false;
-        // Drop the previous resource's events immediately so a question asked
-        // before the refetch resolves never attaches stale events to the new
-        // resource. The cancelled flag ignores a superseded (or post-unmount)
-        // response, preventing an out-of-order fetch from overwriting newer events.
+        // Clear the previous resource's events and ignore superseded responses on switch.
         setEvents({ apiVersion: "v1", items: [] });
         let url = `/api/v1/applications/${application_name}/events?resourceUID=${resource.metadata.uid}&resourceNamespace=${resource.metadata.namespace}&resourceName=${resource.metadata.name}`;
         if (resource.kind === "Application") {
