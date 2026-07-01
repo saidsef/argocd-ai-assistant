@@ -16,11 +16,14 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
         <div className={`chat-message ${className}`}>
             {textParts.map((part, i) =>
                 isUser
-                    ? <span key={i}>{part.text}</span>
-                    : <MarkedWrapper key={i}>{part.text}</MarkedWrapper>
+                    ? <span key={`${message.id}-${i}`}>{part.text}</span>
+                    : <MarkedWrapper key={`${message.id}-${i}`}>{part.text}</MarkedWrapper>
             )}
         </div>
     );
 };
 
-export default ChatMessage;
+// Memoized so a streaming reply only re-renders its own bubble each frame,
+// not every message in the list. useChat keeps stable references for
+// unchanged messages, so shallow prop comparison is safe here.
+export default React.memo(ChatMessage);
