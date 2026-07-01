@@ -123,13 +123,28 @@ const ChatInterface = ({
 
     const [input, setInput] = React.useState("");
     const messagesEndRef = React.useRef<HTMLDivElement>(null);
+    const listRef = React.useRef<HTMLDivElement>(null);
+    // Keep the view pinned to the bottom only while the user is already there.
+    // Starts true so the first render (welcome message / restored history) lands
+    // at the latest message; flips to false when the user scrolls up to read
+    // back through the conversation so streaming deltas no longer yank them down.
+    const stickToBottomRef = React.useRef(true);
+
+    const handleScroll = () => {
+        const el = listRef.current;
+        if (!el) return;
+        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+        stickToBottomRef.current = distanceFromBottom <= 40;
+    };
 
     React.useEffect(() => {
         storage.saveMessages(messages);
     }, [messages, storage]);
 
     React.useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+        if (stickToBottomRef.current) {
+            messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+        }
     }, [messages]);
 
     const isBusy = status === "submitted" || status === "streaming";
@@ -145,13 +160,14 @@ const ChatInterface = ({
             setInput("");
             return;
         }
+        stickToBottomRef.current = true; // user just asked — follow the reply
         sendMessage({ text: input.trim() });
         setInput("");
     };
 
     return (
         <div id={id}>
-            <div className="chat-message-list" aria-live="polite" aria-label="Chat messages">
+            <div className="chat-message-list" ref={listRef} onScroll={handleScroll} aria-live="polite" aria-label="Chat messages">
                 {messages.map((message) => (
                     <ChatMessage key={message.id} message={message} />
                 ))}
