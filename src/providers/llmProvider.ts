@@ -160,39 +160,53 @@ export class LlmProvider implements QueryProvider {
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = '';
         let text = '';
+
+        // Parse a single SSE line. Returns an error response to short-circuit on, or null to continue.
+        const handleLine = (line: string): (QueryResponse & { data?: string }) | null => {
+            if (!line.startsWith('data: ')) return null;
+            const data = line.slice(6).trim();
+            if (data === '[DONE]' || !data) return null;
+
+            try {
+                const parsed = JSON.parse(data);
+                const content = parsed.choices?.[0]?.delta?.content;
+                if (content) {
+                    text += content;
+                    onStreamUpdate(text);
+                }
+                if (parsed.error) {
+                    return {
+                        success: false,
+                        error: { status: 500, message: parsed.error.message || 'Unknown error' },
+                    };
+                }
+            } catch (_e) {
+                // ignore malformed chunks
+            }
+            return null;
+        };
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split('\n');
+            // Keep the trailing partial line in the buffer so SSE events split
+            // across read() chunks are reassembled instead of silently dropped.
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
 
             for (const line of lines) {
-                if (!line.startsWith('data: ')) continue;
-                const data = line.slice(6).trim();
-                if (data === '[DONE]') continue;
-                if (!data) continue;
-
-                try {
-                    const parsed = JSON.parse(data);
-                    const content = parsed.choices?.[0]?.delta?.content;
-                    if (content) {
-                        text += content;
-                        onStreamUpdate(text);
-                    }
-                    if (parsed.error) {
-                        return {
-                            success: false,
-                            error: { status: 500, message: parsed.error.message || 'Unknown error' },
-                        };
-                    }
-                } catch (_e) {
-                    // ignore malformed chunks
-                }
+                const errorResponse = handleLine(line);
+                if (errorResponse) return errorResponse;
             }
         }
+
+        // Flush a final event left in the buffer when the stream ends without a trailing newline.
+        const trailing = handleLine(buffer);
+        if (trailing) return trailing;
 
         return { success: true, data: text };
     }

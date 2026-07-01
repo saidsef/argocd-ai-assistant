@@ -79,6 +79,21 @@ export function getContainers(resource: any): string[] {
     return Array.isArray(containers) ? containers.map((c: any) => c.name) : [];
 }
 
+// Removes noise that is irrelevant to the LLM but bloats the serialized manifest:
+// server-side-apply ownership tracking and the duplicate last-applied-configuration
+// annotation. Returns a new object - the original resource is never mutated.
+export function stripManifestNoise(resource: any): any {
+    if (!resource || typeof resource !== "object" || typeof resource.metadata !== "object" || resource.metadata === null) {
+        return resource;
+    }
+    const { managedFields, annotations, ...restMetadata } = resource.metadata;
+    if (annotations && typeof annotations === "object") {
+        const { ["kubectl.kubernetes.io/last-applied-configuration"]: _omit, ...restAnnotations } = annotations;
+        restMetadata.annotations = restAnnotations;
+    }
+    return { ...resource, metadata: restMetadata };
+}
+
 export function injectMessage(
     msg: string,
     role: "user" | "assistant" = "assistant"
