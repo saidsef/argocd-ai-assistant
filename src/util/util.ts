@@ -79,9 +79,8 @@ export function getContainers(resource: any): string[] {
     return Array.isArray(containers) ? containers.map((c: any) => c.name) : [];
 }
 
-// Removes noise that is irrelevant to the LLM but bloats the serialized manifest:
-// server-side-apply ownership tracking and the duplicate last-applied-configuration
-// annotation. Returns a new object - the original resource is never mutated.
+// Strips managedFields and the last-applied-configuration annotation to cut token bloat.
+// Returns a new object; the original is never mutated.
 export function stripManifestNoise(resource: any): any {
     if (!resource || typeof resource !== "object" || typeof resource.metadata !== "object" || resource.metadata === null) {
         return resource;

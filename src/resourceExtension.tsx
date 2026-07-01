@@ -71,9 +71,7 @@ export const ResourceAssistantExtension = (props: any) => {
 
     const [chatKey, setChatKey] = React.useState<string | null>(null);
 
-    // Run after the resource is fully resolved so getResourceIdentifier is stable.
-    // Clears storage when we land on a different resource than what was last saved,
-    // then sets chatKey to mount (or remount) ChatInterface with clean storage.
+    // On resource change, reset storage and (re)mount ChatInterface via chatKey.
     React.useEffect(() => {
         if (resourceID === "Undefined") return;
         if (!storageRef.current || storageRef.current.namespace !== resourceID) {
