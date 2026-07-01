@@ -11,6 +11,24 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     }
 });
 
+// Wrap each code block with a positioned container and a copy button. marked
+// emits <pre> only for code blocks and with no attributes, so this leaves inline
+// <code> and everything else untouched.
+const COPY_BTN = '<button class="code-copy-btn" type="button" aria-label="Copy code">Copy</button>';
+const addCopyButtons = (html: string): string =>
+    html.replace(/<pre>/g, `<div class="code-block">${COPY_BTN}<pre>`).replace(/<\/pre>/g, '</pre></div>');
+
+const onCopyClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const btn = (e.target as HTMLElement).closest('.code-copy-btn') as HTMLElement | null;
+    if (!btn) return;
+    const code = btn.parentElement?.querySelector('pre')?.textContent ?? '';
+    if (!code || !navigator.clipboard) return;
+    navigator.clipboard.writeText(code).then(() => {
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    }).catch(() => {});
+};
+
 const MarkedWrapper = ({
     children
 }: {
@@ -19,9 +37,9 @@ const MarkedWrapper = ({
     const markdown = typeof children === "string" ?
         children.replace(/\n{3,}/g, "\n\n") :
         "";
-    const text = DOMPurify.sanitize(marked.parse(markdown, { async: false }));
+    const text = DOMPurify.sanitize(addCopyButtons(marked.parse(markdown, { async: false })));
     return (
-        <div className="marked-content" dangerouslySetInnerHTML={{ __html: text }} />
+        <div className="marked-content" onClick={onCopyClick} dangerouslySetInnerHTML={{ __html: text }} />
     );
 };
 
