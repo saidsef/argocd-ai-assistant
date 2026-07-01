@@ -248,6 +248,45 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-flow-error {
     line-height: 1.5;
 }
 
+/* Code block wrapper + copy button. The button is anchored to the wrapper (not
+   the scrolling <pre>) so it stays pinned when a long line scrolls. */
+:is(#chatbot-resource, #chatbot-system) .marked-content .code-block {
+    position: relative;
+    margin: 0.3em 0;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content .code-block:first-child {
+    margin-top: 0;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content .code-block:last-child {
+    margin-bottom: 0;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content .code-block > pre {
+    margin: 0;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content .code-copy-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    padding: 2px 8px;
+    font-size: 12px;
+    line-height: 1.4;
+    cursor: pointer;
+    border: 1px solid #d0d0d0;
+    border-radius: 4px;
+    background-color: #fff;
+    color: #333;
+    opacity: 0.65;
+}
+
+:is(#chatbot-resource, #chatbot-system) .marked-content .code-block:hover .code-copy-btn,
+:is(#chatbot-resource, #chatbot-system) .marked-content .code-copy-btn:focus {
+    opacity: 1;
+}
+
 :is(#chatbot-resource, #chatbot-system) .marked-content code {
     background-color: #f4f4f5;
     border: 1px solid #e0e0e0;
@@ -306,6 +345,12 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content pre {
 body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content code {
     background-color: #1e1e1e;
     border-color: #444;
+    color: #e8eaed;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content .code-copy-btn {
+    background-color: #2e3238;
+    border-color: #555;
     color: #e8eaed;
 }
 
