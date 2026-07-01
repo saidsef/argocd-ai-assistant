@@ -144,7 +144,7 @@ const ChatInterface = ({
 
     const isBusy = status === "submitted" || status === "streaming";
 
-    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setInput(e.target.value);
     };
 
