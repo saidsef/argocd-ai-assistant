@@ -3,7 +3,7 @@ import ChatInterface from "./components/ChatInterface";
 import { injectMessage, isTokenRequest, QueryContextImpl } from "./util/util";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
-import { AssistantSettings, QueryResponse } from "./model/provider";
+import { AssistantSettings } from "./model/provider";
 import { createProvider, Provider } from "./providers/providerFactory";
 import { FeatureFlags, isFeatureEnabled } from "./featureFlags";
 import { type ChatMessage } from "./components/useChat";
@@ -32,17 +32,10 @@ export const SystemAssistantExtension = (props: any) => {
         const currentSettings = globalThis.argocdAssistantSettings ?? settings;
         return new QueryContextImpl(
             undefined,
-            storageRef.current.conversationID,
-            storageRef.current.data,
             [],
             currentSettings
         );
     }, [settings]);
-
-    const handleQueryComplete = React.useCallback((response: QueryResponse) => {
-        if (response.conversationID !== undefined) storageRef.current.conversationID = response.conversationID;
-        if (response.data !== undefined) storageRef.current.data = response.data;
-    }, []);
 
     const welcomeMessage = "How can I help you with Argo CD today?";
 
@@ -126,7 +119,6 @@ export const SystemAssistantExtension = (props: any) => {
             getContext={getContext}
             welcomeMessage={welcomeMessage}
             storage={storageRef.current}
-            onQueryComplete={handleQueryComplete}
             onCommand={handleCommand}
         >
             {(helpers) => flowUI(helpers.setMessages)}
