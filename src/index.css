@@ -117,6 +117,9 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-send-button:not(:d
 /* Loading and error states */
 :is(#chatbot-resource, #chatbot-system) .chat-loading,
 :is(#chatbot-resource, #chatbot-system) .chat-error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     padding: 8px 14px;
     margin-top: 4px;
     border-radius: 12px;
@@ -125,6 +128,24 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-send-button:not(:d
 
 :is(#chatbot-resource, #chatbot-system) .chat-loading {
     color: #666;
+}
+
+/* Dismiss button for error messages */
+:is(#chatbot-resource, #chatbot-system) .chat-error-dismiss {
+    margin-left: auto;
+    padding: 0 6px;
+    background: transparent;
+    border: none;
+    color: inherit;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.7;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-error-dismiss:hover,
+:is(#chatbot-resource, #chatbot-system) .chat-error-dismiss:focus {
+    opacity: 1;
 }
 
 body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-loading {
