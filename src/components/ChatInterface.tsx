@@ -124,7 +124,8 @@ const ChatInterface = ({
         error,
         stop,
         setMessages,
-        sendMessage
+        sendMessage,
+        clearError
     } = useChat({
         transport: transport.current,
         messages: initialMessages
@@ -178,14 +179,21 @@ const ChatInterface = ({
                     <ChatMessage key={message.id} message={message} />
                 ))}
                 {isBusy && (
-                    <div className="chat-loading">
-                        <span>Assistant is thinking...</span>
+                    <div className="chat-loading" role="status" aria-live="polite">
+                        {status === "submitted" && <span>Assistant is thinking...</span>}
                         <button onClick={stop} aria-label="Stop response">Stop</button>
                     </div>
                 )}
                 {error && (
                     <div className="chat-error" role="alert">
                         <span>{error.message}</span>
+                        <button
+                            className="chat-error-dismiss"
+                            onClick={clearError}
+                            aria-label="Dismiss error"
+                        >
+                            &times;
+                        </button>
                     </div>
                 )}
                 <div ref={messagesEndRef} />

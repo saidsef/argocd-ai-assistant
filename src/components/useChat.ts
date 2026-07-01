@@ -32,6 +32,7 @@ export interface UseChatHelpers {
     error: Error | undefined;
     sendMessage: (message: { text: string }) => Promise<void>;
     stop: () => void;
+    clearError: () => void;
 }
 
 export function useChat(options: UseChatOptions): UseChatHelpers {
@@ -129,5 +130,7 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
         setStatus("ready");
     }, []);
 
-    return { messages, setMessages, status, error, sendMessage, stop };
+    const clearError = React.useCallback(() => setError(undefined), []);
+
+    return { messages, setMessages, status, error, sendMessage, stop, clearError };
 }
