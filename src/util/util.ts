@@ -79,8 +79,7 @@ export function getContainers(resource: any): string[] {
     return Array.isArray(containers) ? containers.map((c: any) => c.name) : [];
 }
 
-// Strips managedFields and the last-applied-configuration annotation to cut token bloat.
-// Returns a new object; the original is never mutated.
+// Strips managedFields + last-applied-configuration to cut tokens; returns a copy.
 export function stripManifestNoise(resource: any): any {
     if (!resource || typeof resource !== "object" || typeof resource.metadata !== "object" || resource.metadata === null) {
         return resource;

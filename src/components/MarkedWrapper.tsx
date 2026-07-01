@@ -2,8 +2,7 @@ import * as React from "react";
 import DOMPurify from 'dompurify';
 import { marked } from "marked";
 
-// Open assistant links in a new tab (they render inside the Argo CD SPA) and
-// harden them. Post-sanitise, so the attributes survive; anchors only.
+// Open assistant links in a new tab with rel hardening. Post-sanitise; anchors only.
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     if (node.tagName === 'A' && node.getAttribute('href')) {
         node.setAttribute('target', '_blank');
@@ -11,9 +10,7 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     }
 });
 
-// Wrap each code block with a positioned container and a copy button. marked
-// emits <pre> only for code blocks and with no attributes, so this leaves inline
-// <code> and everything else untouched.
+// Wrap each code block (<pre>) with a container + copy button; inline <code> is untouched.
 const COPY_BTN = '<button class="code-copy-btn" type="button" aria-label="Copy code">Copy</button>';
 const addCopyButtons = (html: string): string =>
     html.replace(/<pre>/g, `<div class="code-block">${COPY_BTN}<pre>`).replace(/<\/pre>/g, '</pre></div>');
