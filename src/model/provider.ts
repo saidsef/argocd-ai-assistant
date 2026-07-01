@@ -22,10 +22,13 @@ export type Attachment = {
     type: AttachmentType;
 }
 
+export type ChatTurn = {
+    role: "user" | "assistant";
+    content: string;
+}
+
 export interface QueryContext {
     get application(): any;
-    get conversationID(): string;
-    get data(): string;
     get attachments(): Attachment[];
     get settings(): AssistantSettings;
 }
@@ -37,11 +40,10 @@ export type QueryError = {
 
 export type QueryResponse = {
     success: boolean;
-    conversationID?: string,
     data?: string
     error?: QueryError;
 }
 
 export interface QueryProvider {
-    query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal): Promise<QueryResponse>;
+    query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal, history?: ChatTurn[]): Promise<QueryResponse>;
 }

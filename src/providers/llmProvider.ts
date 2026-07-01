@@ -1,4 +1,4 @@
-import { QueryContext, QueryProvider, QueryResponse } from "../model/provider";
+import { ChatTurn, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
 import { getMappedHeaders } from "../util/util";
 import { FeatureFlags, isFeatureEnabled } from "../featureFlags";
 import { McpClient, McpTool } from "./mcpClient";
@@ -8,7 +8,7 @@ export class LlmProvider implements QueryProvider {
     private mcpClient?: McpClient;
     private mcpTools?: McpTool[];
 
-    async query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal): Promise<QueryResponse> {
+    async query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal, history?: ChatTurn[]): Promise<QueryResponse> {
         const settings = context.settings;
         const baseURL = settings.data?.baseURL || `https://${location.host}/extensions/assistant`;
         const model = settings.model;
@@ -50,7 +50,7 @@ export class LlmProvider implements QueryProvider {
             }
         }
 
-        const messages = this.buildMessages(context, prompt, mcpTools);
+        const messages = this.buildMessages(context, prompt, mcpTools, history);
 
         const response = await this.sendChatCompletion(baseURL, model, apiKey, context, messages, signal, onStreamUpdate);
         if (!response.success) {
@@ -210,7 +210,7 @@ export class LlmProvider implements QueryProvider {
         return { success: true, data: text };
     }
 
-    private buildMessages(context: QueryContext, prompt: string, mcpTools?: McpTool[]): Array<{ role: string; content: string }> {
+    private buildMessages(context: QueryContext, prompt: string, mcpTools?: McpTool[], history?: ChatTurn[]): Array<{ role: string; content: string }> {
         const messages: Array<{ role: string; content: string }> = [];
 
         let contextText = "";
@@ -238,6 +238,10 @@ export class LlmProvider implements QueryProvider {
 
         if (contextText) {
             messages.push({ role: 'system', content: contextText });
+        }
+
+        if (history && history.length > 0) {
+            messages.push(...history);
         }
 
         messages.push({ role: 'user', content: prompt });

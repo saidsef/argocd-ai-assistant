@@ -18,7 +18,6 @@ import {
     Attachment,
     AttachmentType,
     QueryProvider,
-    QueryResponse,
     AssistantSettings
 } from "./model/provider";
 import { createProvider, Provider } from "./providers/providerFactory";
@@ -112,17 +111,10 @@ export const ResourceAssistantExtension = (props: any) => {
         const currentSettings = globalThis.argocdAssistantSettings ?? settings;
         return new QueryContextImpl(
             application,
-            storageRef.current!.conversationID,
-            storageRef.current!.data,
             attachments,
             currentSettings
         );
     }, [application, resource, events, settings]);
-
-    const handleQueryComplete = React.useCallback((response: QueryResponse) => {
-        if (response.conversationID !== undefined) storageRef.current!.conversationID = response.conversationID;
-        if (response.data !== undefined) storageRef.current!.data = response.data;
-    }, []);
 
     const welcomeMessage =
         "How can I help you with the resource **" +
@@ -367,7 +359,6 @@ export const ResourceAssistantExtension = (props: any) => {
             getContext={getContext}
             welcomeMessage={welcomeMessage}
             storage={storageRef.current!}
-            onQueryComplete={handleQueryComplete}
             onCommand={handleCommand}
         >
             {(helpers) => flowUI(helpers.setMessages)}

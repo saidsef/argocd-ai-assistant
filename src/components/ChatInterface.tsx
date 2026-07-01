@@ -1,10 +1,13 @@
 import * as React from "react";
-import { QueryContext, QueryProvider, QueryResponse } from "../model/provider";
+import { ChatTurn, QueryContext, QueryProvider } from "../model/provider";
 import { ManageStorage } from "../util/storage";
 import { generateId } from "../util/util";
 import ChatInput from "./ChatInput";
 import ChatMessage from "./ChatMessage";
 import { useChat, type ChatMessage as ChatMessageType, type ChatChunk, type UseChatOptions } from "./useChat";
+
+// Cap the history sent with each request so token usage stays bounded (~10 exchanges).
+const MAX_HISTORY_MESSAGES = 20;
 
 export interface ChatInterfaceProps {
     id: string;
@@ -12,7 +15,6 @@ export interface ChatInterfaceProps {
     getContext: () => QueryContext;
     welcomeMessage?: string;
     storage: ManageStorage;
-    onQueryComplete?: (response: QueryResponse) => void;
     onCommand?: (
         input: string,
         messages: ChatMessageType[],
@@ -27,7 +29,6 @@ const ChatInterface = ({
     getContext,
     welcomeMessage,
     storage,
-    onQueryComplete,
     onCommand,
     children
 }: ChatInterfaceProps) => {
@@ -37,13 +38,24 @@ const ChatInterface = ({
     const providerRef = React.useRef(provider);
     providerRef.current = provider;
 
-    const onQueryCompleteRef = React.useRef(onQueryComplete);
-    onQueryCompleteRef.current = onQueryComplete;
-
     const transport = React.useRef<UseChatOptions["transport"]>({
         async sendMessages({ messages, abortSignal }) {
             const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
             const prompt = lastUserMessage?.parts?.find((p) => p.type === "text")?.text || "";
+
+            // Prior turns (everything before the just-sent message), so the model has
+            // the running context. Capped to the most recent MAX_HISTORY_MESSAGES.
+            const history: ChatTurn[] = messages
+                .slice(0, -1)
+                .map((m) => ({
+                    role: m.role,
+                    content: (m.parts || [])
+                        .filter((p) => p.type === "text")
+                        .map((p) => p.text)
+                        .join("")
+                }))
+                .filter((m) => m.content.trim().length > 0)
+                .slice(-MAX_HISTORY_MESSAGES);
 
             const stream = new ReadableStream<ChatChunk>({
                 async start(controller) {
@@ -63,7 +75,8 @@ const ChatInterface = ({
                                     controller.enqueue({ type: "text-delta", id: msgId, delta });
                                 }
                             },
-                            abortSignal
+                            abortSignal,
+                            history
                         );
 
                         if (!response.success) {
@@ -71,8 +84,6 @@ const ChatInterface = ({
                                 type: "error",
                                 errorText: response.error?.message || "Unknown error"
                             });
-                        } else {
-                            onQueryCompleteRef.current?.(response);
                         }
                     } catch (err) {
                         // Don't surface AbortError - stop() already set status to "ready".

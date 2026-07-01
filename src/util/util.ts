@@ -28,29 +28,17 @@ export const ContentType = {
 
 export class QueryContextImpl implements QueryContext {
     private _application: any;
-    private _conversationID: string;
-    private _data: string;
     private _attachments: Attachment[];
     private _settings: AssistantSettings;
 
-    constructor(application: any, conversationID: string, data: string, attachments: Attachment[], settings: AssistantSettings) {
+    constructor(application: any, attachments: Attachment[], settings: AssistantSettings) {
         this._application = application;
-        this._conversationID = conversationID;
-        this._data = data;
         this._attachments = attachments;
         this._settings = settings;
     }
 
     get application(): any {
         return this._application;
-    }
-
-    get conversationID(): string {
-        return this._conversationID;
-    }
-
-    get data(): any {
-        return this._data;
     }
 
     get attachments(): Attachment[] {
