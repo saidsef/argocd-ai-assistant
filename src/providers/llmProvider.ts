@@ -192,8 +192,7 @@ export class LlmProvider implements QueryProvider {
             const { done, value } = await reader.read();
             if (done) break;
 
-            // Keep the trailing partial line in the buffer so SSE events split
-            // across read() chunks are reassembled instead of silently dropped.
+            // Keep the trailing partial line so events split across chunks are reassembled.
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n');
             buffer = lines.pop() || '';

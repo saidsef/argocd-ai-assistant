@@ -73,9 +73,7 @@ export const getLogs = async (application: any, resource: any, container: string
         }
     }
 
-    // Flush a final log line left in the buffer when the stream ends without a
-    // trailing newline - otherwise the most recent entry is silently dropped
-    // (the same fix applied to the SSE stream in llmProvider).
+    // Flush the final line if the stream ended without a trailing newline.
     if (partialData && index <= count) {
         try {
             results.push(JSON.parse(partialData) as LogEntry);

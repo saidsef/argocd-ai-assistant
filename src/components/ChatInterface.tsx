@@ -93,9 +93,7 @@ const ChatInterface = ({
         }
     });
 
-    // Compute initial messages once per mount. welcomeMessage is intentionally
-    // excluded from deps — remounting via key={resourceID} in the parent
-    // ensures a fresh computation whenever the resource changes.
+    // Computed once per mount; the parent remounts via key={resourceID} on resource change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     const initialMessages = React.useMemo(() => {
         const stored = storage.loadMessages();
@@ -124,10 +122,7 @@ const ChatInterface = ({
     const [input, setInput] = React.useState("");
     const messagesEndRef = React.useRef<HTMLDivElement>(null);
     const listRef = React.useRef<HTMLDivElement>(null);
-    // Keep the view pinned to the bottom only while the user is already there.
-    // Starts true so the first render (welcome message / restored history) lands
-    // at the latest message; flips to false when the user scrolls up to read
-    // back through the conversation so streaming deltas no longer yank them down.
+    // Auto-scroll only while pinned to the bottom; scrolling up disables it. Starts true.
     const stickToBottomRef = React.useRef(true);
 
     const handleScroll = () => {
