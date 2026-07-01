@@ -242,6 +242,9 @@ export const ResourceAssistantExtension = (props: any) => {
     );
 
     React.useEffect(() => {
+        let cancelled = false;
+        // Clear the previous resource's events and ignore superseded responses on switch.
+        setEvents({ apiVersion: "v1", items: [] });
         let url = `/api/v1/applications/${application_name}/events?resourceUID=${resource.metadata.uid}&resourceNamespace=${resource.metadata.namespace}&resourceName=${resource.metadata.name}`;
         if (resource.kind === "Application") {
             url = `/api/v1/applications/${application_name}/events`;
@@ -254,14 +257,16 @@ export const ResourceAssistantExtension = (props: any) => {
                 return response.json();
             })
             .then((data) => {
-                setEvents({
-                    apiVersion: "v1",
-                    items: data.items
-                });
+                if (!cancelled) {
+                    setEvents({ apiVersion: "v1", items: data.items ?? [] });
+                }
             })
             .catch((err) => {
-                console.error("Failed to fetch events:", err);
+                if (!cancelled) {
+                    console.error("Failed to fetch events:", err);
+                }
             });
+        return () => { cancelled = true; };
     }, [application, resource, application_name]);
 
     const flowUI = React.useCallback(
