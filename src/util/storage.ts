@@ -3,18 +3,14 @@ import { ExtensionScope } from "./extensions";
 
 export class ManageStorage {
     private CHAT_HISTORY_KEY: string;
-    private RESOURCE_ID_KEY: string;
     private LOGS_KEY: string;
     private ARGOCD_MCP_TOKEN: string;
-    private _scope: ExtensionScope;
     private _namespace?: string;
 
     constructor(scope: ExtensionScope, namespace?: string) {
-        this._scope = scope;
         this._namespace = namespace;
         const prefix = namespace ? `${scope}-${namespace}` : scope;
         this.CHAT_HISTORY_KEY = `${prefix}-argocd-assistant-chat-history-v2`;
-        this.RESOURCE_ID_KEY = `${prefix}-argocd-assistant-resource-id`;
         this.LOGS_KEY = `${prefix}-argocd-assistant-logs`;
         this.ARGOCD_MCP_TOKEN = `${prefix}-argocd-mcp-token`;
     }
@@ -33,10 +29,6 @@ export class ManageStorage {
         sessionStorage.setItem(this.CHAT_HISTORY_KEY, JSON.stringify(messages));
     }
 
-    get scope(): ExtensionScope {
-        return this._scope;
-    }
-
     get namespace(): string | undefined {
         return this._namespace;
     }
@@ -50,15 +42,7 @@ export class ManageStorage {
     }
 
     public hasLogs(): boolean {
-        return (this.LOGS_KEY in sessionStorage);
-    }
-
-    get resourceID(): string | null {
-        return sessionStorage.getItem(this.RESOURCE_ID_KEY);
-    }
-
-    set resourceID(value: string) {
-        sessionStorage.setItem(this.RESOURCE_ID_KEY, value);
+        return this.logs !== null;
     }
 
     get mcpToken(): string | null {
@@ -67,13 +51,5 @@ export class ManageStorage {
 
     set mcpToken(value: string) {
         sessionStorage.setItem(this.ARGOCD_MCP_TOKEN, value);
-    }
-
-    get chatHistoryKey(): string {
-        return this.CHAT_HISTORY_KEY;
-    }
-
-    public hasChatHistory(): boolean {
-        return (this.chatHistoryKey in sessionStorage);
     }
 }

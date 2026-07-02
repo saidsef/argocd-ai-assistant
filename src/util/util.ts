@@ -1,5 +1,5 @@
 import type { ChatMessage } from "../components/useChat";
-import { AssistantSettings, Attachment, AttachmentType, QueryContext } from "../model/provider";
+import { AssistantSettings, Attachment, QueryContext } from "../model/provider";
 
 export function generateId(): string {
     if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -94,29 +94,22 @@ export function injectMessage(
     ];
 }
 
+function matchesKeyword(input: string, ...keywords: string[]): boolean {
+    if (!input) return false;
+    const upper = input.toUpperCase();
+    return keywords.some((k) => upper.localeCompare(k, undefined, { sensitivity: 'base' }) === 0);
+}
+
 export function isAttachRequest(input: string): boolean {
-    if (input === undefined || input === "") return false;
-    return input.toUpperCase().localeCompare('ATTACH', undefined, { sensitivity: 'base' }) == 0;
+    return matchesKeyword(input, 'ATTACH');
 }
 
 export function isTokenRequest(input: string): boolean {
-    if (input === undefined || input === "") return false;
-    return input.toUpperCase().localeCompare('TOKEN', undefined, { sensitivity: 'base' }) == 0;
+    return matchesKeyword(input, 'TOKEN');
 }
 
 export function isCancelRequest(input: string): boolean {
-    if (input === undefined || input === "") return false;
-    return input.toUpperCase().localeCompare('CANCEL', undefined, { sensitivity: 'base' }) == 0 ||
-        input.toUpperCase().localeCompare('QUIT', undefined, { sensitivity: 'base' }) == 0 ||
-        input.toUpperCase().localeCompare('EXIT', undefined, { sensitivity: 'base' }) == 0;
-}
-
-export function getFilename(attachment: Attachment): string {
-    switch (attachment.type) {
-        case AttachmentType.LOG: return "logs.json"
-        case AttachmentType.EVENTS: return "events.json"
-        case AttachmentType.MANIFEST: return "manifest.json"
-    }
+    return matchesKeyword(input, 'CANCEL', 'QUIT', 'EXIT');
 }
 
 export function getMappedHeaders(application: any): Record<string, string | null | undefined> {
