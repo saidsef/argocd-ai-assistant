@@ -1,4 +1,5 @@
 import * as React from "react";
+import { generateId } from "../util/util";
 
 export interface ChatMessage {
     id: string;
@@ -49,7 +50,7 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
 
     const sendMessage = React.useCallback(async (message: { text: string }) => {
         const userMessage: ChatMessage = {
-            id: crypto.randomUUID?.() || Math.random().toString(36).slice(2),
+            id: generateId(),
             role: "user",
             parts: [{ type: "text", text: message.text }]
         };

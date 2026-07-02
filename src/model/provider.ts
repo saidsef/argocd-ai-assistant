@@ -5,11 +5,6 @@ export type AssistantSettings = {
     maximumLogLines?: number;
 }
 
-export interface Logs {
-    container: string;
-    entries: string;
-}
-
 export enum AttachmentType {
     EVENTS = 0,
     LOG = 1,

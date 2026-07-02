@@ -10,20 +10,10 @@ export function generateId(): string {
 
 export const Kinds = {
     POD: 'Pod',
-    REPLICA_SET: 'ReplicaSet',
-    DEPLOYMENT: 'Deployment',
-    STATEFUL_SET: 'StatefulSet',
-    JOB: 'Job',
-    ROLLOUT: 'Rollout'
 }
 
 export const ContentType = {
     APPLICATION_JSON: 'application/json',
-    APPLICATION_XML: 'application/xml',
-    TEXT_PLAIN: 'text/plain',
-    TEXT_HTML: 'text/html',
-    APPLICATION_FORM_URLENCODED: 'application/x-www-form-urlencoded',
-    MULTIPART_FORM_DATA: 'multipart/form-data',
 } as const;
 
 export class QueryContextImpl implements QueryContext {
