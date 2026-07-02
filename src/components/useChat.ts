@@ -5,6 +5,8 @@ export interface ChatMessage {
     id: string;
     role: "user" | "assistant";
     parts: Array<{ type: "text"; text: string }>;
+    /** UI-only message (welcome banner, flow prompts) — excluded from LLM history. */
+    local?: boolean;
 }
 
 export type ChatStatus = "submitted" | "streaming" | "ready" | "error";

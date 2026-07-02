@@ -79,7 +79,8 @@ export function injectMessage(
         {
             id: generateId(),
             role,
-            parts: [{ type: "text" as const, text: msg }]
+            parts: [{ type: "text" as const, text: msg }],
+            local: true
         }
     ];
 }

@@ -47,6 +47,7 @@ const ChatInterface = ({
             // the running context. Capped to the most recent MAX_HISTORY_MESSAGES.
             const history: ChatTurn[] = messages
                 .slice(0, -1)
+                .filter((m) => !m.local)
                 .map((m) => ({
                     role: m.role,
                     content: (m.parts || [])
@@ -112,7 +113,8 @@ const ChatInterface = ({
             return [{
                 id: generateId(),
                 role: "assistant" as const,
-                parts: [{ type: "text" as const, text: welcomeMessage }]
+                parts: [{ type: "text" as const, text: welcomeMessage }],
+                local: true
             }];
         }
         return stored;
