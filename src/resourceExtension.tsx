@@ -32,8 +32,7 @@ type FlowNode =
     | "get_logs"
     | "token"
     | "token_saved"
-    | "token_invalid"
-    | "no_attach";
+    | "token_invalid";
 
 export const ResourceAssistantExtension = (props: any) => {
     const [settings, setSettings] = React.useState<AssistantSettings>(

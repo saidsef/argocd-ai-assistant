@@ -1,4 +1,4 @@
-import { ChatTurn, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
+import { AttachmentType, ChatTurn, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
 import { getMappedHeaders } from "../util/util";
 import { FeatureFlags, isFeatureEnabled } from "../featureFlags";
 import { McpClient, McpTool } from "./mcpClient";
@@ -263,11 +263,11 @@ export class LlmProvider implements QueryProvider {
         }
     }
 
-    private attachmentLabel(type: number): string {
+    private attachmentLabel(type: AttachmentType): string {
         switch (type) {
-            case 0: return 'Events';
-            case 1: return 'Log';
-            case 2: return 'Manifest';
+            case AttachmentType.EVENTS: return 'Events';
+            case AttachmentType.LOG: return 'Log';
+            case AttachmentType.MANIFEST: return 'Manifest';
             default: return 'Attachment';
         }
     }
