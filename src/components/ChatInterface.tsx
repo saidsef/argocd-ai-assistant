@@ -182,7 +182,12 @@ const ChatInterface = ({
                 ))}
                 {isBusy && (
                     <div className="chat-loading" role="status" aria-live="polite">
-                        {status === "submitted" && <span>Assistant is thinking...</span>}
+                        {status === "submitted" && (
+                            <>
+                                <span className="chat-typing" aria-hidden="true"><span /><span /><span /></span>
+                                <span className="sr-only">Assistant is thinking</span>
+                            </>
+                        )}
                         <button onClick={stop} aria-label="Stop response">Stop</button>
                     </div>
                 )}
