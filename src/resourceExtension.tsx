@@ -23,6 +23,7 @@ import {
 import { createProvider, Provider } from "./providers/providerFactory";
 import { FeatureFlags, isFeatureEnabled } from "./featureFlags";
 import { type ChatMessage } from "./components/useChat";
+import { submitToken, TokenFlowNode, TokenPrompt } from "./components/TokenFlow";
 
 type FlowNode =
     | "start"
@@ -30,9 +31,7 @@ type FlowNode =
     | "attach"
     | "ask_lines"
     | "get_logs"
-    | "token"
-    | "token_saved"
-    | "token_invalid";
+    | TokenFlowNode;
 
 export const ResourceAssistantExtension = (props: any) => {
     const [settings, setSettings] = React.useState<AssistantSettings>(
@@ -215,19 +214,9 @@ export const ResourceAssistantExtension = (props: any) => {
 
     const handleTokenSubmit = React.useCallback(
         (input: string, setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
-            if (!input?.trim()) {
-                setMessages(
-                    injectMessage(
-                        "No token was provided. Please type your token or continue with your question."
-                    )
-                );
-                setFlowNode("token_invalid");
-                return;
-            }
-            storageRef.current!.mcpToken = input.trim();
-            setMessages(injectMessage("Token saved. I will use it for MCP server requests."));
-            setForm({});
-            setFlowNode("token_saved");
+            const next = submitToken(input, storageRef.current!, setMessages);
+            if (next === "token_saved") setForm({});
+            setFlowNode(next);
         },
         []
     );
@@ -316,30 +305,11 @@ export const ResourceAssistantExtension = (props: any) => {
                 case "token":
                 case "token_invalid":
                     return (
-                        <div className="chat-flow-ui">
-                            <input
-                                type="password"
-                                placeholder="Enter token"
-                                value={form.token || ""}
-                                onChange={(e) => setForm({ token: e.target.value })}
-                                onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                        e.preventDefault();
-                                        handleTokenSubmit(form.token || "", setMessages);
-                                    }
-                                }}
-                                className="chat-flow-input"
-                                aria-label="Argo CD token"
-                            />
-                            <button
-                                onClick={() =>
-                                    handleTokenSubmit(form.token || "", setMessages)
-                                }
-                                className="chat-flow-button"
-                            >
-                                Save
-                            </button>
-                        </div>
+                        <TokenPrompt
+                            value={form.token || ""}
+                            onChange={(v) => setForm({ token: v })}
+                            onSubmit={() => handleTokenSubmit(form.token || "", setMessages)}
+                        />
                     );
                 default:
                     return null;
@@ -359,6 +329,7 @@ export const ResourceAssistantExtension = (props: any) => {
             welcomeMessage={welcomeMessage}
             storage={storageRef.current!}
             onCommand={handleCommand}
+            onClear={handleCancel}
         >
             {(helpers) => flowUI(helpers.setMessages)}
         </ChatInterface>
