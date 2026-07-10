@@ -14,6 +14,43 @@
     padding: 10px;
 }
 
+/* Header row: holds the New chat (reset) control, right-aligned. */
+:is(#chatbot-resource, #chatbot-system) .chat-header {
+    display: flex;
+    justify-content: flex-end;
+    padding: 6px 10px;
+    border-bottom: 1px solid #ddd;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-header {
+    border-bottom-color: #444;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-clear-button {
+    padding: 4px 10px;
+    background-color: transparent;
+    color: #666;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-clear-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-clear-button:focus-visible {
+    outline: 2px solid #00A2B3;
+    outline-offset: 1px;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-clear-button {
+    color: #aaa;
+    border-color: #555;
+}
+
 /* Tighter spacing between messages */
 :is(#chatbot-resource, #chatbot-system) .chat-message {
     margin-top: 4px;

@@ -3,6 +3,8 @@ export type AssistantSettings = {
     provider: string;
     data?: any;
     maximumLogLines?: number;
+    /** Overrides the built-in assistant persona/instructions. Falls back to the default when unset or blank. */
+    systemPrompt?: string;
 }
 
 export enum AttachmentType {

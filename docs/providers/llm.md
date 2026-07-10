@@ -20,8 +20,9 @@ The LLM provider requires minimal configuration. The key settings are:
 | `data.apiKey` | No | API key sent from the browser (raw token; the provider adds the `Bearer ` prefix if missing). Browser-readable - for production, inject it server-side via the proxy instead: see [Injecting the API token](../deployment/proxy.md#injecting-the-api-token). |
 | `data.mcpServers` | No | Array of MCP server HTTP endpoints. See [MCP Tool Integration](../architecture.md#mcp-tool-integration). |
 | `maximumLogLines` | No | Max log lines attachable (default: 250). |
+| `systemPrompt` | No | Overrides the built-in assistant persona/instructions. Defaults to an Argo CD / Kubernetes expert prompt that grounds answers in the attached manifest, events, and logs. |
 
-`baseURL`, `apiKey`, and `mcpServers` live under the `data` object; `provider`, `model`, and `maximumLogLines` are top-level. See the [Settings Extension](../deployment/settings.md) page for how to deploy these settings.
+`baseURL`, `apiKey`, and `mcpServers` live under the `data` object; `provider`, `model`, `maximumLogLines`, and `systemPrompt` are top-level. See the [Settings Extension](../deployment/settings.md) page for how to deploy these settings.
 
 ### Example Settings
 

@@ -20,6 +20,8 @@ export interface ChatInterfaceProps {
         messages: ChatMessageType[],
         setMessages: React.Dispatch<React.SetStateAction<ChatMessageType[]>>
     ) => boolean;
+    /** Reset any parent-owned flow state when the conversation is cleared. */
+    onClear?: () => void;
     children?: React.ReactNode | ((helpers: { setMessages: React.Dispatch<React.SetStateAction<ChatMessageType[]>> }) => React.ReactNode);
 }
 
@@ -30,6 +32,7 @@ const ChatInterface = ({
     welcomeMessage,
     storage,
     onCommand,
+    onClear,
     children
 }: ChatInterfaceProps) => {
     const getContextRef = React.useRef(getContext);
@@ -174,8 +177,37 @@ const ChatInterface = ({
         setInput("");
     };
 
+    // Reset the conversation: abort any in-flight reply, drop history back to the welcome
+    // message (the storage effect persists it), and let the parent reset its flow state.
+    const handleClear = React.useCallback(() => {
+        stop();
+        setMessages(
+            welcomeMessage
+                ? [{
+                    id: generateId(),
+                    role: "assistant" as const,
+                    parts: [{ type: "text" as const, text: welcomeMessage }],
+                    local: true
+                }]
+                : []
+        );
+        stickToBottomRef.current = true;
+        onClear?.();
+    }, [stop, setMessages, welcomeMessage, onClear]);
+
     return (
         <div id={id}>
+            <div className="chat-header">
+                <button
+                    type="button"
+                    className="chat-clear-button"
+                    onClick={handleClear}
+                    disabled={isBusy}
+                    aria-label="Start a new conversation"
+                >
+                    New chat
+                </button>
+            </div>
             <div className="chat-message-list" ref={listRef} onScroll={handleScroll} aria-live="polite" aria-label="Chat messages">
                 {messages.map((message) => (
                     <ChatMessage key={message.id} message={message} />

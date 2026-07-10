@@ -28,6 +28,7 @@ globalThis.argocdAssistantSettings = {
 | `data.apiKey` | No | API key sent **from the browser** as `Authorization: Bearer …`. It is readable in the browser - **not recommended**; prefer server-side injection via the proxy ([Injecting the API token](proxy.md#injecting-the-api-token)). |
 | `data.mcpServers` | No | Array of MCP server HTTP endpoints (e.g., `["https://mcp.example.com"]`). When configured, the assistant discovers and uses tools exposed by these servers. No authentication is supported. |
 | `maximumLogLines` | No | Max log lines attachable (default: 250). |
+| `systemPrompt` | No | Overrides the built-in assistant persona/instructions. Defaults to an Argo CD / Kubernetes expert prompt that grounds answers in the attached manifest, events, and logs. |
 
 !!! note "Leave `baseURL` unset to route through the proxy"
     If `data.baseURL` is omitted the Assistant calls the Argo CD proxy path (`/extensions/assistant`), which forwards to the backend you configure in [Proxy & Backend Configuration](proxy.md). This is the recommended setup - it keeps API keys out of the browser.

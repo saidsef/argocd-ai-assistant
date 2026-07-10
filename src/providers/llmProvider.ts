@@ -3,6 +3,18 @@ import { getMappedHeaders } from "../util/util";
 import { FeatureFlags, isFeatureEnabled } from "../featureFlags";
 import { McpClient, McpTool } from "./mcpClient";
 
+// Default persona/instructions prepended to every request. Grounds answers in the
+// attached context and keeps replies concise and actionable. Override per-deployment
+// via the top-level `systemPrompt` setting.
+export const DEFAULT_SYSTEM_PROMPT = `You are the Argo CD AI Assistant, an expert in Argo CD, Kubernetes, and GitOps. You help users understand and troubleshoot the Kubernetes resources they manage with Argo CD.
+
+Guidelines:
+- Ground every answer in the provided context (resource manifest, events, and logs). If the context does not contain the answer, say so plainly instead of guessing.
+- Never invent resource names, namespaces, images, or field values that are not present in the context.
+- Be concise and actionable: prefer short explanations, concrete kubectl/argocd commands, and step-by-step remediation over prose.
+- When diagnosing, cite the specific fields, status conditions, or events you are reasoning from.
+- Format replies in Markdown; put commands, manifests, and log excerpts in fenced code blocks.`;
+
 export class LlmProvider implements QueryProvider {
 
     private mcpClient?: McpClient;
@@ -213,32 +225,31 @@ export class LlmProvider implements QueryProvider {
     private buildMessages(context: QueryContext, prompt: string, mcpTools?: McpTool[], history?: ChatTurn[]): Array<{ role: string; content: string }> {
         const messages: Array<{ role: string; content: string }> = [];
 
-        let contextText = "";
+        const override = context.settings.systemPrompt;
+        let systemText = override && override.trim() ? override : DEFAULT_SYSTEM_PROMPT;
+
         if (context.attachments.length > 0) {
-            contextText = "Context:\n";
+            systemText += "\n\nContext:\n";
             for (const attachment of context.attachments) {
                 const label = this.attachmentLabel(attachment.type);
-                contextText += `\n[${label} - ${attachment.mimeType}]:\n${attachment.content}\n`;
+                systemText += `\n[${label} - ${attachment.mimeType}]:\n${attachment.content}\n`;
             }
         }
 
         if (mcpTools && mcpTools.length > 0) {
-            if (contextText) contextText += "\n";
-            contextText += "Available tools:\n";
+            systemText += "\n\nAvailable tools:\n";
             for (const tool of mcpTools) {
-                contextText += `- ${tool.name}: ${tool.description || "No description"}\n`;
+                systemText += `- ${tool.name}: ${tool.description || "No description"}\n`;
                 if (tool.inputSchema) {
-                    contextText += `  Arguments schema: ${JSON.stringify(tool.inputSchema)}\n`;
+                    systemText += `  Arguments schema: ${JSON.stringify(tool.inputSchema)}\n`;
                 }
             }
-            contextText += "\nIf you need to use a tool, respond ONLY with:\n";
-            contextText += '<tool name="TOOL_NAME">\n{JSON arguments matching the schema}\n</tool>\n';
-            contextText += "Do not include any other text when using a tool.";
+            systemText += "\nIf you need to use a tool, respond ONLY with:\n";
+            systemText += '<tool name="TOOL_NAME">\n{JSON arguments matching the schema}\n</tool>\n';
+            systemText += "Do not include any other text when using a tool.";
         }
 
-        if (contextText) {
-            messages.push({ role: 'system', content: contextText });
-        }
+        messages.push({ role: 'system', content: systemText });
 
         if (history && history.length > 0) {
             messages.push(...history);
