@@ -1,18 +1,11 @@
 {
-    "ts-node": {
-        "compilerOptions": {
-            "module": "commonjs"
-        }
-    },
     "compilerOptions": {
-        "baseUrl": ".",
         "module": "esnext",
-        "moduleResolution": "node",
+        "moduleResolution": "bundler",
         "target": "es2020",
         "jsx": "react",
         "allowJs": true,
         "strict": false,
-        "ignoreDeprecations": "6.0",
         "noUnusedLocals": true,
         "sourceMap": true,
         "types": ["node"],

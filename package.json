@@ -8,8 +8,9 @@
         "react-dom": ">=16.14.0"
     },
     "scripts": {
-        "build": "yarn clean && NODE_ENV=production yarn ts-node node_modules/.bin/webpack",
-        "build-dev": "yarn clean && yarn ts-node node_modules/.bin/webpack",
+        "build": "yarn clean && yarn typecheck && NODE_ENV=production webpack",
+        "build-dev": "yarn clean && yarn typecheck && webpack",
+        "typecheck": "tsc --noEmit",
         "package": "yarn build && COPYFILE_DISABLE=1 tar -C dist -cvf dist/extension-$npm_package_name-${VERSION:-$npm_package_version}.tar resources",
         "package-dev": "yarn build-dev && COPYFILE_DISABLE=1 tar -C dist -cvf dist/extension-$npm_package_name-${VERSION:-$npm_package_version}.tar resources",
         "clean": "rm -rf dist",
@@ -23,14 +24,13 @@
         "@types/node": "^26.1.0",
         "@types/react": "^19.2.17",
         "css-loader": "^7.1.4",
+        "esbuild-loader": "^4.5.0",
         "raw-loader": "^4.0.2",
         "react": "^19.2.7",
         "react-dom": "^19.2.7",
         "sass": "^1.101.0",
         "sass-loader": "^17.0.0",
-        "style-loader": "^4.0.0",
-        "ts-loader": "^9.6.2",
-        "ts-node": "^10.9.2"
+        "style-loader": "^4.0.0"
     },
     "resolutions": {
         "fast-uri": "^3.1.2"
@@ -38,7 +38,7 @@
     "dependencies": {
         "dompurify": "^3.4.12",
         "marked": "^18.0.6",
-        "typescript": "^6.0.3",
+        "typescript": "^7.0.2",
         "webpack": "^5.108.4",
         "webpack-cli": "^7.2.1"
     }
