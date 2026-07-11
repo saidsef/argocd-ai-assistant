@@ -12,10 +12,6 @@ export const Kinds = {
     POD: 'Pod',
 }
 
-export const ContentType = {
-    APPLICATION_JSON: 'application/json',
-} as const;
-
 export class QueryContextImpl implements QueryContext {
     private _application: any;
     private _attachments: Attachment[];
@@ -105,7 +101,7 @@ export function isCancelRequest(input: string): boolean {
 
 export function getMappedHeaders(application: any): Record<string, string | null | undefined> {
     const headers: Headers = getHeaders(application);
-    var mappedHeaders: Record<string, string | null | undefined> = {}
+    const mappedHeaders: Record<string, string | null | undefined> = {}
     for (const [key, value] of headers.entries()) {
         mappedHeaders[key] = value;
     }
@@ -118,8 +114,8 @@ export function getHeaders(application: any): Headers {
     const project = application?.spec?.project || "";
 
     const headers: Headers = new Headers({
-        'Content-Type': ContentType.APPLICATION_JSON,
-        'Accept': ContentType.APPLICATION_JSON,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
         'Origin': 'https://' + location.host,
         "Argocd-Application-Name": `${applicationNamespace}:${applicationName}`,
         "Argocd-Project-Name": `${project}`,

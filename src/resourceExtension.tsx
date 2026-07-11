@@ -20,7 +20,7 @@ import {
     QueryProvider,
     AssistantSettings
 } from "./model/provider";
-import { createProvider, Provider } from "./providers/providerFactory";
+import { createProvider } from "./providers/providerFactory";
 import { FeatureFlags, isFeatureEnabled } from "./featureFlags";
 import { type ChatMessage } from "./components/useChat";
 import { submitToken, TokenFlowNode, TokenPrompt } from "./components/TokenFlow";
@@ -35,11 +35,9 @@ type FlowNode =
 
 export const ResourceAssistantExtension = (props: any) => {
     const [settings, setSettings] = React.useState<AssistantSettings>(
-        globalThis.argocdAssistantSettings ?? { provider: Provider.LLM }
+        globalThis.argocdAssistantSettings ?? { provider: "LLM" }
     );
-    const [provider] = React.useState<QueryProvider>(
-        createProvider(settings.provider as Provider)
-    );
+    const [provider] = React.useState<QueryProvider>(createProvider());
     const storageRef = React.useRef<ManageStorage | null>(null);
 
     React.useEffect(() => {
@@ -65,6 +63,13 @@ export const ResourceAssistantExtension = (props: any) => {
     const resourceID = getResourceIdentifier(resource);
     const maxLogLines: number =
         settings.maximumLogLines != undefined ? settings.maximumLogLines : MAX_LINES;
+
+    const mcpServers: string[] | undefined = settings.data?.mcpServers;
+    const mcpEnabled =
+        isFeatureEnabled(FeatureFlags.ArgoCDMCP) && Array.isArray(mcpServers) && mcpServers.length > 0;
+    const getMcpStatus = mcpEnabled
+        ? () => provider.getMcpStatus?.(mcpServers!) ?? []
+        : undefined;
 
     const [chatKey, setChatKey] = React.useState<string | null>(null);
 
@@ -330,6 +335,7 @@ export const ResourceAssistantExtension = (props: any) => {
             storage={storageRef.current!}
             onCommand={handleCommand}
             onClear={handleCancel}
+            getMcpStatus={getMcpStatus}
         >
             {(helpers) => flowUI(helpers.setMessages)}
         </ChatInterface>

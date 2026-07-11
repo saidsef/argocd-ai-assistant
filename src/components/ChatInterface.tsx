@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChatTurn, QueryContext, QueryProvider } from "../model/provider";
+import { ChatTurn, McpServerStatus, QueryContext, QueryProvider } from "../model/provider";
 import { ManageStorage } from "../util/storage";
 import { generateId } from "../util/util";
 import ChatInput from "./ChatInput";
@@ -8,6 +8,32 @@ import { useChat, type ChatMessage as ChatMessageType, type ChatChunk, type UseC
 
 // Cap the history sent with each request so token usage stays bounded (~10 exchanges).
 const MAX_HISTORY_MESSAGES = 20;
+
+const pluralTools = (n: number) => `${n} ${n === 1 ? "tool" : "tools"}`;
+
+// Compact indicator that MCP is active, shown left of "New chat" when servers are
+// configured. Starts as the configured hostname (grey dot), then upgrades to the
+// server-reported name + tool count + green dot once the provider has connected.
+const McpBadge = ({ servers }: { servers: McpServerStatus[] }) => {
+    const anyConnected = servers.some((s) => s.connected);
+    const single = servers.length === 1 ? servers[0] : null;
+    const label = single
+        ? (single.toolCount > 0 ? `${single.name} · ${pluralTools(single.toolCount)}` : single.name)
+        : `${servers.length} MCP servers`;
+    const tooltip = servers
+        .map((s) => `${s.name} — ${s.connected ? "connected" : "configured"} — ${pluralTools(s.toolCount)}`)
+        .join("\n");
+    const ariaLabel = single
+        ? `MCP server ${single.name}, ${single.connected ? "connected" : "configured"}, ${pluralTools(single.toolCount)}`
+        : `${servers.length} MCP servers, ${anyConnected ? "at least one connected" : "configured"}`;
+    return (
+        <span className="chat-mcp-badge" title={tooltip} aria-label={ariaLabel}>
+            <span className="chat-mcp-icon" aria-hidden="true">&#128268;</span>
+            <span className="chat-mcp-label">{label}</span>
+            <span className={`chat-mcp-dot${anyConnected ? " chat-mcp-dot-on" : ""}`} aria-hidden="true" />
+        </span>
+    );
+};
 
 export interface ChatInterfaceProps {
     id: string;
@@ -22,6 +48,8 @@ export interface ChatInterfaceProps {
     ) => boolean;
     /** Reset any parent-owned flow state when the conversation is cleared. */
     onClear?: () => void;
+    /** Live MCP server status for the header badge; omitted when MCP is disabled/unconfigured. */
+    getMcpStatus?: () => McpServerStatus[];
     children?: React.ReactNode | ((helpers: { setMessages: React.Dispatch<React.SetStateAction<ChatMessageType[]>> }) => React.ReactNode);
 }
 
@@ -33,6 +61,7 @@ const ChatInterface = ({
     storage,
     onCommand,
     onClear,
+    getMcpStatus,
     children
 }: ChatInterfaceProps) => {
     const getContextRef = React.useRef(getContext);
@@ -195,9 +224,13 @@ const ChatInterface = ({
         onClear?.();
     }, [stop, setMessages, welcomeMessage, onClear]);
 
+    // Recomputed each render so it upgrades to live names/tools once a query connects.
+    const mcpStatus = getMcpStatus?.();
+
     return (
         <div id={id}>
             <div className="chat-header">
+                {mcpStatus && mcpStatus.length > 0 && <McpBadge servers={mcpStatus} />}
                 <button
                     type="button"
                     className="chat-clear-button"

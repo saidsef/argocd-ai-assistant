@@ -14,10 +14,13 @@
     padding: 10px;
 }
 
-/* Header row: holds the New chat (reset) control, right-aligned. */
+/* Header row: New chat (reset) stays right; the optional MCP badge sits left
+   (it carries margin-right:auto, so the button stays put when no badge renders). */
 :is(#chatbot-resource, #chatbot-system) .chat-header {
     display: flex;
+    align-items: center;
     justify-content: flex-end;
+    gap: 8px;
     padding: 6px 10px;
     border-bottom: 1px solid #ddd;
 }
@@ -49,6 +52,58 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-header {
 body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-clear-button {
     color: #aaa;
     border-color: #555;
+}
+
+/* MCP indicator: chip left of the New chat button. margin-right:auto pushes the
+   button to the right whether or not this badge is present. */
+:is(#chatbot-resource, #chatbot-system) .chat-mcp-badge {
+    margin-right: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 60%;
+    padding: 3px 8px;
+    font-size: 12px;
+    color: #666;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    cursor: default;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-mcp-icon {
+    font-size: 12px;
+    line-height: 1;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-mcp-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-mcp-dot {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #999;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-mcp-dot-on {
+    background-color: #2E7D32;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-mcp-badge {
+    color: #aaa;
+    border-color: #555;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-mcp-dot {
+    background-color: #777;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-mcp-dot-on {
+    background-color: #4CAF50;
 }
 
 /* Tighter spacing between messages */
