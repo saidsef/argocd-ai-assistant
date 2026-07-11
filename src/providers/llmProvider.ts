@@ -63,48 +63,51 @@ export class LlmProvider implements QueryProvider {
             try {
                 if (!this.mcpClient) {
                     this.mcpClient = new McpClient(mcpServerUrls);
-                    const connectErrors = await this.mcpClient.connect();
-                    if (connectErrors.length > 0) {
-                        console.error("MCP connection errors:", connectErrors);
-                    }
+                    await this.mcpClient.connect();
                 }
                 if (!this.mcpTools) {
                     this.mcpTools = await this.mcpClient.listAllTools();
                 }
+                const mcpErrors = this.mcpClient.getErrors();
+                if (mcpErrors.length > 0) {
+                    console.warn("MCP issues (answering without those servers/tools):", mcpErrors);
+                }
                 mcpTools = this.mcpTools;
                 if (!mcpTools || mcpTools.length === 0) {
-                    return {
-                        success: false,
-                        error: { status: 500, message: "MCP servers are configured but no tools were discovered. Check that the servers are running and expose tools." }
-                    };
+                    // A broken/unreachable MCP server must not break the assistant: fall back to
+                    // LLM-only. If it failed with errors (rather than genuinely exposing no tools),
+                    // drop the cached client so a recovered server is re-probed on the next query.
+                    mcpTools = undefined;
+                    if (mcpErrors.length > 0) {
+                        this.mcpClient = undefined;
+                        this.mcpTools = undefined;
+                    }
                 }
             } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
-                return {
-                    success: false,
-                    error: { status: 500, message: `MCP initialization failed: ${errMsg}` }
-                };
+                console.warn(`MCP initialization failed, answering without tools: ${errMsg}`);
+                this.mcpClient = undefined;
+                this.mcpTools = undefined;
+                mcpTools = undefined;
             }
         }
 
         const messages = this.buildMessages(context, prompt, mcpTools, history);
 
-        // When MCP tools are available the model may reply with only a <tool ...> call.
-        // Keep that raw XML out of the UI: it is internal (the visible answer is produced
-        // by the follow-up completion below), and streaming it would corrupt the follow-up's
-        // deltas, which the UI tracks as a single cumulative string across the whole query.
-        const hasTools = !!mcpTools && mcpTools.length > 0;
+        // The model may reply with only a <tool ...> call. Keep that raw XML out of the UI: it
+        // is internal (the visible answer is produced by the follow-up completion below), and
+        // streaming it would corrupt the follow-up's deltas, which the UI tracks as a single
+        // cumulative string across the whole query. Suppress it regardless of whether tools were
+        // discovered, so a stray tool call on the LLM-only fallback path is never shown raw.
         let toolXmlSuppressed = false;
-        const firstUpdate = hasTools
-            ? (text: string) => {
-                if (toolXmlSuppressed) return;
-                if (text.trimStart().startsWith("<tool")) {
-                    toolXmlSuppressed = true;
-                    return;
-                }
-                onStreamUpdate(text);
+        const firstUpdate = (text: string) => {
+            if (toolXmlSuppressed) return;
+            if (text.trimStart().startsWith("<tool")) {
+                toolXmlSuppressed = true;
+                return;
             }
-            : onStreamUpdate;
+            onStreamUpdate(text);
+        };
 
         const response = await this.sendChatCompletion(baseURL, model, apiKey, context, messages, signal, firstUpdate);
         if (!response.success) {
@@ -113,34 +116,41 @@ export class LlmProvider implements QueryProvider {
 
         const fullText = response.data || "";
         const toolCall = this.parseToolCall(fullText);
-        if (toolCall && this.mcpClient && mcpTools) {
-            const tool = mcpTools.find(t => t.name === toolCall.name);
-            if (tool) {
+        if (toolCall) {
+            // The model asked for a tool. Whether or not it can run (tools may be absent because
+            // MCP fell back to LLM-only, or the call may fail), always produce the visible answer
+            // via a follow-up completion so the raw <tool> XML is never left as the reply and a
+            // broken tool never breaks the answer.
+            const tool = mcpTools?.find(t => t.name === toolCall.name);
+            let followUpNote: string;
+            if (tool && this.mcpClient) {
                 try {
                     const toolResult = await this.mcpClient.callTool(tool.serverIndex, toolCall.name, toolCall.arguments);
-                    const followUpMessages = [
-                        ...messages,
-                        { role: "assistant", content: fullText },
-                        {
-                            role: "user",
-                            content: `Tool result for ${toolCall.name}:\n${toolResult}\n\nPlease answer the original question using this result.`
-                        }
-                    ];
-                    const followUpResponse = await this.sendChatCompletion(baseURL, model, apiKey, context, followUpMessages, signal, onStreamUpdate);
-                    return { success: followUpResponse.success, error: followUpResponse.error };
+                    followUpNote = `Tool result for ${toolCall.name}:\n${toolResult}\n\nPlease answer the original question using this result.`;
                 } catch (err) {
                     const errMsg = err instanceof Error ? err.message : String(err);
-                    return {
-                        success: false,
-                        error: { status: 500, message: `Tool call failed: ${errMsg}` }
-                    };
+                    console.warn(`MCP tool '${toolCall.name}' failed, answering without it: ${errMsg}`);
+                    followUpNote = `The tool ${toolCall.name} could not be run (error: ${errMsg}). Answer the original question directly, without the tool.`;
                 }
             } else {
-                return {
-                    success: false,
-                    error: { status: 500, message: `Tool '${toolCall.name}' is not available. The model attempted to use a tool that was not discovered from any configured MCP server.` }
-                };
+                console.warn(`MCP tool '${toolCall.name}' was requested but not available; answering without it.`);
+                followUpNote = `The tool ${toolCall.name} is not available. Answer the original question directly, without any tool.`;
             }
+            const followUpMessages = [
+                ...messages,
+                { role: "assistant", content: fullText },
+                { role: "user", content: followUpNote }
+            ];
+            const followUpResponse = await this.sendChatCompletion(baseURL, model, apiKey, context, followUpMessages, signal, onStreamUpdate);
+            if (!followUpResponse.success) {
+                return followUpResponse;
+            }
+            // Guard against a blank reply: if the follow-up produced no visible text, surface a
+            // fallback so the suppressed <tool> XML is not left as an empty message.
+            if (!followUpResponse.data || followUpResponse.data.trim().length === 0) {
+                onStreamUpdate("I couldn't complete that request using the available tools.");
+            }
+            return { success: true };
         }
 
         // Reached only when no tool call was taken. If we suppressed a partial/invalid

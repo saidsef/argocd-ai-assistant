@@ -18,7 +18,7 @@ The LLM provider requires minimal configuration. The key settings are:
 | `model` | Recommended | The model name (e.g. `gpt-4`). If omitted, queries fail with `LLM model is not configured`. |
 | `data.baseURL` | No | Base URL of the OpenAI-compatible API. Defaults to `https://<argo-host>/extensions/assistant` (via the Argo CD proxy). |
 | `data.apiKey` | No | API key sent from the browser (raw token; the provider adds the `Bearer ` prefix if missing). Browser-readable - for production, inject it server-side via the proxy instead: see [Injecting the API token](../deployment/proxy.md#injecting-the-api-token). |
-| `data.mcpServers` | No | Array of MCP server HTTP endpoints. See [MCP Tool Integration](../architecture.md#mcp-tool-integration). |
+| `data.mcpServers` | No | Array of MCP server HTTP endpoints; each must be CORS-enabled for the Argo CD origin. See [MCP Tool Integration](../architecture.md#mcp-tool-integration). |
 | `maximumLogLines` | No | Max log lines attachable (default: 250). |
 | `systemPrompt` | No | Overrides the built-in assistant persona/instructions. Defaults to an Argo CD / Kubernetes expert prompt that grounds answers in the attached manifest, events, and logs. |
 
