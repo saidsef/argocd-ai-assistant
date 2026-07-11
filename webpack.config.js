@@ -1,15 +1,14 @@
-/// <reference types="node" />
 /* eslint-env node */
 
-import type { Configuration as WebpackConfiguration } from "webpack";
-import * as path from "path";
+const path = require("path");
 
-var PACKAGE = require('./package.json');
+const PACKAGE = require('./package.json');
 // VERSION env var overrides package.json version for CI builds
-var version = process.env.VERSION || PACKAGE.version;
+const version = process.env.VERSION || PACKAGE.version;
 const extName = PACKAGE.name;
 
-const config: WebpackConfiguration = {
+/** @type {import('webpack').Configuration} */
+const config = {
     mode: "development",
     entry: {
         extension: './src/index.tsx',
@@ -33,11 +32,16 @@ const config: WebpackConfiguration = {
     module: {
         rules: [
             {
+                // esbuild-loader transpiles TS/TSX (no TypeScript programmatic API
+                // needed, so it works with the native TS 7.0 compiler). Types are
+                // checked separately via `tsc --noEmit` (see the `typecheck` script).
+                // jsx/target are read from tsconfig.json (jsx: "react" -> classic
+                // React.createElement, matching the `react` external below).
                 test: /\.tsx?$/,
-                loader: 'ts-loader',
+                loader: 'esbuild-loader',
                 options: {
-                    allowTsInNodeModules: true,
-                    configFile: path.resolve('./tsconfig.json')
+                    target: 'es2020',
+                    tsconfig: path.resolve('./tsconfig.json'),
                 },
             },
             {
@@ -65,4 +69,4 @@ if (process.env.NODE_ENV === "production") {
     config.devtool = false;
 }
 
-export default config;
+module.exports = config;
