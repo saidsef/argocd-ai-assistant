@@ -19,14 +19,22 @@ export interface McpTool {
     serverIndex: number;
 }
 
+export interface McpServerInfo {
+    name?: string;
+    version?: string;
+}
+
 export class McpClient {
     private urls: string[];
     private sessionIds: (string | null)[];
+    // Per-server identity from the `initialize` handshake; null until connected.
+    private serverInfos: (McpServerInfo | null)[];
     private nextId = 1;
 
     constructor(urls: string[]) {
         this.urls = urls;
         this.sessionIds = new Array(urls.length).fill(null);
+        this.serverInfos = new Array(urls.length).fill(null);
     }
 
     async connect(): Promise<string[]> {
@@ -51,6 +59,8 @@ export class McpClient {
                     errors.push(`MCP server ${i} (${this.urls[i]}) initialization failed: ${response.error.message}`);
                     continue;
                 }
+
+                this.serverInfos[i] = response.result?.serverInfo ?? {};
 
                 await this.request(i, {
                     jsonrpc: "2.0",
@@ -94,6 +104,12 @@ export class McpClient {
             }
         }
         return allTools;
+    }
+
+    // Per-server identity captured during connect(); a non-null entry means that
+    // server completed the `initialize` handshake (i.e. is connected).
+    getServerInfos(): (McpServerInfo | null)[] {
+        return this.serverInfos;
     }
 
     async callTool(serverIndex: number, name: string, args: any): Promise<string> {

@@ -1,7 +1,16 @@
-import { AttachmentType, ChatTurn, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
+import { AttachmentType, ChatTurn, McpServerStatus, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
 import { getMappedHeaders } from "../util/util";
 import { FeatureFlags, isFeatureEnabled } from "../featureFlags";
 import { McpClient, McpTool } from "./mcpClient";
+
+// Short display label for an MCP server before it reports its own name.
+function hostnameOf(url: string): string {
+    try {
+        return new URL(url).hostname;
+    } catch {
+        return url;
+    }
+}
 
 // Default persona/instructions prepended to every request. Grounds answers in the
 // attached context and keeps replies concise and actionable. Override per-deployment
@@ -19,6 +28,23 @@ export class LlmProvider implements QueryProvider {
 
     private mcpClient?: McpClient;
     private mcpTools?: McpTool[];
+
+    // Live status of the configured MCP servers for UI display. Before the first query
+    // the client has not connected, so this reports the URL hostname / not-connected / 0
+    // tools; after a query it upgrades to the server-reported name and discovered tools.
+    getMcpStatus(urls: string[]): McpServerStatus[] {
+        const infos = this.mcpClient?.getServerInfos();
+        return urls.map((url, i) => {
+            const connected = !!infos && infos[i] != null;
+            const toolCount = (this.mcpTools ?? []).filter(t => t.serverIndex === i).length;
+            return {
+                url,
+                name: infos?.[i]?.name || hostnameOf(url),
+                connected,
+                toolCount
+            };
+        });
+    }
 
     async query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal, history?: ChatTurn[]): Promise<QueryResponse> {
         const settings = context.settings;
@@ -64,7 +90,24 @@ export class LlmProvider implements QueryProvider {
 
         const messages = this.buildMessages(context, prompt, mcpTools, history);
 
-        const response = await this.sendChatCompletion(baseURL, model, apiKey, context, messages, signal, onStreamUpdate);
+        // When MCP tools are available the model may reply with only a <tool ...> call.
+        // Keep that raw XML out of the UI: it is internal (the visible answer is produced
+        // by the follow-up completion below), and streaming it would corrupt the follow-up's
+        // deltas, which the UI tracks as a single cumulative string across the whole query.
+        const hasTools = !!mcpTools && mcpTools.length > 0;
+        let toolXmlSuppressed = false;
+        const firstUpdate = hasTools
+            ? (text: string) => {
+                if (toolXmlSuppressed) return;
+                if (text.trimStart().startsWith("<tool")) {
+                    toolXmlSuppressed = true;
+                    return;
+                }
+                onStreamUpdate(text);
+            }
+            : onStreamUpdate;
+
+        const response = await this.sendChatCompletion(baseURL, model, apiKey, context, messages, signal, firstUpdate);
         if (!response.success) {
             return response;
         }
@@ -101,6 +144,11 @@ export class LlmProvider implements QueryProvider {
             }
         }
 
+        // Reached only when no tool call was taken. If we suppressed a partial/invalid
+        // <tool> attempt during streaming, surface the text now so the reply is not blank.
+        if (toolXmlSuppressed) {
+            onStreamUpdate(fullText);
+        }
         return { success: true, data: fullText };
     }
 

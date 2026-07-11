@@ -33,7 +33,7 @@ export const getLogs = async (application: any, resource: any, container: string
 
     const url = "/api/v1/applications/" + application.metadata.name + "/logs?" + params.toString();
 
-    const request: RequestInfo = new Request(url, {
+    const request = new Request(url, {
         credentials: 'include',
         method: 'GET',
         headers: getHeaders(application)
@@ -49,7 +49,7 @@ export const getLogs = async (application: any, resource: any, container: string
     let partialData = '';
     let index = 0;
 
-    var results: LogEntry[] = [];
+    const results: LogEntry[] = [];
 
     while (index <= count) {
         const { done, value } = await reader.read();

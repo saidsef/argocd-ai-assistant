@@ -4,7 +4,7 @@ import { injectMessage, isTokenRequest, QueryContextImpl } from "./util/util";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
 import { AssistantSettings } from "./model/provider";
-import { createProvider, Provider } from "./providers/providerFactory";
+import { createProvider } from "./providers/providerFactory";
 import { FeatureFlags, isFeatureEnabled } from "./featureFlags";
 import { type ChatMessage } from "./components/useChat";
 import { submitToken, TokenFlowNode, TokenPrompt } from "./components/TokenFlow";
@@ -13,11 +13,9 @@ type FlowNode = "start" | "loop" | TokenFlowNode;
 
 export const SystemAssistantExtension = (props: any) => {
     const [settings, setSettings] = React.useState<AssistantSettings>(
-        globalThis.argocdAssistantSettings ?? { provider: Provider.LLM }
+        globalThis.argocdAssistantSettings ?? { provider: "LLM" }
     );
-    const [provider] = React.useState(
-        createProvider(settings.provider as Provider)
-    );
+    const [provider] = React.useState(createProvider());
     const storageRef = React.useRef(new ManageStorage(ExtensionScope.System));
 
     React.useEffect(() => {
@@ -39,6 +37,13 @@ export const SystemAssistantExtension = (props: any) => {
     }, [settings]);
 
     const welcomeMessage = "How can I help you with Argo CD today?";
+
+    const mcpServers: string[] | undefined = settings.data?.mcpServers;
+    const mcpEnabled =
+        isFeatureEnabled(FeatureFlags.ArgoCDMCP) && Array.isArray(mcpServers) && mcpServers.length > 0;
+    const getMcpStatus = mcpEnabled
+        ? () => provider.getMcpStatus?.(mcpServers!) ?? []
+        : undefined;
 
     const handleCommand = React.useCallback(
         (input: string, _messages: ChatMessage[], setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
@@ -100,6 +105,7 @@ export const SystemAssistantExtension = (props: any) => {
             storage={storageRef.current}
             onCommand={handleCommand}
             onClear={handleClearFlow}
+            getMcpStatus={getMcpStatus}
         >
             {(helpers) => flowUI(helpers.setMessages)}
         </ChatInterface>

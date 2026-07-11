@@ -41,6 +41,19 @@ export type QueryResponse = {
     error?: QueryError;
 }
 
+/** Live view of a configured MCP server, surfaced in the assistant UI. */
+export type McpServerStatus = {
+    url: string;
+    /** Server-reported name once connected; falls back to the URL hostname before then. */
+    name: string;
+    /** True once the `initialize` handshake has completed for this server. */
+    connected: boolean;
+    /** Number of tools discovered from this server (0 until connected). */
+    toolCount: number;
+}
+
 export interface QueryProvider {
     query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal, history?: ChatTurn[]): Promise<QueryResponse>;
+    /** Optional: live status of the given configured MCP server URLs, for UI display. */
+    getMcpStatus?(urls: string[]): McpServerStatus[];
 }
