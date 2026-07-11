@@ -8,6 +8,7 @@ import {
     isAttachRequest,
     isCancelRequest,
     isTokenRequest,
+    mcpConfigured,
     QueryContextImpl,
     stripManifestNoise
 } from "./util/util";
@@ -21,7 +22,6 @@ import {
     AssistantSettings
 } from "./model/provider";
 import { createProvider } from "./providers/providerFactory";
-import { FeatureFlags, isFeatureEnabled } from "./featureFlags";
 import { type ChatMessage } from "./components/useChat";
 import { submitToken, TokenFlowNode, TokenPrompt } from "./components/TokenFlow";
 
@@ -65,8 +65,7 @@ export const ResourceAssistantExtension = (props: any) => {
         settings.maximumLogLines != undefined ? settings.maximumLogLines : MAX_LINES;
 
     const mcpServers: string[] | undefined = settings.data?.mcpServers;
-    const mcpEnabled =
-        isFeatureEnabled(FeatureFlags.ArgoCDMCP) && Array.isArray(mcpServers) && mcpServers.length > 0;
+    const mcpEnabled = mcpConfigured(mcpServers);
     const getMcpStatus = mcpEnabled
         ? () => provider.getMcpStatus?.(mcpServers!) ?? []
         : undefined;
@@ -163,7 +162,7 @@ export const ResourceAssistantExtension = (props: any) => {
                 );
                 return true;
             }
-            if (isTokenRequest(input) && isFeatureEnabled(FeatureFlags.ArgoCDMCP)) {
+            if (isTokenRequest(input) && mcpConfigured(mcpServers)) {
                 setMessages(
                     injectMessage("Please enter your Argo CD token to use with an MCP server")
                 );
@@ -174,7 +173,7 @@ export const ResourceAssistantExtension = (props: any) => {
             }
             return false;
         },
-        [flowNode, resource]
+        [flowNode, resource, mcpServers]
     );
 
     const handleContainerSelect = React.useCallback((container: string) => {

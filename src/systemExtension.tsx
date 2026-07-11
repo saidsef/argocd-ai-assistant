@@ -1,11 +1,10 @@
 import * as React from "react";
 import ChatInterface from "./components/ChatInterface";
-import { injectMessage, isTokenRequest, QueryContextImpl } from "./util/util";
+import { injectMessage, isTokenRequest, mcpConfigured, QueryContextImpl } from "./util/util";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
 import { AssistantSettings } from "./model/provider";
 import { createProvider } from "./providers/providerFactory";
-import { FeatureFlags, isFeatureEnabled } from "./featureFlags";
 import { type ChatMessage } from "./components/useChat";
 import { submitToken, TokenFlowNode, TokenPrompt } from "./components/TokenFlow";
 
@@ -39,8 +38,7 @@ export const SystemAssistantExtension = (props: any) => {
     const welcomeMessage = "How can I help you with Argo CD today?";
 
     const mcpServers: string[] | undefined = settings.data?.mcpServers;
-    const mcpEnabled =
-        isFeatureEnabled(FeatureFlags.ArgoCDMCP) && Array.isArray(mcpServers) && mcpServers.length > 0;
+    const mcpEnabled = mcpConfigured(mcpServers);
     const getMcpStatus = mcpEnabled
         ? () => provider.getMcpStatus?.(mcpServers!) ?? []
         : undefined;
@@ -53,7 +51,7 @@ export const SystemAssistantExtension = (props: any) => {
                     return false;
                 }
             }
-            if (isTokenRequest(input) && isFeatureEnabled(FeatureFlags.ArgoCDMCP)) {
+            if (isTokenRequest(input) && mcpConfigured(mcpServers)) {
                 setMessages(
                     injectMessage("Please enter your Argo CD token to use with an MCP server")
                 );
@@ -63,7 +61,7 @@ export const SystemAssistantExtension = (props: any) => {
             }
             return false;
         },
-        [flowNode]
+        [flowNode, mcpServers]
     );
 
     const handleTokenSubmit = React.useCallback(

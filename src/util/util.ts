@@ -99,6 +99,10 @@ export function isCancelRequest(input: string): boolean {
     return matchesKeyword(input, 'CANCEL', 'QUIT', 'EXIT');
 }
 
+// MCP is active whenever at least one server URL is configured in settings.data.mcpServers.
+export const mcpConfigured = (servers?: string[]): boolean =>
+    Array.isArray(servers) && servers.length > 0;
+
 export function getMappedHeaders(application: any): Record<string, string | null | undefined> {
     const headers: Headers = getHeaders(application);
     const mappedHeaders: Record<string, string | null | undefined> = {}
