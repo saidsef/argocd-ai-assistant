@@ -1,6 +1,5 @@
 import { AttachmentType, ChatTurn, McpServerStatus, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
-import { getMappedHeaders } from "../util/util";
-import { FeatureFlags, isFeatureEnabled } from "../featureFlags";
+import { getMappedHeaders, mcpConfigured } from "../util/util";
 import { McpClient, McpTool } from "./mcpClient";
 
 // Short display label for an MCP server before it reports its own name.
@@ -60,7 +59,7 @@ export class LlmProvider implements QueryProvider {
         const mcpServerUrls: string[] | undefined = settings.data?.mcpServers;
 
         let mcpTools: McpTool[] | undefined;
-        if (isFeatureEnabled(FeatureFlags.ArgoCDMCP) && mcpServerUrls && mcpServerUrls.length > 0) {
+        if (mcpConfigured(mcpServerUrls)) {
             try {
                 if (!this.mcpClient) {
                     this.mcpClient = new McpClient(mcpServerUrls);
