@@ -82,7 +82,7 @@ implies, loops on itself after every query. Users can opt to go to other flows b
 3. Entering the `attach` keyword will start the Attach Logs guided conversation flow. The Chatbot will prompt
 the user with a list of containers from which they can select one container for which to attach logs. Next they
 are prompted to select the number of lines to attach to maximum configurable limit.
-4. When `data.mcpServers` is configured, a `token` flow can be initiated by the user to provide an Argo CD API token. The token is stored in `sessionStorage` and can be used by an MCP server such as [mcp-github-pr-issue-analyser](https://github.com/saidsef/mcp-github-pr-issue-analyser) to interact with Argo CD on the user's behalf.
+4. When `data.mcpServers` is configured, a `token` flow can be initiated by the user to provide an Argo CD API token. The token is stored in `sessionStorage` and sent to every configured MCP server as an `Authorization: Bearer` header, so a server such as [mcp-github-pr-issue-analyser](https://github.com/saidsef/mcp-github-pr-issue-analyser) can interact with Argo CD on the user's behalf.
 
 ### Enabling MCP
 
@@ -94,11 +94,11 @@ When `data.mcpServers` is configured in the settings, the LLM provider lazily co
 
 1. Sends an `initialize` handshake to each server on first use.
 2. Aggregates available tools from all servers via `tools/list`.
-3. Injects a "Tools" section into the system message describing each tool and its JSON schema.
-4. After the LLM responds, scans for a `<tool>` tag in the response text.
+3. Injects an "Available tools" section into the system message **only for the server(s) the user names in that message** (by the server's reported name or its hostname, matched as a whole word, case-insensitive). A message that names no server is answered without tools, so a normal question never triggers a tool call.
+4. After the LLM responds, scans for a `<tool>` tag in the response text (only for tools that were advertised).
 5. If a tool call is detected, routes the call to the correct server via `tools/call` and appends the result to the conversation as a follow-up query.
 
-The assistant limits itself to a single tool-call round-trip per user query to keep response times predictable. MCP servers are assumed to require no authentication. A broken MCP server never breaks the assistant: if a server is unreachable, blocked, or exposes no tools - or a tool call fails at runtime - the provider logs the reason to the browser console and continues in LLM-only mode.
+The assistant chains up to a few tool calls per user query (bounded, with the final turn forced tool-free) so multi-step lookups work without runaway latency. MCP servers are unauthenticated by default; a user may supply an Argo CD token via the `token` flow, which is then sent to each server as an `Authorization: Bearer` header. A broken MCP server never breaks the assistant: if a server is unreachable, blocked, or exposes no tools - or a tool call fails at runtime - the provider logs the reason to the browser console and continues in LLM-only mode.
 
 While React ChatBotify does have direct support for LLM providers these are not used as additional features
 were needed over and above what the component provided such as attaching context.

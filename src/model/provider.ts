@@ -28,6 +28,8 @@ export interface QueryContext {
     get application(): any;
     get attachments(): Attachment[];
     get settings(): AssistantSettings;
+    /** User-provided Argo CD token (via the token flow) sent as a Bearer header to MCP servers; undefined when unset. */
+    get mcpToken(): string | undefined;
 }
 
 export type QueryError = {

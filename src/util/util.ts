@@ -16,11 +16,13 @@ export class QueryContextImpl implements QueryContext {
     private _application: any;
     private _attachments: Attachment[];
     private _settings: AssistantSettings;
+    private _mcpToken?: string;
 
-    constructor(application: any, attachments: Attachment[], settings: AssistantSettings) {
+    constructor(application: any, attachments: Attachment[], settings: AssistantSettings, mcpToken?: string) {
         this._application = application;
         this._attachments = attachments;
         this._settings = settings;
+        this._mcpToken = mcpToken;
     }
 
     get application(): any {
@@ -33,6 +35,10 @@ export class QueryContextImpl implements QueryContext {
 
     get settings(): AssistantSettings {
         return this._settings;
+    }
+
+    get mcpToken(): string | undefined {
+        return this._mcpToken;
     }
 }
 
@@ -87,6 +93,16 @@ function matchesKeyword(input: string, ...keywords: string[]): boolean {
     return keywords.some((k) => upper.localeCompare(k, undefined, { sensitivity: 'base' }) === 0);
 }
 
+// True when `term` appears as a whole word in `text`, case-insensitive. Unlike matchesKeyword
+// (whole-string equality) this matches an occurrence anywhere in the text, with word boundaries so
+// "docs" matches "hey docs, search" but not "documentation"/"docside". Tolerant of names containing
+// spaces/dots/hyphens (boundary = start/end or any non-alphanumeric char).
+export function containsWord(text: string, term: string): boolean {
+    if (!text || !term) return false;
+    const esc = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^\\p{L}\\p{N}])(${esc})([^\\p{L}\\p{N}]|$)`, "iu").test(text);
+}
+
 export function isAttachRequest(input: string): boolean {
     return matchesKeyword(input, 'ATTACH');
 }
@@ -117,10 +133,11 @@ export function getHeaders(application: any): Headers {
     const applicationNamespace = application?.metadata?.namespace || "";
     const project = application?.spec?.project || "";
 
+    // Origin is a forbidden header name: fetch() silently drops any attempt to set it, so it is
+    // omitted here. The proxy authenticates via the argocd.token cookie and the Argocd-* headers.
     const headers: Headers = new Headers({
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'Origin': 'https://' + location.host,
         "Argocd-Application-Name": `${applicationNamespace}:${applicationName}`,
         "Argocd-Project-Name": `${project}`,
     });

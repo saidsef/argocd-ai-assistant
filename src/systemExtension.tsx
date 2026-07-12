@@ -31,7 +31,8 @@ export const SystemAssistantExtension = (props: any) => {
         return new QueryContextImpl(
             undefined,
             [],
-            currentSettings
+            currentSettings,
+            storageRef.current?.mcpToken ?? undefined
         );
     }, [settings]);
 
