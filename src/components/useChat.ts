@@ -140,8 +140,8 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
 
     // Re-run generation for the most recent user turn after a failure. Drops the failed
     // exchange (the trailing user message + any partial assistant bubble) and resubmits the
-    // same prompt, keeping messagesRef in sync so sendMessage appends onto the trimmed base
-    // rather than duplicating the question in the transcript.
+    // same prompt. messagesRef is trimmed first so sendMessage appends onto that base;
+    // sendMessage then commits the truncated list and clears the error itself.
     const retry = React.useCallback(() => {
         const msgs = messagesRef.current;
         let i = msgs.length - 1;
@@ -152,10 +152,7 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
             .map((p) => p.text)
             .join("");
         if (!text.trim()) return;
-        const base = msgs.slice(0, i);
-        messagesRef.current = base;
-        setMessages(base);
-        setError(undefined);
+        messagesRef.current = msgs.slice(0, i);
         sendMessage({ text });
     }, [sendMessage]);
 

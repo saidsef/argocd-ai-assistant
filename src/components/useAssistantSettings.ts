@@ -25,5 +25,5 @@ export function useAssistantSettings() {
         ? (): McpServerStatus[] => provider.getMcpStatus?.(mcpServers!) ?? []
         : undefined;
 
-    return { settings, provider, mcpServers, mcpEnabled, getMcpStatus };
+    return { settings, provider, mcpServers, getMcpStatus };
 }
