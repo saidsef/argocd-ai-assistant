@@ -135,9 +135,11 @@ export class LlmProvider implements QueryProvider {
 
         // Stream one completion while keeping raw <tool ...> XML out of the UI: it is internal (the
         // visible answer comes from a later completion) and streaming it would corrupt the cumulative
-        // deltas. Suppress from the first <tool marker onward (forwarding any preamble once), matching
-        // <tool as a whole word so <toolbar>/<toolkit> in prose don't trigger it. Returns the raw text
-        // (for tool-call parsing) and whether a tool block was hidden.
+        // deltas. Suppress from the first <tool marker onward (forwarding any preamble once). The
+        // marker is <tool followed by whitespace or ">" (the prompt's <tool name="..."> shape), never
+        // a bare word boundary: the latter transiently matches "...<tool" mid-stream, so <toolbar> /
+        // <toolkit> in prose would get their tail wrongly hidden. Returns the raw text (for tool-call
+        // parsing) and whether a tool block was hidden.
         const streamStep = async (
             stepMessages: Array<{ role: string; content: string }>
         ): Promise<{ response: QueryResponse & { data?: string }; suppressed: boolean }> => {
@@ -145,7 +147,7 @@ export class LlmProvider implements QueryProvider {
             let suppressed = false;
             const onUpdate = (text: string) => {
                 if (suppressed) return;
-                const m = text.match(/<tool\b/);
+                const m = text.match(/<tool[\s>]/);
                 if (m) {
                     suppressed = true;
                     const before = text.slice(0, m.index).trimEnd();
@@ -155,7 +157,13 @@ export class LlmProvider implements QueryProvider {
                     }
                     return;
                 }
-                emittedPrefix = prefixAtStart ? `${prefixAtStart}\n\n${text}` : text;
+                // A trailing "<", "<t", "<to", "<too" may be the start of a <tool> block whose word
+                // boundary hasn't streamed yet. Withhold it: downstream deltas are append-only, so a
+                // "<" shown now could never be retracted once we learn it began a (suppressed) block.
+                const lt = text.lastIndexOf("<");
+                const emit = lt >= 0 && "<tool".startsWith(text.slice(lt)) ? text.slice(0, lt) : text;
+                if (!emit) return;
+                emittedPrefix = prefixAtStart ? `${prefixAtStart}\n\n${emit}` : emit;
                 onStreamUpdate(emittedPrefix);
             };
             const response = await this.sendChatCompletion(baseURL, model, apiKey, context, stepMessages, signal, onUpdate);

@@ -93,9 +93,19 @@ const ChatInterface = ({
             const stream = new ReadableStream<ChatChunk>({
                 async start(controller) {
                     const msgId = generateId();
-                    controller.enqueue({ type: "text-start", id: msgId });
 
                     let lastText = "";
+                    // Emit text-start lazily, on the first visible token, so status stays "submitted"
+                    // (the thinking indicator) during the wait for the model's first output instead of
+                    // flipping to "streaming" against an empty bubble. Tool-status labels still surface
+                    // independently via the onStatus channel while a tool runs.
+                    let started = false;
+                    const ensureStarted = () => {
+                        if (!started) {
+                            started = true;
+                            controller.enqueue({ type: "text-start", id: msgId });
+                        }
+                    };
 
                     try {
                         const response = await providerRef.current.query(
@@ -105,6 +115,7 @@ const ChatInterface = ({
                                 const delta = text.slice(lastText.length);
                                 lastText = text;
                                 if (delta) {
+                                    ensureStarted();
                                     controller.enqueue({ type: "text-delta", id: msgId, delta });
                                 }
                             },
@@ -130,7 +141,8 @@ const ChatInterface = ({
                             });
                         }
                     } finally {
-                        controller.enqueue({ type: "text-end", id: msgId });
+                        // Only end a bubble that was actually started (no visible text => no bubble).
+                        if (started) controller.enqueue({ type: "text-end", id: msgId });
                         controller.close();
                     }
                 }
@@ -170,7 +182,6 @@ const ChatInterface = ({
     });
 
     const [input, setInput] = React.useState("");
-    const messagesEndRef = React.useRef<HTMLDivElement>(null);
     const listRef = React.useRef<HTMLDivElement>(null);
     // Auto-scroll only while pinned to the bottom; scrolling up disables it. Starts true.
     const stickToBottomRef = React.useRef(true);
@@ -187,8 +198,9 @@ const ChatInterface = ({
     }, [messages, storage]);
 
     React.useEffect(() => {
-        if (stickToBottomRef.current) {
-            messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
+        const el = listRef.current;
+        if (el && stickToBottomRef.current) {
+            el.scrollTop = el.scrollHeight;
         }
     }, [messages]);
 
@@ -274,7 +286,6 @@ const ChatInterface = ({
                         </button>
                     </div>
                 )}
-                <div ref={messagesEndRef} />
             </div>
             {typeof children === "function" ? children({ setMessages }) : children}
             <ChatInput

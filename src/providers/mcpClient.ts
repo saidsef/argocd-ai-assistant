@@ -50,7 +50,7 @@ export class McpClient {
     // Set/replace the Bearer token used to authenticate MCP requests. Called per query so a token
     // entered mid-session applies to subsequent requests; undefined clears it (no header sent).
     setAuthToken(token?: string): void {
-        this.authToken = token && token.trim() ? token.trim() : undefined;
+        this.authToken = token?.trim() || undefined;
     }
 
     async connect(): Promise<string[]> {
