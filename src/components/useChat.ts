@@ -16,6 +16,8 @@ export interface ChatChunk {
     id?: string;
     delta?: string;
     errorText?: string;
+    /** Transient status label (e.g. "Running docs_fetch_docs…"); null/absent clears it. */
+    label?: string;
 }
 
 export interface UseChatOptions {
@@ -32,6 +34,8 @@ export interface UseChatHelpers {
     messages: ChatMessage[];
     setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
     status: ChatStatus;
+    /** Transient tool-execution label shown while an MCP tool runs, else null. */
+    toolStatus: string | null;
     error: Error | undefined;
     sendMessage: (message: { text: string }) => Promise<void>;
     stop: () => void;
@@ -41,6 +45,7 @@ export interface UseChatHelpers {
 export function useChat(options: UseChatOptions): UseChatHelpers {
     const [messages, setMessages] = React.useState<ChatMessage[]>(options.messages);
     const [status, setStatus] = React.useState<ChatStatus>("ready");
+    const [toolStatus, setToolStatus] = React.useState<string | null>(null);
     const [error, setError] = React.useState<Error | undefined>(undefined);
     const abortControllerRef = React.useRef<AbortController | null>(null);
 
@@ -60,6 +65,7 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
         const newMessages = [...messagesRef.current, userMessage];
         setMessages(newMessages);
         setStatus("submitted");
+        setToolStatus(null);
         setError(undefined);
 
         const controller = new AbortController();
@@ -105,6 +111,8 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
                 } else if (value.type === "text-delta" && value.delta) {
                     assistantText += value.delta;
                     if (rafId === null) rafId = requestAnimationFrame(renderAssistantText);
+                } else if (value.type === "status") {
+                    setToolStatus(value.label ?? null);
                 } else if (value.type === "error" && value.errorText) {
                     throw new Error(value.errorText);
                 } else if (value.type === "text-end") {
@@ -123,6 +131,7 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
             // Flush any pending frame so the final text always renders (end, error, or abort).
             if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
             if (assistantId) renderAssistantText();
+            setToolStatus(null);
             abortControllerRef.current = null;
         }
     }, []); // stable - reads messages/transport via refs
@@ -131,9 +140,10 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
         abortControllerRef.current?.abort();
         abortControllerRef.current = null;
         setStatus("ready");
+        setToolStatus(null);
     }, []);
 
     const clearError = React.useCallback(() => setError(undefined), []);
 
-    return { messages, setMessages, status, error, sendMessage, stop, clearError };
+    return { messages, setMessages, status, toolStatus, error, sendMessage, stop, clearError };
 }

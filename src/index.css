@@ -271,6 +271,13 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-send-button:not(:d
     }
 }
 
+/* Transient label shown next to the typing dots while an MCP tool runs. */
+:is(#chatbot-resource, #chatbot-system) .chat-tool-status {
+    font-size: 0.85em;
+    font-style: italic;
+    opacity: 0.8;
+}
+
 /* Dismiss button for error messages */
 :is(#chatbot-resource, #chatbot-system) .chat-error-dismiss {
     margin-left: auto;

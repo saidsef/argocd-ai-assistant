@@ -45,7 +45,7 @@ export class LlmProvider implements QueryProvider {
         });
     }
 
-    async query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal, history?: ChatTurn[]): Promise<QueryResponse> {
+    async query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal, history?: ChatTurn[], onStatus?: (label: string | null) => void): Promise<QueryResponse> {
         const settings = context.settings;
         const baseURL = settings.data?.baseURL || `https://${location.host}/extensions/assistant`;
         const model = settings.model;
@@ -102,8 +102,13 @@ export class LlmProvider implements QueryProvider {
         let toolXmlSuppressed = false;
         const firstUpdate = (text: string) => {
             if (toolXmlSuppressed) return;
-            if (text.trimStart().startsWith("<tool")) {
+            // Suppress from the first <tool marker onward (forwarding any preamble once), so raw
+            // tool markup is never shown even when the model adds text before the tool block.
+            const idx = text.indexOf("<tool");
+            if (idx >= 0) {
                 toolXmlSuppressed = true;
+                const before = text.slice(0, idx).trimEnd();
+                if (before) onStreamUpdate(before);
                 return;
             }
             onStreamUpdate(text);
@@ -115,7 +120,7 @@ export class LlmProvider implements QueryProvider {
         }
 
         const fullText = response.data || "";
-        const toolCall = this.parseToolCall(fullText);
+        const toolCall = this.parseToolCall(fullText, mcpTools);
         if (toolCall) {
             // The model asked for a tool. Whether or not it can run (tools may be absent because
             // MCP fell back to LLM-only, or the call may fail), always produce the visible answer
@@ -124,6 +129,7 @@ export class LlmProvider implements QueryProvider {
             const tool = mcpTools?.find(t => t.name === toolCall.name);
             let followUpNote: string;
             if (tool && this.mcpClient) {
+                onStatus?.(`Running ${toolCall.name}…`);
                 try {
                     const toolResult = await this.mcpClient.callTool(tool.serverIndex, toolCall.name, toolCall.arguments);
                     followUpNote = `Tool result for ${toolCall.name}:\n${toolResult}\n\nPlease answer the original question using this result.`;
@@ -131,6 +137,8 @@ export class LlmProvider implements QueryProvider {
                     const errMsg = err instanceof Error ? err.message : String(err);
                     console.warn(`MCP tool '${toolCall.name}' failed, answering without it: ${errMsg}`);
                     followUpNote = `The tool ${toolCall.name} could not be run (error: ${errMsg}). Answer the original question directly, without the tool.`;
+                } finally {
+                    onStatus?.(null);
                 }
             } else {
                 console.warn(`MCP tool '${toolCall.name}' was requested but not available; answering without it.`);
@@ -301,9 +309,10 @@ export class LlmProvider implements QueryProvider {
                     systemText += `  Arguments schema: ${JSON.stringify(tool.inputSchema)}\n`;
                 }
             }
-            systemText += "\nIf you need to use a tool, respond ONLY with:\n";
-            systemText += '<tool name="TOOL_NAME">\n{JSON arguments matching the schema}\n</tool>\n';
-            systemText += "Do not include any other text when using a tool.";
+            systemText += "\nTo use a tool, output a tool block using an EXACT tool name from the list above:\n";
+            systemText += '<tool name="EXACT_TOOL_NAME">\n{ JSON arguments matching that tool\'s schema }\n</tool>\n';
+            systemText += `For example:\n<tool name="${mcpTools[0].name}">\n${this.exampleArgs(mcpTools[0])}\n</tool>\n`;
+            systemText += "Always wrap the arguments in the <tool>...</tool> tags with the exact tool name; never output bare JSON. A brief sentence before the block is allowed.";
         }
 
         messages.push({ role: 'system', content: systemText });
@@ -316,19 +325,92 @@ export class LlmProvider implements QueryProvider {
         return messages;
     }
 
-    private parseToolCall(text: string): { name: string; arguments: any } | null {
-        const trimmed = text.trim();
-        const match = trimmed.match(/^<tool\s+name="([^"]+)">\s*([\s\S]*?)\s*<\/tool>$/);
-        if (!match) return null;
-
-        const name = match[1];
-        const argsText = match[2].trim();
-        try {
-            const args = JSON.parse(argsText);
-            return { name, arguments: args };
-        } catch (_e) {
-            return { name, arguments: {} };
+    private parseToolCall(text: string, mcpTools?: McpTool[]): { name: string; arguments: any } | null {
+        // Primary: a <tool name="X">{json}</tool> block anywhere in the reply (tolerate a preamble).
+        const xml = text.match(/<tool\s+name="([^"]+)">\s*([\s\S]*?)\s*<\/tool>/);
+        if (xml) {
+            const name = xml[1];
+            try {
+                return { name, arguments: JSON.parse(xml[2].trim()) };
+            } catch (_e) {
+                return { name, arguments: {} };
+            }
         }
+
+        // Fallback: the model emitted a bare or fenced JSON object instead of the wrapper.
+        const json = this.extractJsonObject(text);
+        if (!json || typeof json !== "object") return null;
+
+        // The object may name the tool explicitly.
+        const named = json.name ?? json.tool;
+        const namedArgs = json.arguments ?? json.args ?? json.input ?? json.parameters;
+        if (typeof named === "string" && namedArgs && typeof namedArgs === "object") {
+            if (!mcpTools || mcpTools.some(t => t.name === named)) {
+                return { name: named, arguments: namedArgs };
+            }
+        }
+
+        // Otherwise infer the tool from the argument shape - only when exactly one tool fits, to
+        // avoid guessing wrong (this recovers a nameless args object like {query, max_results}).
+        if (mcpTools && mcpTools.length > 0) {
+            const keys = Object.keys(json);
+            const matches = mcpTools.filter(t => this.argsFitSchema(keys, t.inputSchema));
+            if (matches.length === 1) {
+                return { name: matches[0].name, arguments: json };
+            }
+        }
+        return null;
+    }
+
+    // Extract the first brace-balanced JSON object from arbitrary text (handles a ```json fence or
+    // a bare object amid prose), skipping braces inside strings. Returns the parsed object or null.
+    private extractJsonObject(text: string): any | null {
+        const start = text.indexOf("{");
+        if (start < 0) return null;
+        let depth = 0;
+        let inString = false;
+        let escaped = false;
+        for (let i = start; i < text.length; i++) {
+            const ch = text[i];
+            if (inString) {
+                if (escaped) escaped = false;
+                else if (ch === "\\") escaped = true;
+                else if (ch === '"') inString = false;
+                continue;
+            }
+            if (ch === '"') inString = true;
+            else if (ch === "{") depth++;
+            else if (ch === "}") {
+                depth--;
+                if (depth === 0) {
+                    try { return JSON.parse(text.slice(start, i + 1)); } catch (_e) { return null; }
+                }
+            }
+        }
+        return null;
+    }
+
+    // True when every provided arg key is a known schema property and all required props are set.
+    private argsFitSchema(keys: string[], schema: any): boolean {
+        const props = schema?.properties && typeof schema.properties === "object" ? Object.keys(schema.properties) : null;
+        if (!props || props.length === 0) return false;
+        if (!keys.every(k => props.includes(k))) return false;
+        const required: string[] = Array.isArray(schema.required) ? schema.required : [];
+        return required.every(r => keys.includes(r));
+    }
+
+    // A minimal example arguments object for the prompt, derived from a tool's schema.
+    private exampleArgs(tool: McpTool): string {
+        const schema = tool.inputSchema;
+        const props = schema?.properties && typeof schema.properties === "object" ? schema.properties : {};
+        const required: string[] = Array.isArray(schema?.required) ? schema.required : [];
+        const keys = required.length ? required : Object.keys(props).slice(0, 1);
+        const obj: Record<string, any> = {};
+        for (const k of keys) {
+            const t = props[k]?.type;
+            obj[k] = t === "integer" || t === "number" ? 1 : t === "boolean" ? true : "value";
+        }
+        return JSON.stringify(obj);
     }
 
     private attachmentLabel(type: AttachmentType): string {
