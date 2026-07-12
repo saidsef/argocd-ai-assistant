@@ -85,6 +85,9 @@ export class LlmProvider implements QueryProvider {
 
         let mcpTools: McpTool[] | undefined;
         if (mcpConfigured(mcpServerUrls)) {
+            // Surface the otherwise-silent first-query connect/list wait (cached thereafter).
+            const announcedConnecting = !this.mcpClient || !this.mcpTools;
+            if (announcedConnecting) onStatus?.("Connecting to tools…");
             try {
                 if (!this.mcpClient) {
                     this.mcpClient = new McpClient(mcpServerUrls);
@@ -119,6 +122,10 @@ export class LlmProvider implements QueryProvider {
                 this.mcpTools = undefined;
                 mcpTools = undefined;
             }
+            // Connection/discovery is done (or fell back); drop the transient label so it does
+            // not linger over the model's first-token wait. The thinking dots (status
+            // "submitted") carry that wait, and a tool call re-labels via onStatus below.
+            if (announcedConnecting) onStatus?.(null);
         }
 
         // Advertise tools only for MCP server(s) the user named in this message; otherwise answer
@@ -212,13 +219,15 @@ export class LlmProvider implements QueryProvider {
                     const errMsg = err instanceof Error ? err.message : String(err);
                     console.warn(`MCP tool '${toolCall.name}' failed, answering without it: ${errMsg}`);
                     followUpNote = `The tool ${toolCall.name} could not be run (error: ${errMsg}). Answer the original question directly, without the tool.`;
-                } finally {
-                    onStatus?.(null);
                 }
             } else {
                 console.warn(`MCP tool '${toolCall.name}' was requested but not available; answering without it.`);
                 followUpNote = `The tool ${toolCall.name} is not available. Answer the original question directly, without any tool.`;
             }
+            // Keep the indicator alive through the follow-up completion, whose first-token wait
+            // is otherwise a silent gap that makes the reply look finished. The UI clears this
+            // label as soon as the answer starts streaming (useChat text-delta handler).
+            onStatus?.("Analysing results…");
             stepMessages = [
                 ...stepMessages,
                 { role: "assistant", content: fullText },
