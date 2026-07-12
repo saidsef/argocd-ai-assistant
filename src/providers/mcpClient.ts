@@ -24,9 +24,15 @@ export interface McpServerInfo {
     version?: string;
 }
 
+// Abort a JSON-RPC request that gets no response within this window, so a hung MCP server
+// surfaces as a tracked error / LLM-only fallback instead of freezing the assistant.
+const MCP_REQUEST_MS = 30000;
+
 export class McpClient {
     private urls: string[];
     private sessionIds: (string | null)[];
+    // Optional Argo CD token (from the token flow) sent as a Bearer header on every request.
+    private authToken?: string;
     // Per-server identity from the `initialize` handshake; null until connected.
     private serverInfos: (McpServerInfo | null)[];
     // Failures from the most recent connect() / listAllTools(), kept separate so each is
@@ -39,6 +45,12 @@ export class McpClient {
         this.urls = urls;
         this.sessionIds = new Array(urls.length).fill(null);
         this.serverInfos = new Array(urls.length).fill(null);
+    }
+
+    // Set/replace the Bearer token used to authenticate MCP requests. Called per query so a token
+    // entered mid-session applies to subsequent requests; undefined clears it (no header sent).
+    setAuthToken(token?: string): void {
+        this.authToken = token && token.trim() ? token.trim() : undefined;
     }
 
     async connect(): Promise<string[]> {
@@ -161,10 +173,16 @@ export class McpClient {
             headers["Mcp-Session-Id"] = sessionId;
         }
 
+        // Normalise like the LLM apiKey path: accept a raw token or one already prefixed.
+        if (this.authToken) {
+            headers["Authorization"] = this.authToken.startsWith("Bearer ") ? this.authToken : `Bearer ${this.authToken}`;
+        }
+
         const response = await fetch(url, {
             method: "POST",
             headers,
-            body: JSON.stringify(body)
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(MCP_REQUEST_MS)
         });
 
         if (!response.ok) {

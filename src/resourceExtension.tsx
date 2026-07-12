@@ -114,7 +114,8 @@ export const ResourceAssistantExtension = (props: any) => {
         return new QueryContextImpl(
             application,
             attachments,
-            currentSettings
+            currentSettings,
+            storageRef.current?.mcpToken ?? undefined
         );
     }, [application, resource, events, settings]);
 

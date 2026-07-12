@@ -1,5 +1,5 @@
 import { AttachmentType, ChatTurn, McpServerStatus, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
-import { getMappedHeaders, mcpConfigured } from "../util/util";
+import { containsWord, getMappedHeaders, mcpConfigured } from "../util/util";
 import { McpClient, McpTool } from "./mcpClient";
 
 // Short display label for an MCP server before it reports its own name.
@@ -23,6 +23,15 @@ Guidelines:
 - When diagnosing, cite the specific fields, status conditions, or events you are reasoning from.
 - Format replies in Markdown; put commands, manifests, and log excerpts in fenced code blocks.`;
 
+// Max tools the model may chain within one query. Bounds latency/cost and guarantees termination
+// in at most MAX_TOOL_ITERATIONS + 1 completions (the final one is forced tool-free).
+const MAX_TOOL_ITERATIONS = 3;
+
+// Abort a stream that goes silent for this long (measured between bytes, not total), so a stalled
+// or dropped backend surfaces a clear error instead of spinning the typing indicator forever. Kept
+// generous to tolerate slow first tokens / cold model starts.
+const STREAM_INACTIVITY_MS = 45000;
+
 export class LlmProvider implements QueryProvider {
 
     private mcpClient?: McpClient;
@@ -45,6 +54,22 @@ export class LlmProvider implements QueryProvider {
         });
     }
 
+    // Tools are advertised only for MCP servers the user addresses by name in this message, so a
+    // normal question never triggers a tool call. A server is addressed when its reported name, its
+    // hostname, or the hostname's first label appears as a whole word in the prompt. Returns the
+    // subset of `allTools` on addressed servers (empty when none is named).
+    private addressedTools(prompt: string, urls: string[], allTools: McpTool[]): McpTool[] {
+        const infos = this.mcpClient?.getServerInfos();
+        const addressed = new Set<number>();
+        for (let i = 0; i < urls.length; i++) {
+            const host = hostnameOf(urls[i]);
+            const handles = [infos?.[i]?.name, host, host.split(".")[0]]
+                .filter((h): h is string => !!h && h.length >= 2);
+            if (handles.some(h => containsWord(prompt, h))) addressed.add(i);
+        }
+        return allTools.filter(t => addressed.has(t.serverIndex));
+    }
+
     async query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal, history?: ChatTurn[], onStatus?: (label: string | null) => void): Promise<QueryResponse> {
         const settings = context.settings;
         const baseURL = settings.data?.baseURL || `https://${location.host}/extensions/assistant`;
@@ -63,7 +88,11 @@ export class LlmProvider implements QueryProvider {
             try {
                 if (!this.mcpClient) {
                     this.mcpClient = new McpClient(mcpServerUrls);
+                    this.mcpClient.setAuthToken(context.mcpToken);
                     await this.mcpClient.connect();
+                } else {
+                    // Refresh the token in case it was entered/changed since the client connected.
+                    this.mcpClient.setAuthToken(context.mcpToken);
                 }
                 if (!this.mcpTools) {
                     this.mcpTools = await this.mcpClient.listAllTools();
@@ -92,52 +121,79 @@ export class LlmProvider implements QueryProvider {
             }
         }
 
-        const messages = this.buildMessages(context, prompt, mcpTools, history);
+        // Advertise tools only for MCP server(s) the user named in this message; otherwise answer
+        // LLM-only. This is what keeps a normal question from triggering a tool call.
+        const addressed = (mcpTools && mcpTools.length) ? this.addressedTools(prompt, mcpServerUrls!, mcpTools) : [];
+        const toolsForModel = addressed.length ? addressed : undefined;
 
-        // The model may reply with only a <tool ...> call. Keep that raw XML out of the UI: it
-        // is internal (the visible answer is produced by the follow-up completion below), and
-        // streaming it would corrupt the follow-up's deltas, which the UI tracks as a single
-        // cumulative string across the whole query. Suppress it regardless of whether tools were
-        // discovered, so a stray tool call on the LLM-only fallback path is never shown raw.
-        let toolXmlSuppressed = false;
-        // The exact cumulative text firstUpdate has forwarded to onStreamUpdate. The UI derives its
-        // deltas from one cumulative string across the whole query, so the follow-up completion
-        // (which streams its own text from '') must be prefixed with this or its leading characters
-        // are dropped.
+        const messages = this.buildMessages(context, prompt, toolsForModel, history);
+
+        // The UI derives its deltas from one cumulative string across the whole query, so every
+        // completion in the tool loop below must continue from this exact text. It is the last
+        // cumulative value forwarded to onStreamUpdate (starts empty).
         let emittedPrefix = "";
-        const firstUpdate = (text: string) => {
-            if (toolXmlSuppressed) return;
-            // Suppress from the first <tool marker onward (forwarding any preamble once), so raw
-            // tool markup is never shown even when the model adds text before the tool block. Match
-            // <tool as a whole word so <toolbar>/<toolkit> in a normal answer don't trigger it.
-            const m = text.match(/<tool\b/);
-            if (m) {
-                toolXmlSuppressed = true;
-                const before = text.slice(0, m.index).trimEnd();
-                if (before) { emittedPrefix = before; onStreamUpdate(before); }
-                return;
-            }
-            emittedPrefix = text;
-            onStreamUpdate(text);
+
+        // Stream one completion while keeping raw <tool ...> XML out of the UI: it is internal (the
+        // visible answer comes from a later completion) and streaming it would corrupt the cumulative
+        // deltas. Suppress from the first <tool marker onward (forwarding any preamble once), matching
+        // <tool as a whole word so <toolbar>/<toolkit> in prose don't trigger it. Returns the raw text
+        // (for tool-call parsing) and whether a tool block was hidden.
+        const streamStep = async (
+            stepMessages: Array<{ role: string; content: string }>
+        ): Promise<{ response: QueryResponse & { data?: string }; suppressed: boolean }> => {
+            const prefixAtStart = emittedPrefix;
+            let suppressed = false;
+            const onUpdate = (text: string) => {
+                if (suppressed) return;
+                const m = text.match(/<tool\b/);
+                if (m) {
+                    suppressed = true;
+                    const before = text.slice(0, m.index).trimEnd();
+                    if (before) {
+                        emittedPrefix = prefixAtStart ? `${prefixAtStart}\n\n${before}` : before;
+                        onStreamUpdate(emittedPrefix);
+                    }
+                    return;
+                }
+                emittedPrefix = prefixAtStart ? `${prefixAtStart}\n\n${text}` : text;
+                onStreamUpdate(emittedPrefix);
+            };
+            const response = await this.sendChatCompletion(baseURL, model, apiKey, context, stepMessages, signal, onUpdate);
+            return { response, suppressed };
         };
-        // Resume streaming after a suppressed tool block: prefix with what firstUpdate already
-        // emitted so the UI's cumulative-delta cursor stays consistent (see emittedPrefix above).
-        const streamAfterPrefix = (text: string) =>
-            onStreamUpdate(emittedPrefix ? `${emittedPrefix}\n\n${text}` : text);
 
-        const response = await this.sendChatCompletion(baseURL, model, apiKey, context, messages, signal, firstUpdate);
-        if (!response.success) {
-            return response;
-        }
+        // Bounded tool loop: stream a completion; if the model calls an available tool, run it and
+        // feed the result back, up to MAX_TOOL_ITERATIONS executions. The final iteration is forced
+        // tool-free so a broken/looping tool never leaves the reply blank or hanging.
+        let stepMessages = messages;
+        for (let iter = 0; iter <= MAX_TOOL_ITERATIONS; iter++) {
+            const forceNoTool = iter === MAX_TOOL_ITERATIONS;
+            const { response, suppressed } = await streamStep(stepMessages);
+            if (!response.success) {
+                return response;
+            }
+            const fullText = response.data || "";
+            const toolCall = forceNoTool ? null : this.parseToolCall(fullText, toolsForModel);
 
-        const fullText = response.data || "";
-        const toolCall = this.parseToolCall(fullText, mcpTools);
-        if (toolCall) {
-            // The model asked for a tool. Whether or not it can run (tools may be absent because
-            // MCP fell back to LLM-only, or the call may fail), always produce the visible answer
-            // via a follow-up completion so the raw <tool> XML is never left as the reply and a
-            // broken tool never breaks the answer.
-            const tool = mcpTools?.find(t => t.name === toolCall.name);
+            if (!toolCall) {
+                if (iter === 0) {
+                    // No tool at all. If a partial/invalid <tool> attempt was suppressed during
+                    // streaming, reveal the raw text now so the reply is not blank (fullText is a
+                    // superset of what was emitted, so the cumulative cursor stays consistent).
+                    if (suppressed) onStreamUpdate(fullText);
+                } else if (fullText.trim().length === 0 || emittedPrefix.trim().length === 0) {
+                    // Answering after >=1 tool ran, but nothing visible was produced: surface a
+                    // fallback so a tool call never resolves to an empty message.
+                    const fallback = "I couldn't complete that request using the available tools.";
+                    onStreamUpdate(emittedPrefix ? `${emittedPrefix}\n\n${fallback}` : fallback);
+                }
+                return { success: true };
+            }
+
+            // The model asked for a tool. Whether or not it can run (tools may be absent because MCP
+            // fell back to LLM-only, or the call may fail), feed a follow-up note back so the raw
+            // <tool> XML is never the reply and a broken tool never breaks the answer.
+            const tool = toolsForModel?.find(t => t.name === toolCall.name);
             let followUpNote: string;
             if (tool && this.mcpClient) {
                 onStatus?.(`Running ${toolCall.name}…`);
@@ -155,29 +211,14 @@ export class LlmProvider implements QueryProvider {
                 console.warn(`MCP tool '${toolCall.name}' was requested but not available; answering without it.`);
                 followUpNote = `The tool ${toolCall.name} is not available. Answer the original question directly, without any tool.`;
             }
-            const followUpMessages = [
-                ...messages,
+            stepMessages = [
+                ...stepMessages,
                 { role: "assistant", content: fullText },
                 { role: "user", content: followUpNote }
             ];
-            const followUpResponse = await this.sendChatCompletion(baseURL, model, apiKey, context, followUpMessages, signal, streamAfterPrefix);
-            if (!followUpResponse.success) {
-                return followUpResponse;
-            }
-            // Guard against a blank reply: if the follow-up produced no visible text, surface a
-            // fallback so the suppressed <tool> XML is not left as an empty message.
-            if (!followUpResponse.data || followUpResponse.data.trim().length === 0) {
-                streamAfterPrefix("I couldn't complete that request using the available tools.");
-            }
-            return { success: true };
         }
-
-        // Reached only when no tool call was taken. If we suppressed a partial/invalid
-        // <tool> attempt during streaming, surface the text now so the reply is not blank.
-        if (toolXmlSuppressed) {
-            onStreamUpdate(fullText);
-        }
-        return { success: true, data: fullText };
+        // Unreachable: the forced tool-free final iteration always returns above.
+        return { success: true };
     }
 
     private async sendChatCompletion(
@@ -213,89 +254,127 @@ export class LlmProvider implements QueryProvider {
             stream: true,
         });
 
-        const response = await fetch(`${baseURL}/v1/chat/completions`, {
-            method: 'POST',
-            headers,
-            body,
-            signal,
-        });
-
-        if (!response.ok || !response.body) {
-            let message: string;
-            switch (response.status) {
-                case 401:
-                    message = "Authentication failed (401). Check your API key or token in the extension settings.";
-                    break;
-                case 403:
-                    message = "Access forbidden (403). Your API key or token does not have permission to use this model or endpoint.";
-                    break;
-                case 404:
-                    message = "LLM endpoint not found (404). Check the baseURL in the extension settings.";
-                    break;
-                case 429:
-                    message = "Rate limit exceeded (429). Too many requests - try again shortly.";
-                    break;
-                default:
-                    message = response.status >= 500
-                        ? `LLM backend error (${response.status}). The server returned an internal error.`
-                        : (response.body ? await response.text() : response.statusText);
-            }
-            return {
-                success: false,
-                error: { status: response.status, message },
-            };
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let text = '';
-
-        // Parse a single SSE line. Returns an error response to short-circuit on, or null to continue.
-        const handleLine = (line: string): (QueryResponse & { data?: string }) | null => {
-            if (!line.startsWith('data: ')) return null;
-            const data = line.slice(6).trim();
-            if (data === '[DONE]' || !data) return null;
-
-            try {
-                const parsed = JSON.parse(data);
-                const content = parsed.choices?.[0]?.delta?.content;
-                if (content) {
-                    text += content;
-                    onStreamUpdate(text);
-                }
-                if (parsed.error) {
-                    return {
-                        success: false,
-                        error: { status: 500, message: parsed.error.message || 'Unknown error' },
-                    };
-                }
-            } catch (_e) {
-                // ignore malformed chunks
-            }
-            return null;
+        // Inactivity watchdog: abort if no bytes arrive within STREAM_INACTIVITY_MS, so a stalled or
+        // silently-dropped backend surfaces an error instead of hanging. Composed with the caller's
+        // signal so the user's Stop still works; the timer is reset on every chunk.
+        const internal = new AbortController();
+        let timedOut = false;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const clearTimer = () => { if (timer !== undefined) { clearTimeout(timer); timer = undefined; } };
+        const resetTimer = () => {
+            clearTimer();
+            timer = setTimeout(() => { timedOut = true; internal.abort(); }, STREAM_INACTIVITY_MS);
         };
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            // Keep the trailing partial line so events split across chunks are reassembled.
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-                const errorResponse = handleLine(line);
-                if (errorResponse) return errorResponse;
-            }
+        const onExternalAbort = () => internal.abort();
+        if (signal) {
+            if (signal.aborted) internal.abort();
+            else signal.addEventListener('abort', onExternalAbort, { once: true });
         }
 
-        // Flush a final event left in the buffer when the stream ends without a trailing newline.
-        const trailing = handleLine(buffer);
-        if (trailing) return trailing;
+        try {
+            resetTimer();
+            const response = await fetch(`${baseURL}/v1/chat/completions`, {
+                method: 'POST',
+                headers,
+                body,
+                signal: internal.signal,
+            });
+            resetTimer();
 
-        return { success: true, data: text };
+            if (!response.ok || !response.body) {
+                let message: string;
+                switch (response.status) {
+                    case 401:
+                        message = "Authentication failed (401). Check your API key or token in the extension settings.";
+                        break;
+                    case 403:
+                        message = "Access forbidden (403). Your API key or token does not have permission to use this model or endpoint.";
+                        break;
+                    case 404:
+                        message = "LLM endpoint not found (404). Check the baseURL in the extension settings.";
+                        break;
+                    case 429:
+                        message = "Rate limit exceeded (429). Too many requests - try again shortly.";
+                        break;
+                    default:
+                        message = response.status >= 500
+                            ? `LLM backend error (${response.status}). The server returned an internal error.`
+                            : (response.body ? await response.text() : response.statusText);
+                }
+                return {
+                    success: false,
+                    error: { status: response.status, message },
+                };
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let text = '';
+
+            // Parse a single SSE line. Returns an error response to short-circuit on, or null to continue.
+            const handleLine = (line: string): (QueryResponse & { data?: string }) | null => {
+                if (!line.startsWith('data: ')) return null;
+                const data = line.slice(6).trim();
+                if (data === '[DONE]' || !data) return null;
+
+                try {
+                    const parsed = JSON.parse(data);
+                    const content = parsed.choices?.[0]?.delta?.content;
+                    if (content) {
+                        text += content;
+                        onStreamUpdate(text);
+                    }
+                    if (parsed.error) {
+                        return {
+                            success: false,
+                            error: { status: 500, message: parsed.error.message || 'Unknown error' },
+                        };
+                    }
+                } catch (_e) {
+                    // ignore malformed chunks
+                }
+                return null;
+            };
+
+            while (true) {
+                const { done, value } = await reader.read();
+                resetTimer();
+                if (done) break;
+
+                // Keep the trailing partial line so events split across chunks are reassembled.
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    const errorResponse = handleLine(line);
+                    if (errorResponse) return errorResponse;
+                }
+            }
+
+            // Flush a final event left in the buffer when the stream ends without a trailing newline.
+            const trailing = handleLine(buffer);
+            if (trailing) return trailing;
+
+            return { success: true, data: text };
+        } catch (err) {
+            // An inactivity abort becomes a friendly error; a user abort (Stop) or genuine network
+            // error propagates unchanged so existing handling (silent AbortError) still applies.
+            if (timedOut) {
+                return {
+                    success: false,
+                    error: {
+                        status: 504,
+                        message: `The assistant stopped responding (no data for ${STREAM_INACTIVITY_MS / 1000}s). The LLM backend may be unreachable or overloaded - please try again.`,
+                    },
+                };
+            }
+            throw err;
+        } finally {
+            clearTimer();
+            if (signal) signal.removeEventListener('abort', onExternalAbort);
+        }
     }
 
     private buildMessages(context: QueryContext, prompt: string, mcpTools?: McpTool[], history?: ChatTurn[]): Array<{ role: string; content: string }> {
@@ -323,7 +402,7 @@ export class LlmProvider implements QueryProvider {
             systemText += "\nTo use a tool, output a tool block using an EXACT tool name from the list above:\n";
             systemText += '<tool name="EXACT_TOOL_NAME">\n{ JSON arguments matching that tool\'s schema }\n</tool>\n';
             systemText += `For example:\n<tool name="${mcpTools[0].name}">\n${this.exampleArgs(mcpTools[0])}\n</tool>\n`;
-            systemText += "Always wrap the arguments in the <tool>...</tool> tags with the exact tool name; never output bare JSON. A brief sentence before the block is allowed.";
+            systemText += "Always wrap the arguments in the <tool>...</tool> tags with the exact tool name; never output bare JSON. A brief sentence before the block is allowed. If the request does not require a tool, answer directly without one.";
         }
 
         messages.push({ role: 'system', content: systemText });
