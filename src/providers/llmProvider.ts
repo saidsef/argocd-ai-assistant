@@ -1,5 +1,5 @@
 import { AttachmentType, ChatTurn, McpServerStatus, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
-import { containsWord, getMappedHeaders, mcpConfigured } from "../util/util";
+import { bearer, containsWord, getMappedHeaders, mcpConfigured } from "../util/util";
 import { McpClient, McpTool } from "./mcpClient";
 
 // Short display label for an MCP server before it reports its own name.
@@ -253,7 +253,7 @@ export class LlmProvider implements QueryProvider {
         });
 
         if (apiKey) {
-            headers['Authorization'] = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+            headers['Authorization'] = bearer(apiKey);
         }
 
         const body = JSON.stringify({

@@ -3,25 +3,15 @@ import ChatInterface from "./components/ChatInterface";
 import { injectMessage, isTokenRequest, mcpConfigured, QueryContextImpl } from "./util/util";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
-import { AssistantSettings } from "./model/provider";
-import { createProvider } from "./providers/providerFactory";
 import { type ChatMessage } from "./components/useChat";
+import { useAssistantSettings } from "./components/useAssistantSettings";
 import { submitToken, TokenFlowNode, TokenPrompt } from "./components/TokenFlow";
 
 type FlowNode = "start" | "loop" | TokenFlowNode;
 
-export const SystemAssistantExtension = (props: any) => {
-    const [settings, setSettings] = React.useState<AssistantSettings>(
-        globalThis.argocdAssistantSettings ?? { provider: "LLM" }
-    );
-    const [provider] = React.useState(createProvider());
+export const SystemAssistantExtension = (_props: any) => {
+    const { settings, provider, mcpServers, getMcpStatus } = useAssistantSettings();
     const storageRef = React.useRef(new ManageStorage(ExtensionScope.System));
-
-    React.useEffect(() => {
-        if (globalThis.argocdAssistantSettings) {
-            setSettings(globalThis.argocdAssistantSettings);
-        }
-    }, []);
 
     const [form, setForm] = React.useState<{ token?: string }>({});
     const [flowNode, setFlowNode] = React.useState<FlowNode>("start");
@@ -37,12 +27,6 @@ export const SystemAssistantExtension = (props: any) => {
     }, [settings]);
 
     const welcomeMessage = "How can I help you with Argo CD today?";
-
-    const mcpServers: string[] | undefined = settings.data?.mcpServers;
-    const mcpEnabled = mcpConfigured(mcpServers);
-    const getMcpStatus = mcpEnabled
-        ? () => provider.getMcpStatus?.(mcpServers!) ?? []
-        : undefined;
 
     const handleCommand = React.useCallback(
         (input: string, _messages: ChatMessage[], setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {

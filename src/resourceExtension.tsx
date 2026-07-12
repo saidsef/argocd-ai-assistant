@@ -15,14 +15,9 @@ import {
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
 import { Events, LogEntry } from "./model/argocd";
-import {
-    Attachment,
-    AttachmentType,
-    QueryProvider,
-    AssistantSettings
-} from "./model/provider";
-import { createProvider } from "./providers/providerFactory";
+import { Attachment, AttachmentType } from "./model/provider";
 import { type ChatMessage } from "./components/useChat";
+import { useAssistantSettings } from "./components/useAssistantSettings";
 import { submitToken, TokenFlowNode, TokenPrompt } from "./components/TokenFlow";
 
 type FlowNode =
@@ -34,17 +29,8 @@ type FlowNode =
     | TokenFlowNode;
 
 export const ResourceAssistantExtension = (props: any) => {
-    const [settings, setSettings] = React.useState<AssistantSettings>(
-        globalThis.argocdAssistantSettings ?? { provider: "LLM" }
-    );
-    const [provider] = React.useState<QueryProvider>(createProvider());
+    const { settings, provider, mcpServers, getMcpStatus } = useAssistantSettings();
     const storageRef = React.useRef<ManageStorage | null>(null);
-
-    React.useEffect(() => {
-        if (globalThis.argocdAssistantSettings) {
-            setSettings(globalThis.argocdAssistantSettings);
-        }
-    }, []);
 
     const { resource, application } = props;
 
@@ -63,12 +49,6 @@ export const ResourceAssistantExtension = (props: any) => {
     const resourceID = getResourceIdentifier(resource);
     const maxLogLines: number =
         settings.maximumLogLines != undefined ? settings.maximumLogLines : MAX_LINES;
-
-    const mcpServers: string[] | undefined = settings.data?.mcpServers;
-    const mcpEnabled = mcpConfigured(mcpServers);
-    const getMcpStatus = mcpEnabled
-        ? () => provider.getMcpStatus?.(mcpServers!) ?? []
-        : undefined;
 
     const [chatKey, setChatKey] = React.useState<string | null>(null);
 
@@ -230,6 +210,9 @@ export const ResourceAssistantExtension = (props: any) => {
         let cancelled = false;
         // Clear the previous resource's events and ignore superseded responses on switch.
         setEvents({ apiVersion: "v1", items: [] });
+        // Guard against a transient undefined resource so the effect never throws before fetch
+        // (the sibling mount effect already skips via getResourceIdentifier === "Undefined").
+        if (!resource?.metadata) return;
         let url = `/api/v1/applications/${application_name}/events?resourceUID=${resource.metadata.uid}&resourceNamespace=${resource.metadata.namespace}&resourceName=${resource.metadata.name}`;
         if (resource.kind === "Application") {
             url = `/api/v1/applications/${application_name}/events`;

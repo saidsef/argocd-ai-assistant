@@ -175,6 +175,7 @@ const ChatInterface = ({
         stop,
         setMessages,
         sendMessage,
+        retry,
         clearError
     } = useChat({
         transport: transport.current,
@@ -193,9 +194,14 @@ const ChatInterface = ({
         stickToBottomRef.current = distanceFromBottom <= 40;
     };
 
+    // Persist on settle, not on every streamed frame: during streaming `messages` updates
+    // once per animation frame, so serialising the whole conversation to sessionStorage each
+    // time is pure waste. The just-sent user turn still saves promptly (status "submitted"),
+    // and the final reply persists when status leaves "streaming".
     React.useEffect(() => {
+        if (status === "streaming") return;
         storage.saveMessages(messages);
-    }, [messages, storage]);
+    }, [messages, status, storage]);
 
     React.useEffect(() => {
         const el = listRef.current;
@@ -277,6 +283,13 @@ const ChatInterface = ({
                 {error && (
                     <div className="chat-error" role="alert">
                         <span>{error.message}</span>
+                        <button
+                            className="chat-error-retry"
+                            onClick={() => { stickToBottomRef.current = true; retry(); }}
+                            aria-label="Retry request"
+                        >
+                            Retry
+                        </button>
                         <button
                             className="chat-error-dismiss"
                             onClick={clearError}

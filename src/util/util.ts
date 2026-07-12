@@ -119,6 +119,11 @@ export function isCancelRequest(input: string): boolean {
 export const mcpConfigured = (servers?: string[]): boolean =>
     Array.isArray(servers) && servers.length > 0;
 
+// Normalise a token into an Authorization header value: accept a raw token or one already
+// prefixed with "Bearer ". Shared by the LLM and MCP request paths.
+export const bearer = (token: string): string =>
+    token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+
 export function getMappedHeaders(application: any): Record<string, string | null | undefined> {
     const headers: Headers = getHeaders(application);
     const mappedHeaders: Record<string, string | null | undefined> = {}
