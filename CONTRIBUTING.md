@@ -6,10 +6,9 @@ Please note we have a code of conduct, please follow it in all your interactions
 
 ## Pull Request Process
 
-1. Ensure any install or build dependencies are removed before the end of the layer when doing a build.
-2. Update the README.md with details of changes to the interface, this includes new environment variables, exposed ports, useful file locations and container parameters.
-3. Update `docs/` to reflect any behavioral, configuration, or deployment changes.
-4. You may merge the Pull Request in once you have the sign-off from the project team, or if you do not have permission to do that, you may request a reviewer to merge it for you.
+1. Update `README.md` if your change affects the interface (e.g. new configuration or settings).
+2. Update `docs/` to reflect any behavioural, configuration, or deployment changes.
+3. Merge once you have sign-off from the project team, if you lack merge permission, ask a reviewer to merge for you.
 
 ## Code of Conduct
 

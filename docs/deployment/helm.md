@@ -35,7 +35,7 @@ server:
 
 Replace `v2.10.0` with the [latest release tag](../deployment.md#build-and-package) and the `services[].url` with your backend (see [Proxy & Backend Configuration](proxy.md)).
 
-For an external provider that requires an API key, store it in a labeled Secret (`argocd-ai-assistant-secret`, populated by a secret manager) and reference it from the proxy header - the token is never passed to the chart. See [Injecting the API token](proxy.md#injecting-the-api-token).
+For an external provider that requires an API key, store it in a labelled Secret (`argocd-ai-assistant-secret`, populated by a secret manager) and reference it from the proxy header - the token is never passed to the chart. See [Injecting the API token](proxy.md#injecting-the-api-token).
 
 > A complete, tested values file (proxy config, RBAC and settings mount included) is at
 > [`examples/kind/helm-values.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/kind/helm-values.yaml).

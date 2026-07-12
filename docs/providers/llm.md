@@ -10,23 +10,10 @@ The LLM provider uses the standard OpenAI-compatible chat completions API. This 
 
 ### Configuration
 
-The LLM provider requires minimal configuration. The key settings are:
-
-| Setting | Required | Description |
-|---------|----------|-------------|
-| `provider` | Yes | Must be `"LLM"`. |
-| `model` | Recommended | The model name (e.g. `gpt-4`). If omitted, queries fail with `LLM model is not configured`. |
-| `data.baseURL` | No | Base URL of the OpenAI-compatible API. Defaults to `https://<argo-host>/extensions/assistant` (via the Argo CD proxy). |
-| `data.apiKey` | No | API key sent from the browser (raw token; the provider adds the `Bearer ` prefix if missing). Browser-readable - for production, inject it server-side via the proxy instead: see [Injecting the API token](../deployment/proxy.md#injecting-the-api-token). |
-| `data.mcpServers` | No | Array of MCP server HTTP endpoints; each must be CORS-enabled for the Argo CD origin. See [MCP Tool Integration](../architecture.md#mcp-tool-integration). |
-| `maximumLogLines` | No | Max log lines attachable (default: 250). |
-| `systemPrompt` | No | Overrides the built-in assistant persona/instructions. Defaults to an Argo CD / Kubernetes expert prompt that grounds answers in the attached manifest, events, and logs. |
-
-`baseURL`, `apiKey`, and `mcpServers` live under the `data` object; `provider`, `model`, `maximumLogLines`, and `systemPrompt` are top-level. See the [Settings Extension](../deployment/settings.md) page for how to deploy these settings.
+The provider needs only `provider: "LLM"` and a `model`, everything else is optional. `baseURL`, `apiKey`, and `mcpServers` live under the `data` object, the rest are top-level. The [Settings Extension](../deployment/settings.md#create-the-settings-file) page has the full field reference and how to deploy these settings.
 
 ### Example Settings
 
-#### Local Inference Server (in-cluster)
 ```javascript
 globalThis.argocdAssistantSettings = {
     provider: "LLM",
@@ -37,41 +24,11 @@ globalThis.argocdAssistantSettings = {
 };
 ```
 
-#### OpenAI / DeepSeek
-```javascript
-globalThis.argocdAssistantSettings = {
-    provider: "LLM",
-    model: "gpt-4",
-    data: {
-        baseURL: "https://api.openai.com/v1"
-        // Do not put the key here - it is readable in the browser. Inject it
-        // server-side via the proxy instead (see Injecting the API token).
-    }
-};
-```
+Vary this for other setups:
 
-#### Via Argo CD Proxy Extension
-```javascript
-globalThis.argocdAssistantSettings = {
-    provider: "LLM",
-    model: "deepseek-chat",
-    data: {
-        baseURL: "/extensions/assistant"
-    }
-};
-```
-
-#### With Custom Log Limit
-```javascript
-globalThis.argocdAssistantSettings = {
-    provider: "LLM",
-    model: "gpt-4",
-    data: {
-        baseURL: "http://local.local.svc.cluster.local:11434/v1"
-    },
-    maximumLogLines: 500
-};
-```
+- **Route through the Argo CD proxy** (recommended) - omit `data.baseURL` (it defaults to the proxy path) or set it to `/extensions/assistant`. Keeps API keys out of the browser.
+- **External provider** (OpenAI/DeepSeek) - set `data.baseURL` to e.g. `https://api.openai.com/v1`. Do not put the key here, inject it server-side via the proxy (see [Injecting the API token](../deployment/proxy.md#injecting-the-api-token)).
+- **Higher log limit** - add `maximumLogLines: 500` at the top level (default 250).
 
 ### Installing the Extension
 

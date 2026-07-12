@@ -65,7 +65,7 @@ You should see a streamed `chat.completion.chunk` response from your backend end
 
 ### CORS errors in the browser console
 
-- This indicates traffic is not going through the proxy extension. Ensure the `baseURL` in settings points to the proxy path (or omit it to use the default proxy behavior).
+- This indicates traffic is not going through the proxy extension. Ensure the `baseURL` in settings points to the proxy path (or omit it to use the default proxy behaviour).
 
 ### RBAC errors
 

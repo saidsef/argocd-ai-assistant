@@ -5,7 +5,7 @@ Before rolling the extension out to a real cluster, you can prove it deploys and
 - builds the extension from the local source and hosts the tar in-cluster (no GitHub Release or external hosting needed),
 - stands up a deterministic, OpenAI-compatible **mock LLM** so no GPU or API key is required,
 - installs Argo CD using the method you choose, and
-- runs eight checks - including a real streamed request through the proxy extension, a direct read-back of the API token from its dedicated labeled Secret, and proof that the proxy injects it.
+- runs eight checks - including a real streamed request through the proxy extension, a direct read-back of the API token from its dedicated labelled Secret, and proof that the proxy injects it.
 
 ```shell
 # from the repo root - pick one method per run
