@@ -3,7 +3,7 @@
 This directory spins up a local [kind](https://kind.sigs.k8s.io/) cluster, installs
 Argo CD using each of the documented deployment methods, installs the **Argo CD AI
 Assistant** extension built from the local source, wires it to an in-cluster **mock
-OpenAI-compatible LLM**, and verifies the whole path end to end — including a real
+OpenAI-compatible LLM**, and verifies the whole path end to end - including a real
 request through the Argo CD proxy extension that streams a completion back.
 
 It exists so you can prove a change actually deploys and works before cutting a
@@ -19,7 +19,7 @@ release, without needing a GPU, a real LLM, or any external hosting.
 4. `argocd-server` serves `/extensions.js` containing the bundle **and** the settings
 5. a sample `Application` exists (required for the proxy's RBAC check)
 6. `POST /extensions/assistant/v1/chat/completions` returns a streamed completion, proving the proxy extension + RBAC + service routing all work
-7. the dedicated labeled Secret `argocd-ai-assistant-secret` reads back with `openai-api-key` at the expected value (read directly from the cluster)
+7. the dedicated labelled Secret `argocd-ai-assistant-secret` reads back with `openai-api-key` at the expected value (read directly from the cluster)
 8. the proxy injected that token as the `Authorization` header via `$argocd-ai-assistant-secret:openai-api-key` - the mock LLM echoes what it received, proving the documented [token-injection path](../../docs/deployment/proxy.md)
 
 ## Prerequisites
@@ -89,12 +89,12 @@ kind delete cluster --name argocd-ai-operator
 | `ext-host.yaml` | nginx serving the locally built tar in-cluster |
 | `mock-llm.yaml` | deterministic OpenAI-compatible mock (SSE streaming) |
 | `settings-configmap.yaml` | the settings extension (Option B, ConfigMap mount) |
-| `llm-api-secret.yaml` | dedicated labeled Secret the proxy reads (`$argocd-ai-assistant-secret:openai-api-key`) |
+| `llm-api-secret.yaml` | dedicated labelled Secret the proxy reads (`$argocd-ai-assistant-secret:openai-api-key`) |
 | `sample-app.yaml` | minimal Application used by the proxy RBAC check |
 | `raw-cm-patch.yaml`, `raw-server-patch.yaml` | raw-method `argocd-cm` + `argocd-server` patches (cmd-params/rbac are inlined in `setup.sh`) |
 | `helm-values.yaml` | Helm values (built-in `server.extensions` block) |
 | `operator-cr.yaml` | ArgoCD custom resource for the argocd-operator |
 
-> The deployment artifacts here are the same ones referenced from
-> [`docs/deployment.md`](../../docs/deployment.md); they have each been verified to
+> The deployment artefacts here are the same ones referenced from
+> [`docs/deployment.md`](../../docs/deployment.md), they have each been verified to
 > pass all eight checks on Argo CD v3.3+/v3.4.

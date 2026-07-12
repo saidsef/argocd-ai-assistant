@@ -67,9 +67,9 @@ Argo CD substitutes `$`-prefixed config values from Kubernetes Secrets, so the t
 | `$key` | the built-in `argocd-secret` |
 | `$secret-name:key` | a **separate Secret** named `secret-name` carrying the label `app.kubernetes.io/part-of: argocd` |
 
-**Prefer the dedicated labeled Secret** (`$argocd-ai-assistant-secret:openai-api-key`, as shown above): it keeps the token out of the chart-owned `argocd-secret`, and with the Operator avoids touching an operator-managed Secret.
+**Prefer the dedicated labelled Secret** (`$argocd-ai-assistant-secret:openai-api-key`, as shown above): it keeps the token out of the chart-owned `argocd-secret`, and with the Operator avoids touching an operator-managed Secret.
 
-### Recommended: a managed, labeled Secret
+### Recommended: a managed, labelled Secret
 
 Populate the Secret from a secret manager - never a literal in Git. With the [External Secrets Operator](https://external-secrets.io/):
 
@@ -100,7 +100,7 @@ spec:
         property: api-token
 ```
 
-[Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets) or SOPS work equally well - anything that keeps the plaintext out of Git and produces a Secret named `argocd-ai-assistant-secret` (labeled `app.kubernetes.io/part-of: argocd`) with an `openai-api-key` key. With this approach the **Helm chart never sees the token** - you do not set `configs.secret.extra` or pass the value to the chart at all.
+[Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets) or SOPS work equally well - anything that keeps the plaintext out of Git and produces a Secret named `argocd-ai-assistant-secret` (labelled `app.kubernetes.io/part-of: argocd`) with an `openai-api-key` key. With this approach the **Helm chart never sees the token** - you do not set `configs.secret.extra` or pass the value to the chart at all.
 
 ### Alternative: argocd-secret
 
@@ -112,15 +112,15 @@ Once resolved, `argocd-server` injects the token into the `Authorization` header
 
 | Risk | Implication | Mitigation |
 |------|-------------|------------|
-| Secret at rest | base64, not encrypted; readable via `get secret` | etcd encryption-at-rest; restrict Secret RBAC |
-| Token in `values.yaml` | committed to Git history (GitOps) | ESO / Sealed Secrets / SOPS labeled Secret; never commit |
+| Secret at rest | base64, not encrypted, readable via `get secret` | etcd encryption-at-rest, restrict Secret RBAC |
+| Token in `values.yaml` | committed to Git history (GitOps) | ESO / Sealed Secrets / SOPS labelled Secret, never commit |
 | Token via `kubectl patch` | leaks to shell history / CI logs / argv | apply a managed Secret, not an inline patch |
 | `data.apiKey` in settings | readable by every UI user (browser) | use proxy injection, not the browser field |
-| `argocd-cm` write access | repoint `services[].url` -> token exfil + SSRF | restrict config / GitOps write; review changes |
+| `argocd-cm` write access | repoint `services[].url` -> token exfil + SSRF | restrict config / GitOps write, review changes |
 | `invoke` RBAC = all `readonly` | any user can spend the key / egress data | scope `invoke` to specific roles |
-| `EXTENSION_URL` not pinned | MITM / compromise -> arbitrary JS in the UI | pin `EXTENSION_CHECKSUM`; HTTPS; trusted host |
-| External provider key | billing abuse / data egress | scope + spend-limit + rotate; prefer in-cluster LLM |
-| Transport to backend | cleartext token if not TLS | HTTPS; inject CA for self-signed |
+| `EXTENSION_URL` not pinned | MITM / compromise -> arbitrary JS in the UI | pin `EXTENSION_CHECKSUM`, HTTPS, trusted host |
+| External provider key | billing abuse / data egress | scope + spend-limit + rotate, prefer in-cluster LLM |
+| Transport to backend | cleartext token if not TLS | HTTPS, inject CA for self-signed |
 
 ## Enabling the proxy extension
 

@@ -23,7 +23,7 @@ data:
     - url: http://local.local.svc.cluster.local:11434
 ```
 
-See [Proxy & Backend Configuration](proxy.md) for other backends (vLLM, OpenAI/DeepSeek, TLS). For an external provider that requires an API key, store it in a labeled Secret (`argocd-ai-assistant-secret`, populated by a secret manager) and reference it from the proxy header - see [Injecting the API token](proxy.md#injecting-the-api-token).
+See [Proxy & Backend Configuration](proxy.md) for other backends (vLLM, OpenAI/DeepSeek, TLS). For an external provider that requires an API key, store it in a labelled Secret (`argocd-ai-assistant-secret`, populated by a secret manager) and reference it from the proxy header - see [Injecting the API token](proxy.md#injecting-the-api-token).
 
 ## 2. Enable the proxy extension (`argocd-cmd-params-cm`)
 
@@ -88,7 +88,7 @@ spec:
 Replace `v2.10.0` with the [latest release tag](../deployment.md#build-and-package).
 
 > Ready-to-apply examples are in [`examples/kind/`](https://github.com/saidsef/argocd-ai-assistant/tree/main/examples/kind)
-> (`raw-cm-patch.yaml`, `raw-server-patch.yaml`, applied via `kubectl patch`; see `setup.sh`).
+> (`raw-cm-patch.yaml`, `raw-server-patch.yaml`, applied via `kubectl patch`, see `setup.sh`).
 
 ## 5. Add the settings extension
 

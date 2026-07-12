@@ -41,7 +41,7 @@ User Browser -> Argo CD UI -> Extension JS
 
 On merge to `main` (once CI passes), a GitHub Actions workflow:
 
-1. Analyzes the diff since the last tag and classifies the change as **major**, **minor**, or **patch**
+1. Analyses the diff since the last tag and classifies the change as **major**, **minor**, or **patch**
 2. Increments the version and creates an annotated Git tag
 3. Builds and packages the extension
 4. Publishes a GitHub Release with the extension tar as an asset and auto-generated release notes
@@ -76,7 +76,7 @@ The `VERSION` environment variable overrides the placeholder version in `package
 
 ## Host the Extension
 
-The Argo CD Extension Installer downloads the extension tar from a URL during pod initialization. Use the GitHub Release asset URL:
+The Argo CD Extension Installer downloads the extension tar from a URL during pod initialisation. Use the GitHub Release asset URL:
 
 ```
 https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/extension-argocd-ai-assistant-v<version>.tar
@@ -84,9 +84,9 @@ https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/exte
 
 Replace `<version>` with the latest release tag (e.g., `v2.10.0`).
 
-If you cannot use GitHub Releases, host the tar file on an internal artifact server, S3 bucket, or HTTP server accessible from the cluster.
+If you cannot use GitHub Releases, host the tar file on an internal artefact server, S3 bucket, or HTTP server accessible from the cluster.
 
-!!! warning "Pin the artifact integrity"
+!!! warning "Pin the artefact integrity"
     The installer runs JavaScript in the Argo CD UI with the user's session, so a tampered tar is an account-compromise risk. Serve `EXTENSION_URL` over HTTPS from a trusted host and set `EXTENSION_CHECKSUM_URL` (or `EXTENSION_CHECKSUM`) on the installer so it verifies the download. See [Security considerations](deployment/proxy.md#security-considerations).
 
 ---
@@ -102,7 +102,7 @@ Pick the page that matches how you run Argo CD. Each is a complete, self-contain
 | **Raw manifests** | You apply Argo CD's install manifests directly | [Raw Manifests](deployment/raw.md) |
 
 !!! warning "The `argocd-server` container must mount the `extensions` volume"
-    The initContainer extracts the bundle into an `emptyDir`, but `argocd-server` can only serve it if the **same volume is mounted into the server container too** - not just the initContainer. The Helm chart's built-in `server.extensions` block does this for you; with the Operator and raw manifests you must add the server-side `volumeMounts` entry shown on those pages.
+    The initContainer extracts the bundle into an `emptyDir`, but `argocd-server` can only serve it if the **same volume is mounted into the server container too** - not just the initContainer. The Helm chart's built-in `server.extensions` block does this for you, with the Operator and raw manifests you must add the server-side `volumeMounts` entry shown on those pages.
 
 > Every snippet in these guides has a tested, runnable counterpart under
 > [`examples/kind/`](https://github.com/saidsef/argocd-ai-assistant/tree/main/examples/kind),
