@@ -140,7 +140,7 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
         abortControllerRef.current?.abort();
         abortControllerRef.current = null;
         setStatus("ready");
-        setToolStatus(null);
+        // toolStatus is cleared by the in-flight sendMessage's finally when the abort unwinds.
     }, []);
 
     const clearError = React.useCallback(() => setError(undefined), []);

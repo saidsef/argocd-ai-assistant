@@ -100,19 +100,30 @@ export class LlmProvider implements QueryProvider {
         // cumulative string across the whole query. Suppress it regardless of whether tools were
         // discovered, so a stray tool call on the LLM-only fallback path is never shown raw.
         let toolXmlSuppressed = false;
+        // The exact cumulative text firstUpdate has forwarded to onStreamUpdate. The UI derives its
+        // deltas from one cumulative string across the whole query, so the follow-up completion
+        // (which streams its own text from '') must be prefixed with this or its leading characters
+        // are dropped.
+        let emittedPrefix = "";
         const firstUpdate = (text: string) => {
             if (toolXmlSuppressed) return;
             // Suppress from the first <tool marker onward (forwarding any preamble once), so raw
-            // tool markup is never shown even when the model adds text before the tool block.
-            const idx = text.indexOf("<tool");
-            if (idx >= 0) {
+            // tool markup is never shown even when the model adds text before the tool block. Match
+            // <tool as a whole word so <toolbar>/<toolkit> in a normal answer don't trigger it.
+            const m = text.match(/<tool\b/);
+            if (m) {
                 toolXmlSuppressed = true;
-                const before = text.slice(0, idx).trimEnd();
-                if (before) onStreamUpdate(before);
+                const before = text.slice(0, m.index).trimEnd();
+                if (before) { emittedPrefix = before; onStreamUpdate(before); }
                 return;
             }
+            emittedPrefix = text;
             onStreamUpdate(text);
         };
+        // Resume streaming after a suppressed tool block: prefix with what firstUpdate already
+        // emitted so the UI's cumulative-delta cursor stays consistent (see emittedPrefix above).
+        const streamAfterPrefix = (text: string) =>
+            onStreamUpdate(emittedPrefix ? `${emittedPrefix}\n\n${text}` : text);
 
         const response = await this.sendChatCompletion(baseURL, model, apiKey, context, messages, signal, firstUpdate);
         if (!response.success) {
@@ -149,14 +160,14 @@ export class LlmProvider implements QueryProvider {
                 { role: "assistant", content: fullText },
                 { role: "user", content: followUpNote }
             ];
-            const followUpResponse = await this.sendChatCompletion(baseURL, model, apiKey, context, followUpMessages, signal, onStreamUpdate);
+            const followUpResponse = await this.sendChatCompletion(baseURL, model, apiKey, context, followUpMessages, signal, streamAfterPrefix);
             if (!followUpResponse.success) {
                 return followUpResponse;
             }
             // Guard against a blank reply: if the follow-up produced no visible text, surface a
             // fallback so the suppressed <tool> XML is not left as an empty message.
             if (!followUpResponse.data || followUpResponse.data.trim().length === 0) {
-                onStreamUpdate("I couldn't complete that request using the available tools.");
+                streamAfterPrefix("I couldn't complete that request using the available tools.");
             }
             return { success: true };
         }
@@ -330,6 +341,9 @@ export class LlmProvider implements QueryProvider {
         const xml = text.match(/<tool\s+name="([^"]+)">\s*([\s\S]*?)\s*<\/tool>/);
         if (xml) {
             const name = xml[1];
+            // Only a real tool name is a call; this ignores the prompt's own name="EXACT_TOOL_NAME"
+            // template and any <tool> syntax the model quotes inside a normal answer.
+            if (!mcpTools || !mcpTools.some(t => t.name === name)) return null;
             try {
                 return { name, arguments: JSON.parse(xml[2].trim()) };
             } catch (_e) {
@@ -339,32 +353,37 @@ export class LlmProvider implements QueryProvider {
 
         // Fallback: the model emitted a bare or fenced JSON object instead of the wrapper.
         const json = this.extractJsonObject(text);
-        if (!json || typeof json !== "object") return null;
+        if (!json || typeof json.value !== "object") return null;
+        // A real bare-JSON call ends the model's turn; if prose follows the object it is incidental
+        // JSON inside an answer, not a call, so ignore it (tolerate only a trailing ``` fence).
+        if (text.slice(json.end).replace(/```/g, "").trim()) return null;
+        const obj = json.value;
 
         // The object may name the tool explicitly.
-        const named = json.name ?? json.tool;
-        const namedArgs = json.arguments ?? json.args ?? json.input ?? json.parameters;
-        if (typeof named === "string" && namedArgs && typeof namedArgs === "object") {
-            if (!mcpTools || mcpTools.some(t => t.name === named)) {
-                return { name: named, arguments: namedArgs };
-            }
+        const named = obj.name ?? obj.tool;
+        const namedArgs = obj.arguments ?? obj.args ?? obj.input ?? obj.parameters;
+        if (typeof named === "string" && namedArgs && typeof namedArgs === "object"
+            && mcpTools && mcpTools.some(t => t.name === named)) {
+            return { name: named, arguments: namedArgs };
         }
 
         // Otherwise infer the tool from the argument shape - only when exactly one tool fits, to
         // avoid guessing wrong (this recovers a nameless args object like {query, max_results}).
         if (mcpTools && mcpTools.length > 0) {
-            const keys = Object.keys(json);
+            const keys = Object.keys(obj);
+            if (keys.length === 0) return null;
             const matches = mcpTools.filter(t => this.argsFitSchema(keys, t.inputSchema));
             if (matches.length === 1) {
-                return { name: matches[0].name, arguments: json };
+                return { name: matches[0].name, arguments: obj };
             }
         }
         return null;
     }
 
     // Extract the first brace-balanced JSON object from arbitrary text (handles a ```json fence or
-    // a bare object amid prose), skipping braces inside strings. Returns the parsed object or null.
-    private extractJsonObject(text: string): any | null {
+    // a bare object amid prose), skipping braces inside strings. Returns the parsed value and the
+    // index just past its closing brace (so the caller can inspect what follows), or null.
+    private extractJsonObject(text: string): { value: any; end: number } | null {
         const start = text.indexOf("{");
         if (start < 0) return null;
         let depth = 0;
@@ -383,7 +402,8 @@ export class LlmProvider implements QueryProvider {
             else if (ch === "}") {
                 depth--;
                 if (depth === 0) {
-                    try { return JSON.parse(text.slice(start, i + 1)); } catch (_e) { return null; }
+                    try { return { value: JSON.parse(text.slice(start, i + 1)), end: i + 1 }; }
+                    catch (_e) { return null; }
                 }
             }
         }
@@ -392,6 +412,7 @@ export class LlmProvider implements QueryProvider {
 
     // True when every provided arg key is a known schema property and all required props are set.
     private argsFitSchema(keys: string[], schema: any): boolean {
+        if (keys.length === 0) return false;
         const props = schema?.properties && typeof schema.properties === "object" ? Object.keys(schema.properties) : null;
         if (!props || props.length === 0) return false;
         if (!keys.every(k => props.includes(k))) return false;
