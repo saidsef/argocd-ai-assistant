@@ -38,6 +38,8 @@ export interface UseChatHelpers {
     toolStatus: string | null;
     error: Error | undefined;
     sendMessage: (message: { text: string }) => Promise<void>;
+    /** Re-run the last user turn (used by the error banner) without duplicating it. */
+    retry: () => void;
     stop: () => void;
     clearError: () => void;
 }
@@ -136,6 +138,24 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
         }
     }, []); // stable - reads messages/transport via refs
 
+    // Re-run generation for the most recent user turn after a failure. Drops the failed
+    // exchange (the trailing user message + any partial assistant bubble) and resubmits the
+    // same prompt. messagesRef is trimmed first so sendMessage appends onto that base;
+    // sendMessage then commits the truncated list and clears the error itself.
+    const retry = React.useCallback(() => {
+        const msgs = messagesRef.current;
+        let i = msgs.length - 1;
+        while (i >= 0 && msgs[i].role !== "user") i--;
+        if (i < 0) return;
+        const text = msgs[i].parts
+            .filter((p) => p.type === "text")
+            .map((p) => p.text)
+            .join("");
+        if (!text.trim()) return;
+        messagesRef.current = msgs.slice(0, i);
+        sendMessage({ text });
+    }, [sendMessage]);
+
     const stop = React.useCallback(() => {
         abortControllerRef.current?.abort();
         abortControllerRef.current = null;
@@ -145,5 +165,5 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
 
     const clearError = React.useCallback(() => setError(undefined), []);
 
-    return { messages, setMessages, status, toolStatus, error, sendMessage, stop, clearError };
+    return { messages, setMessages, status, toolStatus, error, sendMessage, retry, stop, clearError };
 }

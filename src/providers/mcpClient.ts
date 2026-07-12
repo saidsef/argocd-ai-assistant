@@ -1,3 +1,5 @@
+import { bearer } from "../util/util";
+
 interface JsonRpcRequest {
     jsonrpc: "2.0";
     id?: number;
@@ -175,7 +177,7 @@ export class McpClient {
 
         // Normalise like the LLM apiKey path: accept a raw token or one already prefixed.
         if (this.authToken) {
-            headers["Authorization"] = this.authToken.startsWith("Bearer ") ? this.authToken : `Bearer ${this.authToken}`;
+            headers["Authorization"] = bearer(this.authToken);
         }
 
         const response = await fetch(url, {
