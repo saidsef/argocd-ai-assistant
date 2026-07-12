@@ -11,6 +11,9 @@
 :is(#chatbot-resource, #chatbot-system) .chat-message-list {
     flex: 1;
     overflow-y: auto;
+    /* Disable browser scroll anchoring: it fights the streaming auto-scroll (the reply's
+       height changes every frame), which flickers the viewport. We drive scroll ourselves. */
+    overflow-anchor: none;
     padding: 10px;
 }
 
