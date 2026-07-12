@@ -55,9 +55,12 @@ export class McpClient {
         this.authToken = token?.trim() || undefined;
     }
 
-    async connect(): Promise<string[]> {
-        const errors: string[] = [];
-        for (let i = 0; i < this.urls.length; i++) {
+    async connect(): Promise<void> {
+        // Connect all servers concurrently so first-query latency is the slowest server, not their sum.
+        // Errors are written to a fixed-size slot per index (completion order is non-deterministic) and
+        // filtered afterwards to keep per-server messages deterministic.
+        const errs = new Array<string | null>(this.urls.length).fill(null);
+        await Promise.all(this.urls.map(async (url, i) => {
             try {
                 const response = await this.request(i, {
                     jsonrpc: "2.0",
@@ -74,29 +77,32 @@ export class McpClient {
                 });
 
                 if (response.error) {
-                    errors.push(`MCP server ${i} (${this.urls[i]}) initialization failed: ${response.error.message}`);
-                    continue;
+                    errs[i] = `MCP server ${i} (${url}) initialization failed: ${response.error.message}`;
+                    return;
                 }
 
                 this.serverInfos[i] = response.result?.serverInfo ?? {};
 
+                // Sequential within a server: this follow-up must come after the initialize response.
                 await this.request(i, {
                     jsonrpc: "2.0",
                     method: "notifications/initialized"
                 });
             } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
-                errors.push(`MCP server ${i} (${this.urls[i]}) unreachable: ${msg}`);
+                errs[i] = `MCP server ${i} (${url}) unreachable: ${msg}`;
             }
-        }
-        this.connectErrors = errors;
-        return errors;
+        }));
+        this.connectErrors = errs.filter((e): e is string => e !== null);
     }
 
     async listAllTools(): Promise<McpTool[]> {
-        const allTools: McpTool[] = [];
-        this.toolErrors = [];
-        for (let i = 0; i < this.urls.length; i++) {
+        // Query every server's tools concurrently. Results are collected per index and flattened in
+        // server order at the end so the aggregate list stays server-major (consumers key by
+        // serverIndex/name, so order is not load-bearing - this just keeps output stable).
+        const perServer = Array.from({ length: this.urls.length }, () => [] as McpTool[]);
+        const errs = new Array<string | null>(this.urls.length).fill(null);
+        await Promise.all(this.urls.map(async (url, i) => {
             try {
                 const response = await this.request(i, {
                     jsonrpc: "2.0",
@@ -106,25 +112,24 @@ export class McpClient {
                 });
 
                 if (response.error) {
-                    this.toolErrors.push(`MCP server ${i} (${this.urls[i]}) tools/list failed: ${response.error.message}`);
-                    continue;
+                    errs[i] = `MCP server ${i} (${url}) tools/list failed: ${response.error.message}`;
+                    return;
                 }
 
                 const tools = response.result?.tools || [];
-                for (const tool of tools) {
-                    allTools.push({
-                        name: tool.name,
-                        description: tool.description,
-                        inputSchema: tool.inputSchema,
-                        serverIndex: i
-                    });
-                }
+                perServer[i] = tools.map((tool: any) => ({
+                    name: tool.name,
+                    description: tool.description,
+                    inputSchema: tool.inputSchema,
+                    serverIndex: i
+                }));
             } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
-                this.toolErrors.push(`MCP server ${i} (${this.urls[i]}) unreachable during tools/list: ${msg}`);
+                errs[i] = `MCP server ${i} (${url}) unreachable during tools/list: ${msg}`;
             }
-        }
-        return allTools;
+        }));
+        this.toolErrors = errs.filter((e): e is string => e !== null);
+        return perServer.flat();
     }
 
     // Per-server identity captured during connect(); a non-null entry means that

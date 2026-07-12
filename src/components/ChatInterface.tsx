@@ -11,6 +11,18 @@ const MAX_HISTORY_MESSAGES = 20;
 
 const pluralTools = (n: number) => `${n} ${n === 1 ? "tool" : "tools"}`;
 
+// The initial assistant welcome bubble (a UI-only message), or none when there is no welcome text.
+// Shared by first-mount seeding and the "New chat" reset so the two stay in sync.
+const buildWelcome = (welcomeMessage?: string): ChatMessageType[] =>
+    welcomeMessage
+        ? [{
+            id: generateId(),
+            role: "assistant",
+            parts: [{ type: "text", text: welcomeMessage }],
+            local: true
+        }]
+        : [];
+
 // Compact indicator that MCP is active, shown left of "New chat" when servers are
 // configured. Starts as the configured hostname (grey dot), then upgrades to the
 // server-reported name + tool count + green dot once the provider has connected.
@@ -70,7 +82,11 @@ const ChatInterface = ({
     const providerRef = React.useRef(provider);
     providerRef.current = provider;
 
-    const transport = React.useRef<UseChatOptions["transport"]>({
+    // Lazy-init (??=) so the transport object and its async closure are built once, not re-allocated on
+    // every render — during streaming this component re-renders each animation frame. The closure reads
+    // getContextRef/providerRef at call time, so one stable instance always sees the latest values.
+    const transportRef = React.useRef<UseChatOptions["transport"] | null>(null);
+    transportRef.current ??= {
         async sendMessages({ messages, abortSignal }) {
             const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
             const prompt = lastUserMessage?.parts?.find((p) => p.type === "text")?.text || "";
@@ -150,21 +166,13 @@ const ChatInterface = ({
 
             return stream;
         }
-    });
+    };
 
     // Computed once per mount; the parent remounts via key={resourceID} on resource change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     const initialMessages = React.useMemo(() => {
         const stored = storage.loadMessages();
-        if (stored.length === 0 && welcomeMessage) {
-            return [{
-                id: generateId(),
-                role: "assistant" as const,
-                parts: [{ type: "text" as const, text: welcomeMessage }],
-                local: true
-            }];
-        }
-        return stored;
+        return stored.length === 0 ? buildWelcome(welcomeMessage) : stored;
     }, []);
 
     const {
@@ -178,7 +186,7 @@ const ChatInterface = ({
         retry,
         clearError
     } = useChat({
-        transport: transport.current,
+        transport: transportRef.current!,
         messages: initialMessages
     });
 
@@ -232,16 +240,7 @@ const ChatInterface = ({
     // message (the storage effect persists it), and let the parent reset its flow state.
     const handleClear = React.useCallback(() => {
         stop();
-        setMessages(
-            welcomeMessage
-                ? [{
-                    id: generateId(),
-                    role: "assistant" as const,
-                    parts: [{ type: "text" as const, text: welcomeMessage }],
-                    local: true
-                }]
-                : []
-        );
+        setMessages(buildWelcome(welcomeMessage));
         stickToBottomRef.current = true;
         onClear?.();
     }, [stop, setMessages, welcomeMessage, onClear]);

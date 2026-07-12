@@ -32,24 +32,31 @@ interface TokenPromptProps {
 }
 
 // Password input + Save button shown while collecting the token (states "token" / "token_invalid").
-export const TokenPrompt = ({ value, onChange, onSubmit }: TokenPromptProps) => (
-    <div className="chat-flow-ui">
-        <input
-            type="password"
-            placeholder="Enter token"
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                    e.preventDefault();
-                    onSubmit();
-                }
-            }}
-            className="chat-flow-input"
-            aria-label="Argo CD token"
-        />
-        <button onClick={onSubmit} className="chat-flow-button">
-            Save
-        </button>
-    </div>
-);
+export const TokenPrompt = ({ value, onChange, onSubmit }: TokenPromptProps) => {
+    const inputRef = React.useRef<HTMLInputElement>(null);
+    // Move focus to the field when the prompt appears (mirrors ChatInput); preventScroll avoids a jump.
+    React.useEffect(() => { inputRef.current?.focus({ preventScroll: true }); }, []);
+
+    return (
+        <div className="chat-flow-ui">
+            <input
+                ref={inputRef}
+                type="password"
+                placeholder="Enter token"
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                        e.preventDefault();
+                        onSubmit();
+                    }
+                }}
+                className="chat-flow-input"
+                aria-label="Argo CD token"
+            />
+            <button onClick={onSubmit} className="chat-flow-button">
+                Save
+            </button>
+        </div>
+    );
+};
