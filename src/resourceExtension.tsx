@@ -41,6 +41,13 @@ export const ResourceAssistantExtension = (props: any) => {
     });
     const [flowNode, setFlowNode] = React.useState<FlowNode>("start");
     const [flowError, setFlowError] = React.useState<string | null>(null);
+    const linesInputRef = React.useRef<HTMLInputElement>(null);
+
+    // Focus the log-lines field when its flow node appears, mirroring TokenPrompt/ChatInput.
+    // preventScroll matches those paths so bringing the field into focus never jumps the page.
+    React.useEffect(() => {
+        if (flowNode === "ask_lines") linesInputRef.current?.focus({ preventScroll: true });
+    }, [flowNode]);
 
     const containers: string[] = hasLogs(resource) ? getContainers(resource) : [];
     const application_name = application?.metadata?.name || "";
@@ -170,7 +177,9 @@ export const ResourceAssistantExtension = (props: any) => {
                 setFlowError("The number of lines needs to be a valid number.");
                 return;
             }
-            if (lines === 0 || lines > maxLogLines) {
+            // Reject zero, negatives, and fractional counts: any of these produce an invalid tailLines
+            // for the logs API (a negative count also makes getLogs' read loop return nothing silently).
+            if (lines < 1 || lines > maxLogLines || !Number.isInteger(lines)) {
                 setFlowError(
                     "The number of lines needs to be more than 0 and " + maxLogLines + " or less"
                 );
@@ -262,6 +271,7 @@ export const ResourceAssistantExtension = (props: any) => {
                     return (
                         <div className="chat-flow-ui">
                             <input
+                                ref={linesInputRef}
                                 type="number"
                                 placeholder={`Max ${maxLogLines}`}
                                 value={form.lines || ""}
