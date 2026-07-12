@@ -109,7 +109,10 @@ const ChatInterface = ({
                                 }
                             },
                             abortSignal,
-                            history
+                            history,
+                            (label) => {
+                                controller.enqueue({ type: "status", label: label ?? undefined });
+                            }
                         );
 
                         if (!response.success) {
@@ -155,6 +158,7 @@ const ChatInterface = ({
     const {
         messages,
         status,
+        toolStatus,
         error,
         stop,
         setMessages,
@@ -247,10 +251,12 @@ const ChatInterface = ({
                 ))}
                 {isBusy && (
                     <div className="chat-loading" role="status" aria-live="polite">
-                        {status === "submitted" && (
+                        {(status === "submitted" || toolStatus) && (
                             <>
                                 <span className="chat-typing" aria-hidden="true"><span /><span /><span /></span>
-                                <span className="sr-only">Assistant is thinking</span>
+                                {toolStatus
+                                    ? <span className="chat-tool-status">{toolStatus}</span>
+                                    : <span className="sr-only">Assistant is thinking</span>}
                             </>
                         )}
                         <button onClick={stop} aria-label="Stop response">Stop</button>

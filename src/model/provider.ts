@@ -53,7 +53,7 @@ export type McpServerStatus = {
 }
 
 export interface QueryProvider {
-    query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal, history?: ChatTurn[]): Promise<QueryResponse>;
+    query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal, history?: ChatTurn[], onStatus?: (label: string | null) => void): Promise<QueryResponse>;
     /** Optional: live status of the given configured MCP server URLs, for UI display. */
     getMcpStatus?(urls: string[]): McpServerStatus[];
 }
