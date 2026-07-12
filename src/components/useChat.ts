@@ -75,6 +75,9 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
 
         let assistantText = "";
         let assistantId = "";
+        // Mirror of the current tool/progress label so we clear it exactly once per phase
+        // (on the first answer token) instead of dispatching setToolStatus(null) per delta.
+        let toolLabel: string | null = null;
 
         // Coalesce streaming updates to one render per frame to avoid per-token re-parses.
         let rafId: number | null = null;
@@ -112,9 +115,13 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
                     setStatus("streaming");
                 } else if (value.type === "text-delta" && value.delta) {
                     assistantText += value.delta;
+                    // Visible answer text is now flowing, so drop any progress label (e.g.
+                    // "Analysing results…"). Guarded so it fires once per label phase, not per token.
+                    if (toolLabel !== null) { toolLabel = null; setToolStatus(null); }
                     if (rafId === null) rafId = requestAnimationFrame(renderAssistantText);
                 } else if (value.type === "status") {
-                    setToolStatus(value.label ?? null);
+                    toolLabel = value.label ?? null;
+                    setToolStatus(toolLabel);
                 } else if (value.type === "error" && value.errorText) {
                     throw new Error(value.errorText);
                 } else if (value.type === "text-end") {
