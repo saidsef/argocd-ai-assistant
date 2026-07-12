@@ -56,8 +56,6 @@ extension.config.assistant: |
     Bearer <your-api-token>
     ```
 
-    This keeps the API key out of the browser, the settings JavaScript file, and any ConfigMap.
-
 If your provider is CORS-enabled and reachable directly you may not strictly need the proxy, but routing through it (or a backend gateway) is recommended so API keys are never exposed to the browser.
 
 ## Injecting the API token
@@ -69,7 +67,7 @@ Argo CD substitutes `$`-prefixed config values from Kubernetes Secrets, so the t
 | `$key` | the built-in `argocd-secret` |
 | `$secret-name:key` | a **separate Secret** named `secret-name` carrying the label `app.kubernetes.io/part-of: argocd` |
 
-**Prefer the dedicated labeled Secret** (`$argocd-ai-assistant-secret:openai-api-key`, as shown above): it keeps the token out of the chart-owned `argocd-secret` and out of `values.yaml`, and with the Operator avoids touching an operator-managed Secret. The value must include the `Bearer ` prefix.
+**Prefer the dedicated labeled Secret** (`$argocd-ai-assistant-secret:openai-api-key`, as shown above): it keeps the token out of the chart-owned `argocd-secret`, and with the Operator avoids touching an operator-managed Secret.
 
 ### Recommended: a managed, labeled Secret
 

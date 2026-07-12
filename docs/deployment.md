@@ -12,9 +12,7 @@ It is split into a per-method install page (pick the one that matches how you ru
 
 ## How It Works
 
-Argo CD supports UI extensions via the [Extension Installer](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/) mechanism. The extension is delivered as a compressed tar archive containing JavaScript bundles. On startup, Argo CD's `argocd-server` pod runs an initContainer that downloads the extension archive and extracts it into `/tmp/extensions/`. The extension then registers itself with the Argo CD UI via the global `extensionsAPI`.
-
-The AI Assistant extension communicates with your LLM backend through the Argo CD **Proxy Extension**. This avoids CORS issues by routing all backend traffic through the Argo CD server.
+Argo CD supports UI extensions via the [Extension Installer](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/). The extension ships as a compressed tar of JavaScript bundles. On startup, an initContainer on the `argocd-server` pod downloads and extracts it into `/tmp/extensions/`, and the extension registers itself via the global `extensionsAPI`. All LLM traffic then flows through the Argo CD **Proxy Extension**, which routes it through `argocd-server` to avoid CORS:
 
 ```
 User Browser -> Argo CD UI -> Extension JS
@@ -41,16 +39,14 @@ User Browser -> Argo CD UI -> Extension JS
 
 ### Automated Release (Recommended)
 
-The repository includes a GitHub Actions workflow that handles versioning, building, packaging, tagging, and releasing automatically.
-
-When a change is merged to `main` and the CI workflow passes, the release workflow:
+On merge to `main` (once CI passes), a GitHub Actions workflow:
 
 1. Analyzes the diff since the last tag and classifies the change as **major**, **minor**, or **patch**
-2. Increments the version accordingly and creates an annotated Git tag
+2. Increments the version and creates an annotated Git tag
 3. Builds and packages the extension
 4. Publishes a GitHub Release with the extension tar as an asset and auto-generated release notes
 
-No manual version bumping is required. Find the latest release tag on the [GitHub Releases page](https://github.com/saidsef/argocd-ai-assistant/releases) and use it in place of the `<version>` placeholder in the examples. The latest release is [v2.10.0](https://github.com/saidsef/argocd-ai-assistant/releases/tag/v2.10.0).
+No manual version bumping is required. Use the latest tag from the [Releases page](https://github.com/saidsef/argocd-ai-assistant/releases) in place of the `<version>` placeholder in the examples - currently [v2.10.0](https://github.com/saidsef/argocd-ai-assistant/releases/tag/v2.10.0).
 
 ### Manual Build
 

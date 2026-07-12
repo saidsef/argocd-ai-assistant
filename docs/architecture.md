@@ -6,11 +6,7 @@ The Assistant for Argo CD uses the
 [Resource Tab Extension](https://argo-cd.readthedocs.io/en/latest/developer-guide/extensions/ui-extensions/#resource-tab-extensions) to provide
 an additional tab on the Resource slide-out that appears when a Resource is clicked in the UI.
 
-To provide the query functionality the Assistant supports a generic LLM provider that interfaces with any OpenAI-compatible inference backend:
-
-- **Generic LLM** - Uses standard OpenAI-compatible chat completions API. Works with Local Inference Server, vLLM, OpenAI, Azure OpenAI, or any other OpenAI-compatible endpoint.
-
-It was a conscious decision when creating this tool to focus on a generic OpenAI-compatible API rather than tying to specific backends. This allows maximum flexibility in choosing inference providers while maintaining a simple, unified interface.
+The Assistant uses a single generic LLM provider that speaks the standard OpenAI-compatible chat completions API, so it works with any compatible backend (a local inference server, vLLM, OpenAI, Azure OpenAI, and so on) rather than being tied to a specific one.
 
 ### Architecture
 
@@ -42,47 +38,27 @@ The extension is composed of two main parts: the UI extension bundle (JavaScript
 4. User queries + context are sent to the LLM backend through the Argo CD [Proxy Extension](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/), avoiding CORS issues.
 5. The proxy forwards requests to the configured LLM service. Responses stream back via SSE.
 
-Argo CD leverages Cross-Origin Resource Sharing (CORS) to prevent malicious extensions or code from
-communicating outside of the domain being used for the UI. In order to communicate with the back-end
-the extension leverages the Argo CD Proxy Extension to do so.
-
-The Proxy Extension enables traffic intended for the back-end such as LLM to be proxied through the argocd-server pod fulfilling CORS
-requirements. Streaming responses are handled natively by the proxy without additional client-side header workarounds.
+CORS would otherwise block the browser from calling the backend directly, so all backend traffic is proxied through the `argocd-server` pod. Streaming responses are handled natively by the proxy - no client-side header workarounds.
 
 ### Query Context
 
-The Assistant provides additional context when queries are sent to the back-end and on to the inference provider.
+Each query is sent to the backend with additional context:
 
-1. Resource Manifest. The live resource manifest is provided to enable queries, this manifest is provided by
-Argo CD automatically when the extension is invoked.
-2. Events. The Assistant will automatically retrieve the resource Events and attach them to the context. The
-Events are currently cached and are not continuously updated.
-3. Logs (Optional). If the resource supports logs, a log file from a single container can be attached to the
-context via a guided conversation flow. Once attached the logs are cached and provided on every request, logs
-can be re-fetched by initiating the flow again.
+1. **Resource manifest** - the live manifest, provided by Argo CD when the extension is invoked.
+2. **Events** - retrieved automatically and attached. Cached, not continuously updated.
+3. **Logs** (optional) - a single container's log, attached via a guided flow. Cached and re-sent on every request; re-run the flow to refresh.
 
 !!! note
-    It's important to note that most inference providers support a limited amount of tokens. As a result larger
-    context items might exhaust the query token limit.
+    Most inference providers cap tokens, so large context items can exhaust the query limit.
 
 ### Chatbot Interface
 
-This extension uses the [React ChatBotify](https://react-chatbotify.com/) React component for the chat interface.
-This component provides support for a variety of features including streaming, markdown rendering and more.
+The chat interface uses [React ChatBotify](https://react-chatbotify.com/), which provides streaming, markdown rendering, and more. The conversation flow:
 
-Following the architecture of React ChatBotify the Assistant Extension defines a conversation flow as follows:
-
-
-1. When the user first interacts with the Assistant they begin at the Start node. Here the Assistant provides
-a starting message including some information about the resource like Kind and Name. Optionally if
-the resource is of a type that supports Logs it will include a message on how to begin the Attach Logs
-guided conversation flow.
-2. After the Start node, the user enters the Loop Node where they can enter queries. The Loop Node, as the name
-implies, loops on itself after every query. Users can opt to go to other flows by entering a keyword.
-3. Entering the `attach` keyword will start the Attach Logs guided conversation flow. The Chatbot will prompt
-the user with a list of containers from which they can select one container for which to attach logs. Next they
-are prompted to select the number of lines to attach to maximum configurable limit.
-4. When `data.mcpServers` is configured, a `token` flow can be initiated by the user to provide an Argo CD API token. The token is stored in `sessionStorage` and sent to every configured MCP server as an `Authorization: Bearer` header, so a server such as [mcp-github-pr-issue-analyser](https://github.com/saidsef/mcp-github-pr-issue-analyser) can interact with Argo CD on the user's behalf.
+1. **Start** - an opening message with the resource Kind and Name, plus how to attach logs if the resource supports them.
+2. **Loop** - the user enters queries; the node loops after each one. Keywords switch to other flows.
+3. **`attach`** - starts the Attach Logs flow: pick a container, then the number of lines (up to the configured limit).
+4. **`token`** (when `data.mcpServers` is set) - the user supplies an Argo CD API token. It is stored in `sessionStorage` and sent to every configured MCP server as an `Authorization: Bearer` header, so a server such as [mcp-github-pr-issue-analyser](https://github.com/saidsef/mcp-github-pr-issue-analyser) can act on Argo CD on the user's behalf.
 
 ### Enabling MCP
 
@@ -90,15 +66,12 @@ MCP is enabled by configuring `data.mcpServers` in the [settings extension](depl
 
 ### MCP Tool Integration
 
-When `data.mcpServers` is configured in the settings, the LLM provider lazily connects to each MCP server using an HTTP-streamable JSON-RPC transport. The browser calls each server directly, so the server must send CORS headers allowing the Argo CD origin. The provider:
+When `data.mcpServers` is set, the LLM provider lazily connects to each server over an HTTP-streamable JSON-RPC transport. The browser calls servers directly, so each must send CORS headers for the Argo CD origin. Per message the provider:
 
-1. Sends an `initialize` handshake to each server on first use.
-2. Aggregates available tools from all servers via `tools/list`.
-3. Injects an "Available tools" section into the system message **only for the server(s) the user names in that message** (by the server's reported name or its hostname, matched as a whole word, case-insensitive). A message that names no server is answered without tools, so a normal question never triggers a tool call.
-4. After the LLM responds, scans for a `<tool>` tag in the response text (only for tools that were advertised).
-5. If a tool call is detected, routes the call to the correct server via `tools/call` and appends the result to the conversation as a follow-up query.
+1. Sends an `initialize` handshake on first use, then lists tools via `tools/list`.
+2. Injects an "Available tools" section into the system message **only for the server(s) named in that message** (by reported name or hostname, matched as a whole word, case-insensitive). A message naming no server gets no tools - so a normal question never triggers a call.
+3. Scans the response for a `<tool>` tag (only for advertised tools) and, if found, routes it via `tools/call`, appending the result as a follow-up query.
 
-The assistant chains up to a few tool calls per user query (bounded, with the final turn forced tool-free) so multi-step lookups work without runaway latency. MCP servers are unauthenticated by default; a user may supply an Argo CD token via the `token` flow, which is then sent to each server as an `Authorization: Bearer` header. A broken MCP server never breaks the assistant: if a server is unreachable, blocked, or exposes no tools - or a tool call fails at runtime - the provider logs the reason to the browser console and continues in LLM-only mode.
+Tool calls chain a bounded few times per query (the final turn forced tool-free) to keep multi-step lookups fast. Servers are unauthenticated by default; the `token` flow adds an `Authorization: Bearer` header. A broken server never breaks the assistant - if it is unreachable, exposes no tools, or a call fails, the provider logs the reason to the console and continues in LLM-only mode.
 
-While React ChatBotify does have direct support for LLM providers these are not used as additional features
-were needed over and above what the component provided such as attaching context.
+React ChatBotify's built-in LLM-provider support is not used, because the Assistant needs features beyond it, such as attaching context.

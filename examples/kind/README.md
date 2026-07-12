@@ -18,14 +18,9 @@ release, without needing a GPU, a real LLM, or any external hosting.
 3. the settings extension is present at `/tmp/extensions/resources/argocd-ai-assistant-settings/`
 4. `argocd-server` serves `/extensions.js` containing the bundle **and** the settings
 5. a sample `Application` exists (required for the proxy's RBAC check)
-6. `POST /extensions/assistant/v1/chat/completions` returns a streamed completion
-   from the backend, proving the proxy extension + RBAC + service routing all work
-7. the API token Secret exists - `verify.sh` reads the dedicated, labeled Secret
-   `argocd-ai-assistant-secret` back and confirms `openai-api-key` decodes to the
-   expected value (a direct read from the cluster, not inferred from behaviour)
-8. the proxy injected the token via `$argocd-ai-assistant-secret:openai-api-key`
-   as the `Authorization` header - the mock LLM echoes what it received, proving
-   the documented [token-injection path](../../docs/deployment/proxy.md) works
+6. `POST /extensions/assistant/v1/chat/completions` returns a streamed completion, proving the proxy extension + RBAC + service routing all work
+7. the dedicated labeled Secret `argocd-ai-assistant-secret` reads back with `openai-api-key` at the expected value (read directly from the cluster)
+8. the proxy injected that token as the `Authorization` header via `$argocd-ai-assistant-secret:openai-api-key` - the mock LLM echoes what it received, proving the documented [token-injection path](../../docs/deployment/proxy.md)
 
 ## Prerequisites
 
@@ -75,7 +70,7 @@ at it instead of `http://mock-llm:8000`:
 - in-cluster Ollama: `http://ollama.ollama.svc.cluster.local:11434`
 - in-cluster vLLM: `http://vllm.vllm.svc.cluster.local:8000`
 - external OpenAI/DeepSeek: route through the proxy with an injected `Authorization`
-  header (see [`docs/deployment.md`](../../docs/deployment.md#proxy-extension-configuration))
+  header (see [`docs/deployment/proxy.md`](../../docs/deployment/proxy.md#injecting-the-api-token))
 
 ## Tear down
 
