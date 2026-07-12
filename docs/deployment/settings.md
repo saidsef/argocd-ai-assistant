@@ -26,7 +26,7 @@ globalThis.argocdAssistantSettings = {
 | `model` | Recommended | Model name (e.g., `gpt-4`). If omitted, queries fail with `LLM model is not configured`. |
 | `data.baseURL` | No | OpenAI-compatible API base URL. Defaults to the Argo CD proxy path if omitted. |
 | `data.apiKey` | No | API key sent **from the browser** as `Authorization: Bearer …`. It is readable in the browser - **not recommended**; prefer server-side injection via the proxy ([Injecting the API token](proxy.md#injecting-the-api-token)). |
-| `data.mcpServers` | No | Array of MCP server HTTP endpoints (e.g., `["https://mcp.example.com"]`). When configured, the assistant discovers and uses tools exposed by these servers. No authentication is supported. |
+| `data.mcpServers` | No | Array of MCP server HTTP endpoints (e.g., `["https://mcp.example.com"]`). The browser calls these directly, so each server must send CORS headers allowing the Argo CD origin. When configured, the assistant discovers and uses tools exposed by these servers. No authentication is supported. |
 | `maximumLogLines` | No | Max log lines attachable (default: 250). |
 | `systemPrompt` | No | Overrides the built-in assistant persona/instructions. Defaults to an Argo CD / Kubernetes expert prompt that grounds answers in the attached manifest, events, and logs. |
 

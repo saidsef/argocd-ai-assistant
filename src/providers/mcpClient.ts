@@ -29,6 +29,10 @@ export class McpClient {
     private sessionIds: (string | null)[];
     // Per-server identity from the `initialize` handshake; null until connected.
     private serverInfos: (McpServerInfo | null)[];
+    // Failures from the most recent connect() / listAllTools(), kept separate so each is
+    // reset by its own method and never compounds across calls.
+    private connectErrors: string[] = [];
+    private toolErrors: string[] = [];
     private nextId = 1;
 
     constructor(urls: string[]) {
@@ -71,11 +75,13 @@ export class McpClient {
                 errors.push(`MCP server ${i} (${this.urls[i]}) unreachable: ${msg}`);
             }
         }
+        this.connectErrors = errors;
         return errors;
     }
 
     async listAllTools(): Promise<McpTool[]> {
         const allTools: McpTool[] = [];
+        this.toolErrors = [];
         for (let i = 0; i < this.urls.length; i++) {
             try {
                 const response = await this.request(i, {
@@ -86,7 +92,7 @@ export class McpClient {
                 });
 
                 if (response.error) {
-                    console.error(`MCP server ${i} tools/list failed:`, response.error.message);
+                    this.toolErrors.push(`MCP server ${i} (${this.urls[i]}) tools/list failed: ${response.error.message}`);
                     continue;
                 }
 
@@ -100,7 +106,8 @@ export class McpClient {
                     });
                 }
             } catch (err) {
-                console.error(`MCP server ${i} unreachable during tools/list:`, err);
+                const msg = err instanceof Error ? err.message : String(err);
+                this.toolErrors.push(`MCP server ${i} (${this.urls[i]}) unreachable during tools/list: ${msg}`);
             }
         }
         return allTools;
@@ -110,6 +117,13 @@ export class McpClient {
     // server completed the `initialize` handshake (i.e. is connected).
     getServerInfos(): (McpServerInfo | null)[] {
         return this.serverInfos;
+    }
+
+    // Connect / tools-list failures from the most recent connect()/listAllTools(); the provider
+    // logs these to the browser console when MCP falls back to LLM-only. Returns a copy so
+    // callers cannot mutate the client's retained state.
+    getErrors(): string[] {
+        return [...this.connectErrors, ...this.toolErrors];
     }
 
     async callTool(serverIndex: number, name: string, args: any): Promise<string> {
