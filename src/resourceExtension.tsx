@@ -4,6 +4,7 @@ import { getLogs, hasLogs, MAX_LINES } from "./service/logs";
 import { ApplicationSummary, getApplicationSummary, summariseApplication } from "./service/application";
 import {
     getContainers,
+    getHeaders,
     getResourceIdentifier,
     injectMessage,
     isAttachRequest,
@@ -13,6 +14,7 @@ import {
     QueryContextImpl,
     stripManifestNoise
 } from "./util/util";
+import { MAX_EVENTS, summariseEvents } from "./service/events";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
 import { Events, LogEntry } from "./model/argocd";
@@ -109,8 +111,10 @@ export const ResourceAssistantExtension = (props: any) => {
         }
 
         if (events?.items?.length > 0) {
+            // Cap + distil to the most recent MAX_EVENTS (kubectl-style signal only), so events -
+            // previously the one unbounded context source - can't blow up the prompt on a busy resource.
             attachments.push({
-                content: JSON.stringify({ ...events, items: events.items.map(stripManifestNoise) }),
+                content: JSON.stringify(summariseEvents(events.items, MAX_EVENTS)),
                 mimeType: "application/json",
                 type: AttachmentType.EVENTS
             });
@@ -271,11 +275,19 @@ export const ResourceAssistantExtension = (props: any) => {
         // Guard against a transient undefined resource so the effect never throws before fetch
         // (the sibling mount effect already skips via getResourceIdentifier === "Undefined").
         if (!resource?.metadata) return;
-        let url = `/api/v1/applications/${application_name}/events?resourceUID=${resource.metadata.uid}&resourceNamespace=${resource.metadata.namespace}&resourceName=${resource.metadata.name}`;
-        if (resource.kind === "Application") {
-            url = `/api/v1/applications/${application_name}/events`;
+        // Encode the path + query params (names/namespaces may contain characters that need
+        // escaping) and send the same-origin auth/routing headers every other Argo CD call uses
+        // (getHeaders + credentials:'include', matching service/application.ts and service/logs.ts),
+        // so a project-scoped proxy authorises this request instead of silently rejecting it.
+        let url = `/api/v1/applications/${encodeURIComponent(application_name)}/events`;
+        if (resource.kind !== "Application") {
+            const params = new URLSearchParams();
+            params.set("resourceUID", resource.metadata.uid ?? "");
+            params.set("resourceNamespace", resource.metadata.namespace ?? "");
+            params.set("resourceName", resource.metadata.name ?? "");
+            url += `?${params.toString()}`;
         }
-        fetch(url)
+        fetch(url, { credentials: "include", headers: getHeaders(application) })
             .then((response) => {
                 if (!response.ok) {
                     throw new Error(`Events API returned ${response.status} ${response.statusText}`);
