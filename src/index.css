@@ -336,6 +336,49 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-error {
     color: #ef9a9a;
 }
 
+/* Suggestion chips: one-click starter prompts shown only on a fresh conversation, sitting just
+   above the composer. Outlined/pill styling keeps them visually distinct from the accent-filled
+   send/flow buttons so they read as optional hints rather than primary actions. */
+:is(#chatbot-resource, #chatbot-system) .chat-suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 10px 0;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-suggestion {
+    padding: 5px 12px;
+    background-color: transparent;
+    color: #00A2B3;
+    border: 1px solid #00A2B3;
+    border-radius: 14px;
+    font-size: 13px;
+    line-height: 1.3;
+    cursor: pointer;
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-suggestion:hover {
+    background-color: #00A2B3;
+    color: #fff;
+}
+
+:is(#chatbot-resource, #chatbot-system) .chat-suggestion:focus-visible {
+    outline: 2px solid #00A2B3;
+    outline-offset: 1px;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-suggestion {
+    color: #4dd0e1;
+    border-color: #33707a;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-suggestion:hover {
+    background-color: #007A87;
+    color: #fff;
+    border-color: #007A87;
+}
+
 /* Flow UI overlays */
 :is(#chatbot-resource, #chatbot-system) .chat-flow-ui {
     display: flex;

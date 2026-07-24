@@ -1,6 +1,7 @@
 import * as React from "react";
 import ChatInterface from "./components/ChatInterface";
 import { getLogs, hasLogs, MAX_LINES } from "./service/logs";
+import { ApplicationSummary, getApplicationSummary, summariseApplication } from "./service/application";
 import {
     getContainers,
     getResourceIdentifier,
@@ -41,6 +42,7 @@ export const ResourceAssistantExtension = (props: any) => {
     });
     const [flowNode, setFlowNode] = React.useState<FlowNode>("start");
     const [flowError, setFlowError] = React.useState<string | null>(null);
+    const [appSummary, setAppSummary] = React.useState<ApplicationSummary | null>(null);
     const linesInputRef = React.useRef<HTMLInputElement>(null);
 
     // Focus the log-lines field when its flow node appears, mirroring TokenPrompt/ChatInput.
@@ -73,12 +75,37 @@ export const ResourceAssistantExtension = (props: any) => {
     const getContext = React.useCallback(() => {
         const attachments: Attachment[] = [];
 
-        if (resource) {
+        // Distilled Argo CD Application summary (the `argocd app get` review view). Fetched into
+        // state asynchronously; until it lands we fall back to summarising an Application object we
+        // already hold, so grounding is never empty on first paint. The fallback only ever summarises
+        // an actual Application (the resource when it is one, else the owning `application` prop) -
+        // never a child resource, which would yield a misleading, mostly-empty "Application" summary.
+        const isApplication = resource?.kind === "Application";
+        const appObject = isApplication ? (application ?? resource) : application;
+        const summary = appSummary ?? summariseApplication(appObject);
+
+        if (isApplication && summary) {
+            // For an Application resource the compact summary supersedes the full manifest (which
+            // carries the entire resource tree/history) - large token saving, same review signal.
+            attachments.push({
+                content: JSON.stringify(summary),
+                mimeType: "application/json",
+                type: AttachmentType.APP_SUMMARY
+            });
+        } else if (resource) {
             attachments.push({
                 content: JSON.stringify(stripManifestNoise(resource)),
                 mimeType: "application/json",
                 type: AttachmentType.MANIFEST
             });
+            // Ground a child resource (Deployment, Pod, ...) in its owning Application's GitOps state.
+            if (summary) {
+                attachments.push({
+                    content: JSON.stringify(summary),
+                    mimeType: "application/json",
+                    type: AttachmentType.APP_SUMMARY
+                });
+            }
         }
 
         if (events?.items?.length > 0) {
@@ -104,7 +131,7 @@ export const ResourceAssistantExtension = (props: any) => {
             currentSettings,
             storageRef.current?.mcpToken ?? undefined
         );
-    }, [application, resource, events, settings]);
+    }, [application, resource, events, settings, appSummary]);
 
     const welcomeMessage =
         "How can I help you with the resource **" +
@@ -115,6 +142,28 @@ export const ResourceAssistantExtension = (props: any) => {
         (hasLogs(resource)
             ? " I notice this resource has logs available, to attach one or more container logs type *Attach* at any time."
             : "");
+
+    // Starter prompts tailored to the resource, surfaced only on a fresh conversation. For an
+    // Application they target the Helm/GitOps review flow the summary context now grounds.
+    const suggestions: string[] =
+        resource_kind === "Application"
+            ? [
+                "Is this application synced and healthy?",
+                "What Helm chart and version is deployed?",
+                "Summarise the most recent sync",
+                "Any out-of-sync or degraded resources?"
+            ]
+            : hasLogs(resource)
+                ? [
+                    "Why might this resource be unhealthy?",
+                    "Summarise the recent events",
+                    "Is the owning Argo CD application healthy?"
+                ]
+                : [
+                    "Explain what this resource does",
+                    "Summarise the recent events",
+                    "Is the owning Argo CD application healthy?"
+                ];
 
     const handleCancel = React.useCallback(() => {
         setFlowNode("loop");
@@ -246,6 +295,22 @@ export const ResourceAssistantExtension = (props: any) => {
         return () => { cancelled = true; };
     }, [application, resource, application_name]);
 
+    // Fetch the owning Application's distilled summary (chart/source, sync, health, resource
+    // rollup) once per application, mirroring the events effect's cancellation guard. Keyed on the
+    // stable app name (not the object identity) so a snapshot is fetched once and not re-fetched on
+    // every host re-render. getApplicationSummary never rejects (it falls back to props internally),
+    // so a failure just yields null.
+    React.useEffect(() => {
+        let cancelled = false;
+        setAppSummary(null);
+        if (!application_name) return;
+        getApplicationSummary(application).then((summary) => {
+            if (!cancelled) setAppSummary(summary);
+        });
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [application_name]);
+
     const flowUI = React.useCallback(
         (setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
             switch (flowNode) {
@@ -329,6 +394,7 @@ export const ResourceAssistantExtension = (props: any) => {
             onCommand={handleCommand}
             onClear={handleCancel}
             getMcpStatus={getMcpStatus}
+            suggestions={suggestions}
         >
             {(helpers) => flowUI(helpers.setMessages)}
         </ChatInterface>

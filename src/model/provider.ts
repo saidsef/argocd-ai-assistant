@@ -10,7 +10,8 @@ export type AssistantSettings = {
 export enum AttachmentType {
     EVENTS = 0,
     LOG = 1,
-    MANIFEST = 2
+    MANIFEST = 2,
+    APP_SUMMARY = 3
 }
 
 export type Attachment = {

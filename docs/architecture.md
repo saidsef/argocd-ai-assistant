@@ -19,7 +19,7 @@ The extension is composed of two main parts: the UI extension bundle (JavaScript
  |  Argo CD UI  +----------> |  Extension JS Bundle   |        |  (OpenAI-compat) |
  |                   |   |    |  (/tmp/extensions/...) |        |                  |
  |  Assistant Tab    |   |    |                        |        |  Local/Ollama    |
- |  (React Chatbot)  |   |    |  Proxy Extension       +------> |  vLLM            |
+ |  (React chat UI)  |   |    |  Proxy Extension       +------> |  vLLM            |
  |                   |   |    |  (/extensions/assistant)       |  OpenAI          |
  |  Attach Logs      |   |    |                        |        |  DeepSeek        |
  |  (guided flow)    |   |    |  Settings ConfigMap    |        |  Azure           |
@@ -45,15 +45,16 @@ CORS would otherwise block the browser from calling the backend directly, so all
 Each query is sent to the backend with additional context:
 
 1. **Resource manifest** - the live manifest, provided by Argo CD when the extension is invoked.
-2. **Events** - retrieved automatically and attached. Cached, not continuously updated.
-3. **Logs** (optional) - a single container's log, attached via a guided flow. Cached and re-sent on every request, re-run the flow to refresh.
+2. **Argo CD Application summary** - a distilled `argocd app get` view (source/Helm chart, sync status, health, sync policy, images, and any out-of-sync or degraded resources) fetched from the Argo CD REST API. For an Application resource it replaces the full manifest (a large token saving); for a child resource it is attached alongside, grounding it in the owning Application's GitOps state.
+3. **Events** - retrieved automatically and attached. Cached, not continuously updated.
+4. **Logs** (optional) - a single container's log, attached via a guided flow. Cached and re-sent on every request, re-run the flow to refresh.
 
 !!! note
     Most inference providers cap tokens, so large context items can exhaust the query limit.
 
 ### Chatbot Interface
 
-The chat interface uses [React ChatBotify](https://react-chatbotify.com/), which provides streaming, markdown rendering, and more. The conversation flow:
+The chat interface is a custom React implementation (`ChatInterface` + the `useChat` hook), with streaming responses and Markdown rendering (`marked` + `dompurify`). A fresh conversation shows one-click starter prompts tailored to the resource. The conversation flow:
 
 1. **Start** - an opening message with the resource Kind and Name, plus how to attach logs if the resource supports them.
 2. **Loop** - the user enters queries, the node loops after each one. Keywords switch to other flows.
@@ -74,4 +75,4 @@ When `data.mcpServers` is set, the LLM provider lazily connects to each server o
 
 Tool calls chain a bounded few times per query (the final turn forced tool-free) to keep multi-step lookups fast. Servers are unauthenticated by default, the `token` flow adds an `Authorization: Bearer` header. A broken server never breaks the assistant - if it is unreachable, exposes no tools, or a call fails, the provider logs the reason to the console and continues in LLM-only mode.
 
-React ChatBotify's built-in LLM-provider support is not used, because the Assistant needs features beyond it, such as attaching context.
+The conversation state, streaming transport, and LLM-provider calls are all bespoke (`useChat` + `LlmProvider`), because the Assistant needs features beyond an off-the-shelf chatbot, such as attaching context and the bounded MCP tool loop.

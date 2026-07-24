@@ -62,6 +62,8 @@ export interface ChatInterfaceProps {
     onClear?: () => void;
     /** Live MCP server status for the header badge; omitted when MCP is disabled/unconfigured. */
     getMcpStatus?: () => McpServerStatus[];
+    /** One-click starter prompts shown only on a fresh conversation, to make common asks discoverable. */
+    suggestions?: string[];
     children?: React.ReactNode | ((helpers: { setMessages: React.Dispatch<React.SetStateAction<ChatMessageType[]>> }) => React.ReactNode);
 }
 
@@ -74,6 +76,7 @@ const ChatInterface = ({
     onCommand,
     onClear,
     getMcpStatus,
+    suggestions,
     children
 }: ChatInterfaceProps) => {
     const getContextRef = React.useRef(getContext);
@@ -224,17 +227,35 @@ const ChatInterface = ({
         setInput(e.target.value);
     };
 
-    const wrappedSubmit = (e?: React.SubmitEvent<HTMLFormElement>) => {
-        e?.preventDefault();
-        if (!input.trim()) return;
-        if (onCommand && onCommand(input.trim(), messages, setMessages)) {
+    // Shared send path for the composer and the suggestion chips. Honours a parent onCommand
+    // (guided flows) before dispatching to the model, and always follows the reply.
+    const submitText = (raw: string) => {
+        const text = raw.trim();
+        if (!text) return;
+        if (onCommand && onCommand(text, messages, setMessages)) {
             setInput("");
             return;
         }
         stickToBottomRef.current = true; // user just asked — follow the reply
-        sendMessage({ text: input.trim() });
+        sendMessage({ text });
         setInput("");
     };
+
+    const wrappedSubmit = (e?: React.SubmitEvent<HTMLFormElement>) => {
+        e?.preventDefault();
+        submitText(input);
+    };
+
+    // Starter chips: only on a genuinely fresh conversation (welcome bubble only, all UI-only),
+    // idle, no error, and before the user starts typing. They vanish once a real turn begins or a
+    // guided flow injects a message, so they never clutter an active chat.
+    const showSuggestions =
+        !!suggestions?.length &&
+        !isBusy &&
+        !error &&
+        !input.trim() &&
+        messages.length <= 1 &&
+        messages.every((m) => m.local);
 
     // Reset the conversation: abort any in-flight reply, drop history back to the welcome
     // message (the storage effect persists it), and let the parent reset its flow state.
@@ -300,6 +321,20 @@ const ChatInterface = ({
                 )}
             </div>
             {typeof children === "function" ? children({ setMessages }) : children}
+            {showSuggestions && (
+                <div className="chat-suggestions" role="group" aria-label="Suggested questions">
+                    {suggestions!.map((s) => (
+                        <button
+                            key={s}
+                            type="button"
+                            className="chat-suggestion"
+                            onClick={() => submitText(s)}
+                        >
+                            {s}
+                        </button>
+                    ))}
+                </div>
+            )}
             <ChatInput
                 input={input}
                 handleInputChange={handleInputChange}
