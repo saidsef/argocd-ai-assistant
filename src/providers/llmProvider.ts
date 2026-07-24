@@ -1,5 +1,5 @@
 import { AttachmentType, ChatTurn, McpServerStatus, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
-import { bearer, containsWord, getMappedHeaders, mcpConfigured } from "../util/util";
+import { argocdProxyHeaders, bearer, containsWord, mcpConfigured } from "../util/util";
 import { McpClient, McpTool } from "./mcpClient";
 
 // Short display label for an MCP server before it reports its own name.
@@ -21,6 +21,7 @@ Guidelines:
 - Never invent resource names, namespaces, images, or field values that are not present in the context.
 - Be concise and actionable: prefer short explanations, concrete kubectl/argocd commands, and step-by-step remediation over prose.
 - When diagnosing, cite the specific fields, status conditions, or events you are reasoning from.
+- An "Argo CD Application" summary (a distilled \`argocd app get\`: source/chart, sync status, health, sync policy, images, and any out-of-sync or degraded resources) may be attached. Use it to answer questions about the application's deployment, Helm chart/version, sync, and health, citing its specific fields.
 - Format replies in Markdown; put commands, manifests, and log excerpts in fenced code blocks.`;
 
 // Max tools the model may chain within one query. Bounds latency/cost and guarantees termination
@@ -251,15 +252,9 @@ export class LlmProvider implements QueryProvider {
             'Content-Type': 'application/json',
         };
 
-        const argocdHeaders = getMappedHeaders(context.application);
-        Object.entries(argocdHeaders).forEach(([key, value]) => {
-            if (value) {
-                const lowerKey = key.toLowerCase();
-                if (lowerKey !== 'content-type' && lowerKey !== 'accept') {
-                    headers[key] = value;
-                }
-            }
-        });
+        // Argo CD proxy routing headers (Content-Type is already set above; the proxy reads these
+        // to authorise the forwarded request). Empty values are omitted by the helper.
+        Object.assign(headers, argocdProxyHeaders(context.application));
 
         if (apiKey) {
             headers['Authorization'] = bearer(apiKey);
@@ -535,6 +530,7 @@ export class LlmProvider implements QueryProvider {
             case AttachmentType.EVENTS: return 'Events';
             case AttachmentType.LOG: return 'Log';
             case AttachmentType.MANIFEST: return 'Manifest';
+            case AttachmentType.APP_SUMMARY: return 'Argo CD Application';
             default: return 'Attachment';
         }
     }

@@ -124,13 +124,23 @@ export const mcpConfigured = (servers?: string[]): boolean =>
 export const bearer = (token: string): string =>
     token.startsWith("Bearer ") ? token : `Bearer ${token}`;
 
-export function getMappedHeaders(application: any): Record<string, string | null | undefined> {
-    const headers: Headers = getHeaders(application);
-    const mappedHeaders: Record<string, string | null | undefined> = {}
-    for (const [key, value] of headers.entries()) {
-        mappedHeaders[key] = value;
+// Argo CD proxy routing headers only (no Content-Type/Accept), for requests where those are set
+// separately - e.g. the LLM chat-completion POST. Matches what getHeaders() emitted for these two
+// keys: Argocd-Application-Name is always present ("namespace:name"), Argocd-Project-Name only when
+// the project is non-empty. HTTP header names are case-insensitive, so the title-case here is
+// equivalent to the lowercase Headers previously produced.
+export function argocdProxyHeaders(application: any): Record<string, string> {
+    const applicationName = application?.metadata?.name || "";
+    const applicationNamespace = application?.metadata?.namespace || "";
+    const project = application?.spec?.project || "";
+
+    const headers: Record<string, string> = {
+        "Argocd-Application-Name": `${applicationNamespace}:${applicationName}`,
+    };
+    if (project) {
+        headers["Argocd-Project-Name"] = project;
     }
-    return mappedHeaders;
+    return headers;
 }
 
 export function getHeaders(application: any): Headers {
