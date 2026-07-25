@@ -1,4 +1,4 @@
-import { argocdApiHeaders } from "../util/util";
+import { argocdFetch, canRouteToProxy } from "../util/util";
 
 /**
  * Find an Argo CD Application to route the system-level assistant's proxied LLM requests through.
@@ -10,21 +10,25 @@ import { argocdApiHeaders } from "../util/util";
  * The choice is arbitrary and carries no meaning beyond authorisation - nothing about the picked
  * Application reaches the model.
  *
- * The `fields` mask keeps this to a single ~29KB response instead of the full ~320KB list. Returns
- * null when the user can see no Applications, which the caller turns into an explanation rather
- * than letting the proxy's opaque 400 surface.
+ * The `fields` mask keeps this to a single ~28KB response instead of the full ~300KB list. It has to
+ * ask for `items.spec` whole: the mask does not support leaf paths, and narrowing it to
+ * `items.spec.project` makes argocd-server omit `spec` from every item (verified against a live
+ * server), so nothing would ever be routable. Returns null when the user can see no usable
+ * Application, which the caller turns into an explanation rather than letting the proxy's opaque
+ * 400 surface.
  */
 export async function getProxyApplication(): Promise<any | null> {
     try {
-        const response = await fetch(
+        const response = await argocdFetch(
             "/api/v1/applications?fields=items.metadata.name,items.metadata.namespace,items.spec",
-            { credentials: "include", method: "GET", headers: argocdApiHeaders(undefined) }
+            undefined,
+            "Applications"
         );
-        if (!response.ok) {
-            throw new Error(`Applications API returned ${response.status} ${response.statusText}`);
-        }
         const data = await response.json();
-        const app = (data?.items ?? []).find((a: any) => a?.metadata?.name && a?.spec?.project);
+        // The same predicate the request path enforces. Selecting on name+project alone could pick an
+        // Application with no namespace, which LlmProvider then rejects on every attempt - so "Press
+        // Retry in a moment" could never succeed.
+        const app = (data?.items ?? []).find(canRouteToProxy);
         return app ?? null;
     } catch (err) {
         console.warn("Failed to resolve an Argo CD application for proxy routing:", err);

@@ -3,7 +3,8 @@ import ChatInterface from "./components/ChatInterface";
 import { getLogs, hasLogs, MAX_LINES, summariseLogs } from "./service/logs";
 import { ApplicationSummary, getApplicationSummary, summariseApplication } from "./service/application";
 import {
-    argocdApiHeaders,
+    argocdFetch,
+    errorMessage,
     getContainers,
     getResourceIdentifier,
     injectMessage,
@@ -31,6 +32,10 @@ type FlowNode =
     | "get_logs"
     | TokenFlowNode;
 
+// Upper bound on the configurable log-line count, whatever the settings ConfigMap asks for. Every
+// attached line is also re-sent with each subsequent question, so this is a cost ceiling too.
+const MAX_LOG_LINES_CEILING = 5000;
+
 export const ResourceAssistantExtension = (props: any) => {
     const { settings, provider, mcpServers, getMcpStatus } = useAssistantSettings();
     const storageRef = React.useRef<ManageStorage | null>(null);
@@ -38,10 +43,7 @@ export const ResourceAssistantExtension = (props: any) => {
     const { resource, application } = props;
 
     const [form, setForm] = React.useState<{ container?: string; lines?: string; token?: string }>({});
-    const [events, setEvents] = React.useState<Events>({
-        apiVersion: "v1",
-        items: []
-    });
+    const [events, setEvents] = React.useState<Events>({ items: [] });
     const [flowNode, setFlowNode] = React.useState<FlowNode>("start");
     const [flowError, setFlowError] = React.useState<string | null>(null);
     const [appSummary, setAppSummary] = React.useState<ApplicationSummary | null>(null);
@@ -58,8 +60,13 @@ export const ResourceAssistantExtension = (props: any) => {
     const resource_name = resource?.metadata?.name || "";
     const resource_kind = resource?.kind || "";
     const resourceID = getResourceIdentifier(resource);
-    const maxLogLines: number =
-        settings.maximumLogLines != undefined ? settings.maximumLogLines : MAX_LINES;
+    // Clamped, not trusted: the value comes from a hand-edited ConfigMap, and a 0/negative/NaN made
+    // every input unsatisfiable ("needs to be more than 0 and 0 or less"). Also capped, so a typo
+    // cannot ask argocd-server for a million lines.
+    const configuredLogLines = Number(settings.maximumLogLines);
+    const maxLogLines: number = Number.isInteger(configuredLogLines) && configuredLogLines > 0
+        ? Math.min(configuredLogLines, MAX_LOG_LINES_CEILING)
+        : MAX_LINES;
 
     const [chatKey, setChatKey] = React.useState<string | null>(null);
 
@@ -88,28 +95,32 @@ export const ResourceAssistantExtension = (props: any) => {
 
         // Every attachment is capped by size as well as by item count: the distillers bound how many
         // entries go in, these bound how large a single entry can be (see util/context.ts).
-        const json = (value: any, max: number, what: string) =>
-            capText(JSON.stringify(value), max, what);
+        //
+        // capText slices the serialised string, so an over-cap attachment is cut mid-token and is no
+        // longer parseable - report it as text/plain rather than telling the model a fragment is
+        // valid JSON. The truncation itself is already announced inside the text by capText.
+        const json = (value: any, max: number, what: string) => {
+            const full = JSON.stringify(value);
+            const content = capText(full, max, what);
+            return { content, mimeType: content.length === full.length ? "application/json" : "text/plain" };
+        };
 
         if (isApplication && summary) {
             // For an Application resource the compact summary supersedes the full manifest (which
             // carries the entire resource tree/history) - large token saving, same review signal.
             attachments.push({
-                content: json(summary, MAX_APP_SUMMARY_CHARS, "the application summary"),
-                mimeType: "application/json",
+                ...json(summary, MAX_APP_SUMMARY_CHARS, "the application summary"),
                 type: AttachmentType.APP_SUMMARY
             });
         } else if (resource) {
             attachments.push({
-                content: json(stripManifestNoise(resource), MAX_MANIFEST_CHARS, "the resource manifest"),
-                mimeType: "application/json",
+                ...json(stripManifestNoise(resource), MAX_MANIFEST_CHARS, "the resource manifest"),
                 type: AttachmentType.MANIFEST
             });
             // Ground a child resource (Deployment, Pod, ...) in its owning Application's GitOps state.
             if (summary) {
                 attachments.push({
-                    content: json(summary, MAX_APP_SUMMARY_CHARS, "the application summary"),
-                    mimeType: "application/json",
+                    ...json(summary, MAX_APP_SUMMARY_CHARS, "the application summary"),
                     type: AttachmentType.APP_SUMMARY
                 });
             }
@@ -119,8 +130,7 @@ export const ResourceAssistantExtension = (props: any) => {
             // Cap + distil to the most recent MAX_EVENTS (kubectl-style signal only), so events -
             // previously the one unbounded context source - can't blow up the prompt on a busy resource.
             attachments.push({
-                content: json(summariseEvents(events.items, MAX_EVENTS), MAX_EVENTS_CHARS, "the events"),
-                mimeType: "application/json",
+                ...json(summariseEvents(events.items, MAX_EVENTS), MAX_EVENTS_CHARS, "the events"),
                 type: AttachmentType.EVENTS
             });
         }
@@ -153,33 +163,18 @@ export const ResourceAssistantExtension = (props: any) => {
             ? " I notice this resource has logs available, to attach one or more container logs type *Attach* at any time."
             : "");
 
-    // Starter prompts tailored to the resource, surfaced only on a fresh conversation. For an
-    // Application they target the Helm/GitOps review flow the summary context now grounds.
-    const suggestions: string[] =
-        resource_kind === "Application"
-            ? [
-                "Is this application synced and healthy?",
-                "What Helm chart and version is deployed?",
-                "Summarise the most recent sync",
-                "Any out-of-sync or degraded resources?"
-            ]
-            : hasLogs(resource)
-                ? [
-                    "Why might this resource be unhealthy?",
-                    "Summarise the recent events",
-                    "Is the owning Argo CD application healthy?"
-                ]
-                : [
-                    "Explain what this resource does",
-                    "Summarise the recent events",
-                    "Is the owning Argo CD application healthy?"
-                ];
-
     const handleCancel = React.useCallback(() => {
         setFlowNode("loop");
         setForm({});
         setFlowError(null);
     }, []);
+
+    // "New chat" must also detach the attached log. It is up to MAX_LOG_CHARS that the user believes
+    // they discarded, and it rode along on every request for the rest of the session.
+    const handleClear = React.useCallback(() => {
+        storageRef.current?.clearLogs();
+        handleCancel();
+    }, [handleCancel]);
 
     const handleCommand = React.useCallback(
         (input: string, _messages: ChatMessage[], setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
@@ -251,27 +246,25 @@ export const ResourceAssistantExtension = (props: any) => {
             }
             setFlowError(null);
             setFlowNode("get_logs");
+            // Capture the storage instance now. storageRef is replaced whenever the user opens a
+            // different resource, so resolving the ref inside the callback wrote this resource's log
+            // under the *next* resource's key - and it was then attached to every question about it.
+            const storage = storageRef.current!;
             getLogs(application, resource, container, lines)
                 .then((result: LogEntry[]) => {
+                    if (storageRef.current !== storage) return; // superseded by a resource switch
                     // Store the distilled text, not the raw stream envelopes: this string is
                     // re-sent verbatim with every subsequent question, so its size is paid for
                     // on every request.
-                    storageRef.current!.logs = summariseLogs(result, container);
-                    // Session storage can be full or unavailable, in which case the write is dropped
-                    // - say so rather than claiming an attachment that will not be sent.
-                    const attached = storageRef.current!.logs !== null;
+                    const attached = storage.setLogs(summariseLogs(result, container));
                     setMessages(injectMessage(attached
-                        ? `Attached ${result.length} log line${result.length === 1 ? "" : "s"} from **${container}**.`
+                        ? `Attached ${result.length} log line${result.length === 1 ? "" : "s"} from **${container}**. Start a new chat to detach them.`
                         : "The logs could not be stored for this session, so they will not be attached. Session storage may be full or disabled."));
                     setFlowNode("loop");
                 })
                 .catch((error) => {
-                    setMessages(
-                        injectMessage(
-                            "Could not fetch the logs: " +
-                                (error instanceof Error ? error.message : String(error))
-                        )
-                    );
+                    if (storageRef.current !== storage) return;
+                    setMessages(injectMessage("Could not fetch the logs: " + errorMessage(error)));
                     setFlowNode("loop");
                 });
         },
@@ -290,38 +283,35 @@ export const ResourceAssistantExtension = (props: any) => {
     React.useEffect(() => {
         let cancelled = false;
         // Clear the previous resource's events and ignore superseded responses on switch.
-        setEvents({ apiVersion: "v1", items: [] });
+        setEvents({ items: [] });
         // Guard against a transient undefined resource so the effect never throws before fetch
         // (the sibling mount effect already skips via getResourceIdentifier === "Undefined").
         if (!resource?.metadata) return;
         // Encode the path + query params (names/namespaces may contain characters that need
-        // escaping) and send the same-origin auth/routing headers every other Argo CD call uses
-        // (argocdApiHeaders + credentials:'include', matching service/application.ts and
-        // service/logs.ts), so a project-scoped proxy authorises this request rather than
-        // silently rejecting it.
-        let url = `/api/v1/applications/${encodeURIComponent(application_name)}/events`;
+        // escaping). appNamespace names which Application is meant on an "applications in any
+        // namespace" install - service/application.ts and service/logs.ts both send it, and omitting
+        // it here resolved against the wrong app (or 404'd) for an Application outside the default
+        // controller namespace.
+        const params = new URLSearchParams();
+        if (application?.metadata?.namespace) params.set("appNamespace", application.metadata.namespace);
         if (resource.kind !== "Application") {
-            const params = new URLSearchParams();
             params.set("resourceUID", resource.metadata.uid ?? "");
             params.set("resourceNamespace", resource.metadata.namespace ?? "");
             params.set("resourceName", resource.metadata.name ?? "");
-            url += `?${params.toString()}`;
         }
-        fetch(url, { credentials: "include", headers: argocdApiHeaders(application) })
-            .then((response) => {
-                if (!response.ok) {
-                    throw new Error(`Events API returned ${response.status} ${response.statusText}`);
-                }
-                return response.json();
-            })
+        const qs = params.toString();
+        const url = `/api/v1/applications/${encodeURIComponent(application_name)}/events${qs ? `?${qs}` : ""}`;
+        argocdFetch(url, application, "Events")
+            .then((response) => response.json())
             .then((data) => {
                 if (!cancelled) {
-                    setEvents({ apiVersion: "v1", items: data?.items ?? [] });
+                    setEvents({ items: data?.items ?? [] });
                 }
             })
             .catch((err) => {
+                // Non-fatal: the assistant still answers, just without events context.
                 if (!cancelled) {
-                    console.error("Failed to fetch events:", err);
+                    console.warn("Failed to fetch events, answering without them:", err);
                 }
             });
         return () => { cancelled = true; };
@@ -329,7 +319,6 @@ export const ResourceAssistantExtension = (props: any) => {
         // the Argo CD host hands down fresh objects as it polls, which re-ran this effect (and so
         // re-fetched, after blanking the events) on every poll. This matches both the sibling
         // app-summary effect below and the documented "cached, not continuously updated" behaviour.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [resourceID, application_name]);
 
     // Fetch the owning Application's distilled summary (chart/source, sync, health, resource
@@ -345,7 +334,7 @@ export const ResourceAssistantExtension = (props: any) => {
             if (!cancelled) setAppSummary(summary);
         });
         return () => { cancelled = true; };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+        // Keyed on the stable app name, not the object identity - see the events effect above.
     }, [application_name]);
 
     const flowUI = React.useCallback(
@@ -438,9 +427,8 @@ export const ResourceAssistantExtension = (props: any) => {
             welcomeMessage={welcomeMessage}
             storage={storageRef.current!}
             onCommand={handleCommand}
-            onClear={handleCancel}
+            onClear={handleClear}
             getMcpStatus={getMcpStatus}
-            suggestions={suggestions}
         >
             {(helpers) => flowUI(helpers.setMessages)}
         </ChatInterface>

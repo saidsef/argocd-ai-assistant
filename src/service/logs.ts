@@ -1,18 +1,23 @@
 import { LogEntry } from "../model/argocd";
 import { capText, MAX_LOG_CHARS } from "../util/context";
 import { readLines } from "../util/stream";
-import { argocdApiHeaders, Kinds } from "../util/util";
+import { argocdFetch, Kinds } from "../util/util";
 
 export const MAX_LINES = 250;
+
+// The logs endpoint is a stream, so its deadline has to cover the whole read, not just the headers.
+// `follow=false` plus `tailLines` bounds it to at most MAX_LINES entries, so this is generous.
+const LOGS_REQUEST_MS = 60000;
 
 export function hasLogs(resource: any): boolean {
     return !!(resource?.spec?.template?.spec?.containers || resource?.kind === Kinds.POD);
 }
 
-function getGroup(apiVersion: string): string {
+// The API group of an apiVersion: "apps/v1" -> "apps", and "v1" -> "" (core resources have no
+// group; returning "v1" as the group made the logs API reject core-group non-Pod workloads).
+export function getGroup(apiVersion: string): string {
     const index = apiVersion.indexOf("/");
-    if (index > 0) return apiVersion.substring(0, index);
-    else return apiVersion;
+    return index > 0 ? apiVersion.substring(0, index) : "";
 }
 
 // Distil log entries into the plain-text block that goes into the prompt.
@@ -24,12 +29,13 @@ function getGroup(apiVersion: string): string {
 // log lines are far worse). One `pod` header line plus `<timestamp> <content>` per line carries the
 // same information, in a shape the model reads more naturally than JSON.
 export function summariseLogs(entries: LogEntry[], container?: string): string {
-    const rows = (Array.isArray(entries) ? entries : [])
-        // The stream ends with an empty-content `last: true` sentinel; it is protocol, not a log line.
+    const all = Array.isArray(entries) ? entries : [];
+    const rows = all
+        // The stream ends with an empty-content sentinel entry; it is protocol, not a log line.
         .filter((e) => (e?.content ?? "").length > 0)
         .map((e) => (e.timeStamp ? `${e.timeStamp} ${e.content}` : e.content));
 
-    const pod = entries.find((e) => e?.podName)?.podName;
+    const pod = all.find((e) => e?.podName)?.podName;
     const header = [
         pod && `pod: ${pod}`,
         container && `container: ${container}`,
@@ -61,13 +67,9 @@ export const getLogs = async (application: any, resource: any, container: string
 
     const url = `/api/v1/applications/${encodeURIComponent(application?.metadata?.name ?? "")}/logs?${params.toString()}`;
 
-    const response = await fetch(url, {
-        credentials: 'include',
-        method: 'GET',
-        headers: argocdApiHeaders(application)
-    });
-    if (!response.ok || !response.body) {
-        throw new Error(`Failed to fetch data: ${response.status} ${response.statusText}`);
+    const response = await argocdFetch(url, application, "Pod logs", LOGS_REQUEST_MS);
+    if (!response.body) {
+        throw new Error("The Pod logs API returned no response body.");
     }
 
     // The logs endpoint is a grpc-gateway server stream, so each line is the RPC envelope

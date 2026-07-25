@@ -1,8 +1,10 @@
 import { AttachmentType, ChatTurn, McpServerStatus, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
 import { capText, MAX_HISTORY_TURN_CHARS, MAX_TOOL_RESULT_CHARS } from "../util/context";
 import { readLines, sseData } from "../util/stream";
-import { argocdHeaders, bearer, canRouteToProxy, containsWord, mcpConfigured } from "../util/util";
+import { argocdHeaders, bearer, canRouteToProxy, containsWord, errorMessage, mcpConfigured } from "../util/util";
 import { McpClient, McpTool } from "./mcpClient";
+import { exampleArgs, parseToolCall } from "./toolCall";
+import { createToolMarkerFilter } from "./toolMarker";
 
 // Short display label for an MCP server before it reports its own name.
 function hostnameOf(url: string): string {
@@ -11,6 +13,39 @@ function hostnameOf(url: string): string {
     } catch {
         return url;
     }
+}
+
+// Explain a completion that produced no answer text. `finish_reason` is the only signal the wire
+// format gives, and each value points at a different fix - so name it rather than reporting one
+// generic "no usable data" for a content filter, a truncation and an incompatible backend alike.
+export function emptyReplyMessage(finishReason?: string): string {
+    switch (finishReason) {
+        case "content_filter":
+            return "The LLM backend filtered this response and returned no content. Rephrase the question, or check the backend's content-filter configuration.";
+        case "length":
+            return "The response was cut off by the backend's output token limit before any content was produced. Reduce the attached context or raise the limit on the backend.";
+        case undefined:
+        case "":
+            return "The LLM backend returned no usable data. It may not be emitting an OpenAI-compatible SSE stream.";
+        default:
+            return `The LLM backend ended the response (${finishReason}) without producing any content.`;
+    }
+}
+
+// Same URL list, same order - the identity the cached MCP client and its tools' serverIndex rely on.
+function sameUrls(a: string[] | undefined, b: string[]): boolean {
+    return !!a && a.length === b.length && a.every((u, i) => u === b[i]);
+}
+
+// Resolve the chat-completions endpoint from a configured base URL.
+//
+// Every documented example sets `baseURL` to the provider's OpenAI-compatible root *including* the
+// version segment ("https://api.openai.com/v1", "http://ollama:11434/v1"), so appending
+// "/v1/chat/completions" produced ".../v1/v1/chat/completions" and a 404. Accept either form: drop
+// trailing slashes and one trailing "/v1", then append the full path.
+export function chatCompletionsUrl(baseURL: string): string {
+    const root = baseURL.replace(/\/+$/, "").replace(/\/v1$/i, "");
+    return `${root}/v1/chat/completions`;
 }
 
 // Default persona/instructions prepended to every request. Grounds answers in the
@@ -39,9 +74,18 @@ export class LlmProvider implements QueryProvider {
 
     private mcpClient?: McpClient;
     private mcpTools?: McpTool[];
+    // The URL list the cached client was built for, so a settings change invalidates it.
+    private mcpUrls?: string[];
     // Per-server failure reason from the last connect/discovery attempt, surfaced on the UI badge so
     // a silently tool-free answer is explained rather than just logged to the console.
     private mcpErrors: (string | undefined)[] = [];
+    // Set when at least one server failed, so the next query re-runs connect/discovery instead of
+    // caching that failure for the session. Without it a partial failure (server A healthy, B down)
+    // was sticky: the tool list was non-empty, so the cache was kept and B never re-probed.
+    private mcpNeedsReprobe = false;
+    // The rendered "Available tools:" prompt block, keyed by the tool names it was built from.
+    // Re-serialising every tool's JSON schema on every request is pure waste.
+    private toolPromptCache?: { key: string; text: string };
 
     // Live status of the configured MCP servers for UI display. Before the first query
     // the client has not connected, so this reports the URL hostname / not-connected / 0
@@ -108,49 +152,71 @@ export class LlmProvider implements QueryProvider {
 
         let mcpTools: McpTool[] | undefined;
         if (mcpConfigured(mcpServerUrls)) {
-            // Surface the otherwise-silent first-query connect/list wait (cached thereafter).
+            // Discard the cached client when a previous attempt had a failing server, or when the
+            // configured URL list has changed (tool `serverIndex` values are positions in that list,
+            // so a stale client would route a call to the wrong server). Rebuilt from scratch rather
+            // than re-handshaked: a server holding a live session may reject a second `initialize`,
+            // which would flap a healthy server into "unavailable".
+            if (this.mcpNeedsReprobe || !sameUrls(this.mcpUrls, mcpServerUrls!)) {
+                this.mcpClient = undefined;
+                this.mcpTools = undefined;
+                this.mcpUrls = undefined;
+                this.mcpNeedsReprobe = false;
+            }
+            // Surface the otherwise-silent connect/list wait (cached thereafter).
             const announcedConnecting = !this.mcpClient || !this.mcpTools;
             if (announcedConnecting) onStatus?.("Connecting to tools…");
             try {
                 if (!this.mcpClient) {
-                    this.mcpClient = new McpClient(mcpServerUrls);
+                    this.mcpUrls = mcpServerUrls!.slice();
+                    this.mcpClient = new McpClient(mcpServerUrls!);
                     this.mcpClient.setAuthToken(context.mcpToken);
-                    await this.mcpClient.connect();
+                    await this.mcpClient.connect(signal);
                 } else {
                     // Refresh the token in case it was entered/changed since the client connected.
                     this.mcpClient.setAuthToken(context.mcpToken);
                 }
                 if (!this.mcpTools) {
-                    this.mcpTools = await this.mcpClient.listAllTools();
+                    this.mcpTools = await this.mcpClient.listAllTools(signal);
                 }
                 this.mcpErrors = this.mcpClient.getErrors();
                 const failed = this.mcpErrors.filter(Boolean);
                 if (failed.length > 0) {
                     console.warn("MCP issues (answering without those servers/tools):", this.mcpErrors);
+                    // Re-probe next time so a recovered server comes back, and so new tools on a
+                    // healthy server are eventually discovered.
+                    this.mcpNeedsReprobe = true;
                 }
                 mcpTools = this.mcpTools;
                 if (!mcpTools || mcpTools.length === 0) {
                     // A broken/unreachable MCP server must not break the assistant: fall back to
                     // LLM-only. If it failed with errors (rather than genuinely exposing no tools),
-                    // drop the cached client so a recovered server is re-probed on the next query.
+                    // drop the cached client so a recovered server is re-probed from scratch.
                     mcpTools = undefined;
                     if (failed.length > 0) {
                         this.mcpClient = undefined;
                         this.mcpTools = undefined;
+                        this.mcpUrls = undefined;
                     }
                 }
             } catch (err) {
-                const errMsg = err instanceof Error ? err.message : String(err);
+                // A user Stop during connect/discovery is not an MCP failure; let it unwind.
+                if (err instanceof Error && err.name === "AbortError") throw err;
+                const errMsg = errorMessage(err);
                 console.warn(`MCP initialization failed, answering without tools: ${errMsg}`);
                 this.mcpErrors = (mcpServerUrls ?? []).map(() => errMsg);
                 this.mcpClient = undefined;
                 this.mcpTools = undefined;
+                this.mcpUrls = undefined;
+                this.mcpNeedsReprobe = false;
                 mcpTools = undefined;
             }
             // Connection/discovery is done (or fell back); drop the transient label so it does
             // not linger over the model's first-token wait. The thinking dots (status
             // "submitted") carry that wait, and a tool call re-labels via onStatus below.
             if (announcedConnecting) onStatus?.(null);
+            // Discovery can take seconds; don't start a completion the user has already cancelled.
+            if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         }
 
         // Advertise tools only for MCP server(s) the user named in this message; otherwise answer
@@ -165,41 +231,21 @@ export class LlmProvider implements QueryProvider {
         // cumulative value forwarded to onStreamUpdate (starts empty).
         let emittedPrefix = "";
 
-        // Stream one completion while keeping raw <tool ...> XML out of the UI: it is internal (the
-        // visible answer comes from a later completion) and streaming it would corrupt the cumulative
-        // deltas. Suppress from the first <tool marker onward (forwarding any preamble once). The
-        // marker is <tool followed by whitespace or ">" (the prompt's <tool name="..."> shape), never
-        // a bare word boundary: the latter transiently matches "...<tool" mid-stream, so <toolbar> /
-        // <toolkit> in prose would get their tail wrongly hidden. Returns the raw text (for tool-call
-        // parsing) and whether a tool block was hidden.
+        // Stream one completion, keeping raw <tool ...> XML out of the UI (see ./toolMarker). Returns
+        // the raw text (for tool-call parsing) and whether a tool block was hidden.
         const streamStep = async (
             stepMessages: Array<{ role: string; content: string }>
-        ): Promise<{ response: QueryResponse & { data?: string }; suppressed: boolean }> => {
+        ): Promise<{ response: QueryResponse; suppressed: boolean }> => {
             const prefixAtStart = emittedPrefix;
-            let suppressed = false;
+            const filter = createToolMarkerFilter();
             const onUpdate = (text: string) => {
-                if (suppressed) return;
-                const m = text.match(/<tool[\s>]/);
-                if (m) {
-                    suppressed = true;
-                    const before = text.slice(0, m.index).trimEnd();
-                    if (before) {
-                        emittedPrefix = prefixAtStart ? `${prefixAtStart}\n\n${before}` : before;
-                        onStreamUpdate(emittedPrefix);
-                    }
-                    return;
-                }
-                // A trailing "<", "<t", "<to", "<too" may be the start of a <tool> block whose word
-                // boundary hasn't streamed yet. Withhold it: downstream deltas are append-only, so a
-                // "<" shown now could never be retracted once we learn it began a (suppressed) block.
-                const lt = text.lastIndexOf("<");
-                const emit = lt >= 0 && "<tool".startsWith(text.slice(lt)) ? text.slice(0, lt) : text;
-                if (!emit) return;
+                const emit = filter.push(text);
+                if (emit === null) return;
                 emittedPrefix = prefixAtStart ? `${prefixAtStart}\n\n${emit}` : emit;
                 onStreamUpdate(emittedPrefix);
             };
             const response = await this.sendChatCompletion(baseURL, model, apiKey, context, stepMessages, signal, onUpdate, onStatus);
-            return { response, suppressed };
+            return { response, suppressed: filter.suppressed };
         };
 
         // Bounded tool loop: stream a completion; if the model calls an available tool, run it and
@@ -213,7 +259,7 @@ export class LlmProvider implements QueryProvider {
                 return response;
             }
             const fullText = response.data || "";
-            const toolCall = forceNoTool ? null : this.parseToolCall(fullText, toolsForModel);
+            const toolCall = forceNoTool ? null : parseToolCall(fullText, toolsForModel);
 
             if (!toolCall) {
                 if (iter === 0) {
@@ -242,7 +288,11 @@ export class LlmProvider implements QueryProvider {
                     const capped = capText(toolResult, MAX_TOOL_RESULT_CHARS, `the ${toolCall.name} result`);
                     followUpNote = `Tool result for ${toolCall.name}:\n${capped}\n\nPlease answer the original question using this result.`;
                 } catch (err) {
-                    const errMsg = err instanceof Error ? err.message : String(err);
+                    // Stop pressed mid-tool is a cancellation, not a tool failure: reporting it as
+                    // one fed a misleading note back and burned another completion that aborted
+                    // immediately. Let the abort unwind instead.
+                    if (err instanceof Error && err.name === "AbortError") throw err;
+                    const errMsg = errorMessage(err);
                     console.warn(`MCP tool '${toolCall.name}' failed, answering without it: ${errMsg}`);
                     followUpNote = `The tool ${toolCall.name} could not be run (error: ${errMsg}). Answer the original question directly, without the tool.`;
                 }
@@ -273,7 +323,7 @@ export class LlmProvider implements QueryProvider {
         signal: AbortSignal | undefined,
         onStreamUpdate: (text: string) => void,
         onStatus?: (label: string | null) => void
-    ): Promise<QueryResponse & { data?: string }> {
+    ): Promise<QueryResponse> {
         // Argo CD proxy routing headers plus the JSON content type; the proxy reads the Argocd-*
         // pair to authorise the forwarded request.
         const headers = argocdHeaders(context.application, { 'Content-Type': 'application/json' });
@@ -307,7 +357,7 @@ export class LlmProvider implements QueryProvider {
 
         try {
             resetTimer();
-            const response = await fetch(`${baseURL}/v1/chat/completions`, {
+            const response = await fetch(chatCompletionsUrl(baseURL), {
                 method: 'POST',
                 headers,
                 body,
@@ -315,17 +365,13 @@ export class LlmProvider implements QueryProvider {
             });
             resetTimer();
 
-            if (!response.body) {
-                return {
-                    success: false,
-                    error: {
-                        status: response.status,
-                        message: `The LLM backend returned ${response.status} with an empty body. It may not support streaming responses at this endpoint.`,
-                    },
-                };
-            }
-
+            // Status first, body second: a 401/404/429 with no body used to be reported as
+            // "may not support streaming", hiding the actual (and actionable) reason.
             if (!response.ok) {
+                // The backend's own error text is the most useful thing we have, so read it whenever
+                // there is one - including on 5xx, which used to discard it.
+                const detail = await response.text().catch(() => "");
+                const trimmed = detail.trim();
                 let message: string;
                 switch (response.status) {
                     case 401:
@@ -342,12 +388,22 @@ export class LlmProvider implements QueryProvider {
                         break;
                     default:
                         message = response.status >= 500
-                            ? `LLM backend error (${response.status}). The server returned an internal error.`
-                            : `${await response.text()}`.trim() || `Request failed (${response.status} ${response.statusText}).`;
+                            ? `LLM backend error (${response.status}). ${trimmed || "The server returned an internal error."}`
+                            : trimmed || `Request failed (${response.status} ${response.statusText}).`;
                 }
                 return {
                     success: false,
                     error: { status: response.status, message },
+                };
+            }
+
+            if (!response.body) {
+                return {
+                    success: false,
+                    error: {
+                        status: response.status,
+                        message: `The LLM backend returned ${response.status} with an empty body. It may not support streaming responses at this endpoint.`,
+                    },
                 };
             }
 
@@ -356,7 +412,9 @@ export class LlmProvider implements QueryProvider {
             // token. That thinking is deliberately not shown, but knowing it is happening turns an
             // otherwise silent 30-second wait into visible progress.
             let sawReasoning = false;
-            let sawAnyChunk = false;
+            // Why the model stopped, from the last chunk that reported it. Turns an empty reply from
+            // an unexplained blank bubble into a named cause.
+            let finishReason: string | undefined;
 
             for await (const line of readLines(response.body, resetTimer)) {
                 const data = sseData(line);
@@ -368,7 +426,6 @@ export class LlmProvider implements QueryProvider {
                 } catch (_e) {
                     continue; // ignore malformed chunks
                 }
-                sawAnyChunk = true;
 
                 if (parsed.error) {
                     return {
@@ -377,7 +434,9 @@ export class LlmProvider implements QueryProvider {
                     };
                 }
 
-                const delta = parsed.choices?.[0]?.delta;
+                const choice = parsed.choices?.[0];
+                if (choice?.finish_reason) finishReason = choice.finish_reason;
+                const delta = choice?.delta;
                 const content = delta?.content;
                 if (content) {
                     text += content;
@@ -388,15 +447,15 @@ export class LlmProvider implements QueryProvider {
                 }
             }
 
-            // A stream that produced nothing usable is a failure, not an empty success - otherwise
-            // an incompatible backend resolves as a silent blank reply with no way to diagnose it.
-            if (!text && !sawAnyChunk) {
+            // No answer text is a failure, not an empty success - otherwise the reply is a silent
+            // blank bubble with no way to diagnose it. This must not be gated on "did any chunk
+            // arrive": every OpenAI-compatible backend opens with a role-only delta, so that test
+            // passed for exactly the cases it was meant to catch (a content filter, a truncated
+            // upstream, or a reasoning model that emitted only reasoning_content).
+            if (!text) {
                 return {
                     success: false,
-                    error: {
-                        status: 502,
-                        message: 'The LLM backend returned no usable data. It may not be emitting an OpenAI-compatible SSE stream.',
-                    },
+                    error: { status: 502, message: emptyReplyMessage(finishReason) },
                 };
             }
 
@@ -435,17 +494,7 @@ export class LlmProvider implements QueryProvider {
         }
 
         if (mcpTools && mcpTools.length > 0) {
-            systemText += "\n\nAvailable tools:\n";
-            for (const tool of mcpTools) {
-                systemText += `- ${tool.name}: ${tool.description || "No description"}\n`;
-                if (tool.inputSchema) {
-                    systemText += `  Arguments schema: ${JSON.stringify(tool.inputSchema)}\n`;
-                }
-            }
-            systemText += "\nTo use a tool, output a tool block using an EXACT tool name from the list above:\n";
-            systemText += '<tool name="EXACT_TOOL_NAME">\n{ JSON arguments matching that tool\'s schema }\n</tool>\n';
-            systemText += `For example:\n<tool name="${mcpTools[0].name}">\n${this.exampleArgs(mcpTools[0])}\n</tool>\n`;
-            systemText += "Always wrap the arguments in the <tool>...</tool> tags with the exact tool name; never output bare JSON. A brief sentence before the block is allowed. If the request does not require a tool, answer directly without one.";
+            systemText += this.toolPrompt(mcpTools);
         }
 
         messages.push({ role: 'system', content: systemText });
@@ -463,102 +512,26 @@ export class LlmProvider implements QueryProvider {
         return messages;
     }
 
-    private parseToolCall(text: string, mcpTools?: McpTool[]): { name: string; arguments: any } | null {
-        // Primary: a <tool name="X">{json}</tool> block anywhere in the reply (tolerate a preamble).
-        const xml = text.match(/<tool\s+name="([^"]+)">\s*([\s\S]*?)\s*<\/tool>/);
-        if (xml) {
-            const name = xml[1];
-            // Only a real tool name is a call; this ignores the prompt's own name="EXACT_TOOL_NAME"
-            // template and any <tool> syntax the model quotes inside a normal answer.
-            if (!mcpTools || !mcpTools.some(t => t.name === name)) return null;
-            try {
-                return { name, arguments: JSON.parse(xml[2].trim()) };
-            } catch (_e) {
-                return { name, arguments: {} };
+    // The "Available tools:" block appended to the system prompt, cached by tool-name set: the
+    // schemas are re-serialised identically on every request otherwise.
+    private toolPrompt(mcpTools: McpTool[]): string {
+        const key = mcpTools.map(t => t.name).join("\u0000");
+        if (this.toolPromptCache?.key === key) return this.toolPromptCache.text;
+
+        let text = "\n\nAvailable tools:\n";
+        for (const tool of mcpTools) {
+            text += `- ${tool.name}: ${tool.description || "No description"}\n`;
+            if (tool.inputSchema) {
+                text += `  Arguments schema: ${JSON.stringify(tool.inputSchema)}\n`;
             }
         }
+        text += "\nTo use a tool, output a tool block using an EXACT tool name from the list above:\n";
+        text += '<tool name="EXACT_TOOL_NAME">\n{ JSON arguments matching that tool\'s schema }\n</tool>\n';
+        text += `For example:\n<tool name="${mcpTools[0].name}">\n${exampleArgs(mcpTools[0])}\n</tool>\n`;
+        text += "Always wrap the arguments in the <tool>...</tool> tags with the exact tool name; never output bare JSON. A brief sentence before the block is allowed. If the request does not require a tool, answer directly without one.";
 
-        // Fallback: the model emitted a bare or fenced JSON object instead of the wrapper.
-        const json = this.extractJsonObject(text);
-        if (!json || typeof json.value !== "object") return null;
-        // A real bare-JSON call ends the model's turn; if prose follows the object it is incidental
-        // JSON inside an answer, not a call, so ignore it (tolerate only a trailing ``` fence).
-        if (text.slice(json.end).replace(/```/g, "").trim()) return null;
-        const obj = json.value;
-
-        // The object may name the tool explicitly.
-        const named = obj.name ?? obj.tool;
-        const namedArgs = obj.arguments ?? obj.args ?? obj.input ?? obj.parameters;
-        if (typeof named === "string" && namedArgs && typeof namedArgs === "object"
-            && mcpTools && mcpTools.some(t => t.name === named)) {
-            return { name: named, arguments: namedArgs };
-        }
-
-        // Otherwise infer the tool from the argument shape - only when exactly one tool fits, to
-        // avoid guessing wrong (this recovers a nameless args object like {query, max_results}).
-        if (mcpTools && mcpTools.length > 0) {
-            const keys = Object.keys(obj);
-            if (keys.length === 0) return null;
-            const matches = mcpTools.filter(t => this.argsFitSchema(keys, t.inputSchema));
-            if (matches.length === 1) {
-                return { name: matches[0].name, arguments: obj };
-            }
-        }
-        return null;
-    }
-
-    // Extract the first brace-balanced JSON object from arbitrary text (handles a ```json fence or
-    // a bare object amid prose), skipping braces inside strings. Returns the parsed value and the
-    // index just past its closing brace (so the caller can inspect what follows), or null.
-    private extractJsonObject(text: string): { value: any; end: number } | null {
-        const start = text.indexOf("{");
-        if (start < 0) return null;
-        let depth = 0;
-        let inString = false;
-        let escaped = false;
-        for (let i = start; i < text.length; i++) {
-            const ch = text[i];
-            if (inString) {
-                if (escaped) escaped = false;
-                else if (ch === "\\") escaped = true;
-                else if (ch === '"') inString = false;
-                continue;
-            }
-            if (ch === '"') inString = true;
-            else if (ch === "{") depth++;
-            else if (ch === "}") {
-                depth--;
-                if (depth === 0) {
-                    try { return { value: JSON.parse(text.slice(start, i + 1)), end: i + 1 }; }
-                    catch (_e) { return null; }
-                }
-            }
-        }
-        return null;
-    }
-
-    // True when every provided arg key is a known schema property and all required props are set.
-    private argsFitSchema(keys: string[], schema: any): boolean {
-        if (keys.length === 0) return false;
-        const props = schema?.properties && typeof schema.properties === "object" ? Object.keys(schema.properties) : null;
-        if (!props || props.length === 0) return false;
-        if (!keys.every(k => props.includes(k))) return false;
-        const required: string[] = Array.isArray(schema.required) ? schema.required : [];
-        return required.every(r => keys.includes(r));
-    }
-
-    // A minimal example arguments object for the prompt, derived from a tool's schema.
-    private exampleArgs(tool: McpTool): string {
-        const schema = tool.inputSchema;
-        const props = schema?.properties && typeof schema.properties === "object" ? schema.properties : {};
-        const required: string[] = Array.isArray(schema?.required) ? schema.required : [];
-        const keys = required.length ? required : Object.keys(props).slice(0, 1);
-        const obj: Record<string, any> = {};
-        for (const k of keys) {
-            const t = props[k]?.type;
-            obj[k] = t === "integer" || t === "number" ? 1 : t === "boolean" ? true : "value";
-        }
-        return JSON.stringify(obj);
+        this.toolPromptCache = { key, text };
+        return text;
     }
 
     private attachmentLabel(type: AttachmentType): string {

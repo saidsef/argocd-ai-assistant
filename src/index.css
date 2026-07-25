@@ -149,6 +149,9 @@
         margin-top: 4px;
         padding: 10px 14px;
         border-radius: 12px;
+        /* fit-content, not just max-width: a plain block box resolves `width:auto` against the
+           over-constrained max-width and comes out at exactly 80% whatever it contains. */
+        width: fit-content;
         max-width: 80%;
         word-wrap: break-word;
         /* Explicit type baseline so em-based headings/code resolve predictably and body text
@@ -161,6 +164,8 @@
         margin-left: auto;
         background-color: var(--chat-accent-strong);
         color: #FFFFFF;
+        /* The user's message is plain text, not Markdown: preserve the line breaks they typed. */
+        white-space: pre-wrap;
     }
 
     .chat-message-assistant {
@@ -170,10 +175,26 @@
         border: 1px solid var(--chat-border);
     }
 
-    /* Ensure marked-content inherits the bubble background so Argo CD global
-       div styles do not override it and make the content area transparent. */
-    .marked-content {
-        background-color: var(--chat-surface);
+    /* Copy the whole answer. Dimmed until the bubble is hovered or holds focus, so a long
+       transcript is not a column of buttons. */
+    .chat-message-copy {
+        display: block;
+        margin: 6px 0 0 auto;
+        padding: 1px 6px;
+        font-size: 12px;
+        line-height: 1.4;
+        color: inherit;
+        background-color: transparent;
+        border: 1px solid var(--chat-border-strong);
+        border-radius: 4px;
+        cursor: pointer;
+        opacity: 0.5;
+        transition: opacity 0.12s ease;
+    }
+
+    .chat-message-assistant:hover .chat-message-copy,
+    .chat-message-copy:focus-visible {
+        opacity: 1;
     }
 
     /* Input area */
@@ -214,16 +235,19 @@
         }
     }
 
-    /* Loading and error states */
+    /* Loading and error bars.
+       These live between the message list and the composer rather than inside the scroller: while
+       scrolled back through a long reply, the Stop button and the failure reason used to scroll out
+       of view, leaving no visible way to cancel and no sign anything had gone wrong. */
     .chat-loading,
     .chat-error {
+        flex: 0 0 auto;
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 8px 14px;
-        margin-top: 4px;
-        border-radius: 12px;
+        padding: 6px 10px;
         font-size: 14px;
+        border-top: 1px solid var(--chat-border-soft);
     }
 
     .chat-loading {
@@ -233,6 +257,26 @@
     .chat-error {
         background-color: var(--chat-error-bg);
         color: var(--chat-error-text);
+    }
+
+    /* Wraps rather than pushing the buttons off the row on a long backend message. */
+    .chat-error-text {
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    /* Cancel the in-flight reply. Outlined, so it does not compete with the accent-filled Send
+       button next to it. (This had no class at all and inherited Argo CD's global button style.) */
+    .chat-stop-button {
+        margin-left: auto;
+        padding: 3px 12px;
+        font-size: 13px;
+        line-height: 1.3;
+        color: inherit;
+        background-color: transparent;
+        border: 1px solid var(--chat-border-strong);
+        border-radius: 6px;
+        cursor: pointer;
     }
 
     /* Visually-hidden content: announced by screen readers, not rendered on screen. */
@@ -270,6 +314,7 @@
 
     @media (prefers-reduced-motion: reduce) {
         .chat-typing > span { animation: none; }
+        .chat-message-copy { transition: none; }
     }
 
     /* Transient label shown next to the typing dots while an MCP tool or log fetch runs. */
@@ -307,9 +352,7 @@
     }
 
     .chat-error-retry:hover,
-    .chat-error-retry:focus,
-    .chat-error-dismiss:hover,
-    .chat-error-dismiss:focus {
+    .chat-error-dismiss:hover {
         opacity: 1;
     }
 
@@ -328,34 +371,6 @@
         cursor: pointer;
     }
 
-    /* Suggestion chips: one-click starter prompts shown only on a fresh conversation, sitting just
-       above the composer. Outlined/pill styling keeps them visually distinct from the accent-filled
-       send/flow buttons so they read as optional hints rather than primary actions. */
-    .chat-suggestions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        padding: 8px 10px 0;
-    }
-
-    .chat-suggestion {
-        padding: 5px 12px;
-        background-color: transparent;
-        color: var(--chat-accent-text);
-        border: 1px solid var(--chat-accent);
-        border-radius: 14px;
-        font-size: 13px;
-        line-height: 1.3;
-        cursor: pointer;
-        transition: background-color 0.12s ease, color 0.12s ease;
-
-        &:hover {
-            background-color: var(--chat-accent-strong);
-            color: #fff;
-            border-color: var(--chat-accent-strong);
-        }
-    }
-
     /* Flow UI overlays */
     .chat-flow-ui {
         display: flex;
@@ -366,24 +381,24 @@
         align-items: center;
     }
 
-    .chat-flow-button {
+    .chat-flow-button,
+    .chat-flow-button-cancel {
         padding: 6px 12px;
-        background-color: var(--chat-accent-strong);
-        color: white;
-        border: none;
         border-radius: 6px;
         cursor: pointer;
         font-size: 13px;
     }
 
+    .chat-flow-button {
+        background-color: var(--chat-accent-strong);
+        color: #fff;
+        border: none;
+    }
+
     .chat-flow-button-cancel {
-        padding: 6px 12px;
         background-color: transparent;
         color: var(--chat-muted);
         border: 1px solid var(--chat-border-strong);
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 13px;
     }
 
     .chat-flow-input {
@@ -403,13 +418,21 @@
         width: 100%;
     }
 
-    /* Explicit keyboard-focus ring - Argo CD's global CSS can suppress the UA default. */
+    /* Explicit keyboard-focus ring - Argo CD's global CSS can suppress the UA default. Every
+       focusable control in the panel, including the scrollable transcript. */
     :is(
+        .chat-message-list,
         .chat-clear-button,
-        .chat-suggestion,
+        .chat-message-copy,
         .chat-jump-latest,
+        .chat-stop-button,
         .chat-error-retry,
         .chat-error-dismiss,
+        .chat-input,
+        .chat-send-button,
+        .chat-flow-input,
+        .chat-flow-button,
+        .chat-flow-button-cancel,
         .marked-content .code-copy-btn
     ):focus-visible {
         outline: 2px solid var(--chat-focus);
@@ -417,7 +440,11 @@
         opacity: 1;
     }
 
+    /* Markdown content. Inherits the bubble background so Argo CD's global div styles cannot
+       override it and make the content area transparent. */
     .marked-content {
+        background-color: var(--chat-surface);
+
         /* Reset markdown-generated margins inside bubbles */
         :is(p, ul, ol, pre, blockquote, hr, h1, h2, h3, h4, h5, h6, .code-block) {
             margin: 0.3em 0;
@@ -484,8 +511,7 @@
             opacity: 0.65;
         }
 
-        .code-block:hover .code-copy-btn,
-        .code-copy-btn:focus {
+        .code-block:hover .code-copy-btn {
             opacity: 1;
         }
 
@@ -535,6 +561,12 @@
         th, td {
             border: 1px solid var(--chat-border);
             padding: 6px 10px;
+        }
+
+        /* Only where Markdown did not specify one: a column's `align` attribute maps to a
+           presentational hint, which any CSS rule outranks - so a blanket text-align here would
+           silently override every :---: / ---: alignment in the table. */
+        :is(th, td):not([align]) {
             text-align: left;
         }
 
@@ -542,6 +574,44 @@
             background-color: var(--chat-th-bg);
             font-weight: 600;
         }
+    }
+}
+
+/* Render-failure fallback (components/ErrorBoundary). Deliberately outside the #chatbot-* block and
+   self-contained: it replaces the whole extension, so it has no #chatbot-* ancestor and none of the
+   theme tokens declared there are in scope. Colours are held to the same AA contrast as the panel. */
+.chat-boundary-error {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    font-size: 14px;
+    background-color: #ffebee;
+    color: #b71c1c;
+    border: 1px solid #ef9a9a;
+    border-radius: 8px;
+
+    > button {
+        margin-left: auto;
+        padding: 3px 10px;
+        font-size: 13px;
+        line-height: 1.3;
+        color: inherit;
+        background-color: transparent;
+        border: 1px solid currentColor;
+        border-radius: 6px;
+        cursor: pointer;
+
+        &:focus-visible {
+            outline: 2px solid currentColor;
+            outline-offset: 1px;
+        }
+    }
+
+    body.theme-dark & {
+        background-color: #3c1a1a;
+        color: #ef9a9a;
+        border-color: #6d2b2b;
     }
 }
 

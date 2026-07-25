@@ -38,13 +38,6 @@ export const SystemAssistantExtension = (_props: any) => {
 
     const welcomeMessage = "How can I help you with Argo CD today?";
 
-    // General starter prompts for the context-free system page (no resource/application attached).
-    const suggestions = [
-        "How do I troubleshoot an out-of-sync application?",
-        "What does a Degraded health status mean?",
-        "Explain Argo CD sync waves and hooks"
-    ];
-
     const handleCommand = React.useCallback(
         (input: string, _messages: ChatMessage[], setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
             if (flowNode !== "start" && flowNode !== "loop" && flowNode !== "token_saved") {
@@ -106,7 +99,6 @@ export const SystemAssistantExtension = (_props: any) => {
             onCommand={handleCommand}
             onClear={handleClearFlow}
             getMcpStatus={getMcpStatus}
-            suggestions={suggestions}
         >
             {(helpers) => flowUI(helpers.setMessages)}
         </ChatInterface>

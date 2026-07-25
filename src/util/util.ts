@@ -89,9 +89,16 @@ export const mcpConfigured = (servers?: string[]): boolean =>
     Array.isArray(servers) && servers.length > 0;
 
 // Normalise a token into an Authorization header value: accept a raw token or one already
-// prefixed with "Bearer ". Shared by the LLM and MCP request paths.
+// prefixed with "Bearer ". Shared by the LLM and MCP request paths. The prefix test is
+// case-insensitive because the scheme is (RFC 7235) - a token pasted as "bearer abc" used to be
+// double-prefixed into "Bearer bearer abc" and rejected by the backend.
 export const bearer = (token: string): string =>
-    token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+    /^bearer\s/i.test(token) ? token : `Bearer ${token}`;
+
+// The message of anything thrown, for logs and user-facing errors alike. `catch` binds `unknown`,
+// and every call site needs the same two-line dance to get a string out of it.
+export const errorMessage = (err: unknown): string =>
+    err instanceof Error ? err.message : String(err);
 
 // Routing headers for every Argo CD request - the same-origin REST API and the proxy extension
 // alike. Both Argocd-* headers are always emitted: the proxy rejects a request that omits either
@@ -119,3 +126,42 @@ export const argocdApiHeaders = (application: any): Record<string, string> =>
 // named Application's own project.
 export const canRouteToProxy = (application: any): boolean =>
     !!application?.metadata?.name && !!application?.metadata?.namespace && !!application?.spec?.project;
+
+// Abort an Argo CD API request that has not completed within this window. argocd-server can stall
+// (a slow repo-server, a wedged cluster cache) and none of these calls used to have a deadline, so
+// the assistant would sit on a spinner - notably the log-fetch flow, which has no cancel button.
+const ARGOCD_REQUEST_MS = 30000;
+
+/**
+ * GET a same-origin Argo CD API endpoint with this extension's standard auth/routing headers and a
+ * deadline. Throws a message naming `what` on timeout or a non-2xx status; returns the Response
+ * otherwise (streaming callers still need to check `body`).
+ *
+ * The timeout covers the body as well as the headers, so a streaming caller must allow for the whole
+ * stream (service/logs.ts passes a longer window; its stream is bounded by `follow=false`+`tailLines`).
+ */
+export async function argocdFetch(
+    url: string,
+    application: any,
+    what: string,
+    timeoutMs: number = ARGOCD_REQUEST_MS
+): Promise<Response> {
+    let response: Response;
+    try {
+        response = await fetch(url, {
+            method: "GET",
+            credentials: "include",
+            headers: argocdApiHeaders(application),
+            signal: AbortSignal.timeout(timeoutMs),
+        });
+    } catch (err) {
+        if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+            throw new Error(`${what} request timed out after ${Math.round(timeoutMs / 1000)}s. The Argo CD API may be unreachable or overloaded.`);
+        }
+        throw err;
+    }
+    if (!response.ok) {
+        throw new Error(`${what} API returned ${response.status} ${response.statusText}`);
+    }
+    return response;
+}

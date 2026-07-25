@@ -1,4 +1,5 @@
 import * as React from "react";
+import { errorMessage } from "../util/util";
 
 interface State { message: string | null }
 
@@ -13,7 +14,7 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
     state: State = { message: null };
 
     static getDerivedStateFromError(error: unknown): State {
-        return { message: error instanceof Error ? error.message : String(error) };
+        return { message: errorMessage(error) };
     }
 
     componentDidCatch(error: unknown, info: unknown) {
@@ -23,10 +24,13 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
     render() {
         if (this.state.message === null) return this.props.children;
         return (
-            <div className="chat-error" role="alert">
+            // Its own class, not .chat-error: this renders in place of the whole extension, so it
+            // sits *outside* the #chatbot-* element every other rule in index.css is scoped to -
+            // which meant the crash message, the one time styling matters most, was unstyled.
+            <div className="chat-boundary-error" role="alert">
                 <span>The assistant hit an unexpected error: {this.state.message}</span>
                 <button
-                    className="chat-error-retry"
+                    type="button"
                     onClick={() => this.setState({ message: null })}
                     aria-label="Reload the assistant"
                 >

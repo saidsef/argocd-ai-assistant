@@ -56,11 +56,11 @@ Every context item is bounded twice: by item count (events, resource lists, log 
 
 ### Chatbot Interface
 
-The chat interface is a custom React implementation (`ChatInterface` + the `useChat` hook), with streaming responses and Markdown rendering (`marked` + `dompurify`). A fresh conversation shows one-click starter prompts tailored to the resource. The conversation flow:
+The chat interface is a custom React implementation (`ChatInterface` + the `useChat` hook), with streaming responses and Markdown rendering (`marked` + `dompurify`). The conversation flow:
 
 1. **Start** - an opening message with the resource Kind and Name, plus how to attach logs if the resource supports them.
 2. **Loop** - the user enters queries, the node loops after each one. Keywords switch to other flows.
-3. **`attach`** - starts the Attach Logs flow: pick a container, then the number of lines (up to the configured limit).
+3. **`attach`** - starts the Attach Logs flow: pick a container, then the number of lines (up to the configured limit). The distilled log is attached to every subsequent question in the session until **New chat** detaches it.
 4. **`token`** (when `data.mcpServers` is set) - the user supplies an Argo CD API token. It is stored in `sessionStorage` and sent to every configured MCP server as an `Authorization: Bearer` header, so a server such as [mcp-github-pr-issue-analyser](https://github.com/saidsef/mcp-github-pr-issue-analyser) can act on Argo CD on the user's behalf.
 
 ### Enabling MCP

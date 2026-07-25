@@ -1,5 +1,6 @@
 import * as React from "react";
 import MarkedWrapper from "./MarkedWrapper";
+import { copyText, useCopyState } from "./useCopy";
 import { type ChatMessage } from "./useChat";
 
 interface ChatMessageProps {
@@ -11,13 +12,34 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
     const className = isUser ? "chat-message-user" : "chat-message-assistant";
 
     const textParts = message.parts?.filter((p) => p.type === "text") || [];
+    const [copyState, announceCopy] = useCopyState();
+
+    // Copy the whole answer, not just a fenced block: an explanation with the commands interleaved is
+    // the thing people paste into a ticket, and only the code blocks were copyable before.
+    const fullText = textParts.map((p) => p.text).join("");
+    const onCopy = React.useCallback(() => {
+        copyText(fullText).then(announceCopy);
+    }, [fullText, announceCopy]);
 
     return (
         <div className={`chat-message ${className}`}>
             {textParts.map((part, i) =>
                 isUser
+                    // pre-wrap in CSS: the user's own Shift+Enter newlines used to collapse on submit.
                     ? <span key={`${message.id}-${i}`}>{part.text}</span>
                     : <MarkedWrapper key={`${message.id}-${i}`}>{part.text}</MarkedWrapper>
+            )}
+            {!isUser && fullText.length > 0 && (
+                <button
+                    type="button"
+                    className="chat-message-copy"
+                    onClick={onCopy}
+                    // The accessible name always contains the visible label (WCAG 2.5.3), so the two
+                    // never drift the way the code-block button's fixed label used to.
+                    aria-label={copyState === "copied" ? "Copied message" : copyState === "failed" ? "Copy failed" : "Copy message"}
+                >
+                    {copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy"}
+                </button>
             )}
         </div>
     );

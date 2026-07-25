@@ -20,7 +20,14 @@ export function submitToken(
         );
         return "token_invalid";
     }
-    storage.mcpToken = input.trim();
+    // Session storage can be full or disabled (private windows, strict cookie policies), in which
+    // case the token is not retained - say so rather than claiming it was saved.
+    if (!storage.setMcpToken(input.trim())) {
+        setMessages(
+            injectMessage("The token could not be stored for this session, so MCP requests will be unauthenticated. Session storage may be full or disabled.")
+        );
+        return "token_invalid";
+    }
     setMessages(injectMessage("Token saved. I will use it for MCP server requests."));
     return "token_saved";
 }

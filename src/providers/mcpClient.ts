@@ -1,5 +1,5 @@
 import { readLines, sseData } from "../util/stream";
-import { bearer } from "../util/util";
+import { bearer, errorMessage } from "../util/util";
 
 interface JsonRpcRequest {
     jsonrpc: "2.0";
@@ -24,7 +24,6 @@ export interface McpTool {
 
 interface McpServerInfo {
     name?: string;
-    version?: string;
 }
 
 // Abort a JSON-RPC request that gets no response within this window, so a hung MCP server
@@ -58,12 +57,12 @@ export class McpClient {
         this.authToken = token?.trim() || undefined;
     }
 
-    async connect(): Promise<void> {
+    async connect(signal?: AbortSignal): Promise<void> {
         // Connect all servers concurrently so first-query latency is the slowest server, not their sum.
         // Errors are written to a fixed-size slot per index (completion order is non-deterministic) so
         // per-server messages stay deterministic and attributable.
         const errs = new Array<string | undefined>(this.urls.length).fill(undefined);
-        await Promise.all(this.urls.map(async (url, i) => {
+        await Promise.all(this.urls.map(async (_url, i) => {
             try {
                 const response = await this.request(i, {
                     jsonrpc: "2.0",
@@ -77,7 +76,7 @@ export class McpClient {
                             version: "1.0.0"
                         }
                     }
-                });
+                }, signal);
 
                 if (response.error) {
                     errs[i] = `initialization failed: ${response.error.message}`;
@@ -90,29 +89,28 @@ export class McpClient {
                 await this.request(i, {
                     jsonrpc: "2.0",
                     method: "notifications/initialized"
-                });
+                }, signal);
             } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                errs[i] = `unreachable: ${msg}`;
+                errs[i] = `unreachable: ${errorMessage(err)}`;
             }
         }));
         this.connectErrors = errs;
     }
 
-    async listAllTools(): Promise<McpTool[]> {
+    async listAllTools(signal?: AbortSignal): Promise<McpTool[]> {
         // Query every server's tools concurrently. Results are collected per index and flattened in
         // server order at the end so the aggregate list stays server-major (consumers key by
         // serverIndex/name, so order is not load-bearing - this just keeps output stable).
         const perServer = Array.from({ length: this.urls.length }, () => [] as McpTool[]);
         const errs = new Array<string | undefined>(this.urls.length).fill(undefined);
-        await Promise.all(this.urls.map(async (url, i) => {
+        await Promise.all(this.urls.map(async (_url, i) => {
             try {
                 const response = await this.request(i, {
                     jsonrpc: "2.0",
                     id: this.nextId++,
                     method: "tools/list",
                     params: {}
-                });
+                }, signal);
 
                 if (response.error) {
                     errs[i] = `tools/list failed: ${response.error.message}`;
@@ -127,18 +125,18 @@ export class McpClient {
                     serverIndex: i
                 }));
             } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                errs[i] = `unreachable during tools/list: ${msg}`;
+                errs[i] = `unreachable during tools/list: ${errorMessage(err)}`;
             }
         }));
         this.toolErrors = errs;
         return perServer.flat();
     }
 
-    // Per-server identity captured during connect(); a non-null entry means that
-    // server completed the `initialize` handshake (i.e. is connected).
+    // Per-server identity captured during connect(); a non-null entry means that server completed
+    // the `initialize` handshake (i.e. is connected). A copy, so callers cannot mutate retained
+    // state (this is called on every render by the UI badge).
     getServerInfos(): (McpServerInfo | null)[] {
-        return this.serverInfos;
+        return this.serverInfos.slice();
     }
 
     // Connect / tools-list failure per server index (undefined where the server is healthy), from

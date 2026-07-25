@@ -1,4 +1,4 @@
-import { argocdApiHeaders } from "../util/util";
+import { argocdFetch } from "../util/util";
 
 // Curated, token-efficient view of an Argo CD Application - the essence of `argocd app get`.
 // The raw Application manifest for a real app carries its entire resource tree (dozens of entries),
@@ -159,14 +159,7 @@ export async function getApplicationSummary(application: any): Promise<Applicati
         const qs = params.toString();
         const url = `/api/v1/applications/${encodeURIComponent(name)}${qs ? `?${qs}` : ""}`;
 
-        const response = await fetch(url, {
-            credentials: "include",
-            method: "GET",
-            headers: argocdApiHeaders(application),
-        });
-        if (!response.ok) {
-            throw new Error(`Application API returned ${response.status} ${response.statusText}`);
-        }
+        const response = await argocdFetch(url, application, "Application");
         const fresh = await response.json();
         return summariseApplication(fresh) ?? summariseApplication(application);
     } catch (err) {
