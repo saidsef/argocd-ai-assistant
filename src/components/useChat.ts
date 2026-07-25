@@ -9,7 +9,7 @@ export interface ChatMessage {
     local?: boolean;
 }
 
-export type ChatStatus = "submitted" | "streaming" | "ready" | "error";
+type ChatStatus = "submitted" | "streaming" | "ready" | "error";
 
 export interface ChatChunk {
     type: string;
@@ -30,7 +30,7 @@ export interface UseChatOptions {
     };
 }
 
-export interface UseChatHelpers {
+interface UseChatHelpers {
     messages: ChatMessage[];
     setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
     status: ChatStatus;
@@ -171,6 +171,12 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
     }, []);
 
     const clearError = React.useCallback(() => setError(undefined), []);
+
+    // Abort any in-flight reply when the hook unmounts. The resource extension remounts this tree
+    // (key={chatKey}) whenever the user opens a different resource, so without this, switching
+    // resources mid-reply leaves the fetch, the SSE reader loop and its setMessages calls running
+    // against a dead tree - burning tokens for output nobody will ever see.
+    React.useEffect(() => () => abortControllerRef.current?.abort(), []);
 
     return { messages, setMessages, status, toolStatus, error, sendMessage, retry, stop, clearError };
 }

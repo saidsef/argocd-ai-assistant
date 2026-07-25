@@ -1,3 +1,4 @@
+import { readLines, sseData } from "../util/stream";
 import { bearer } from "../util/util";
 
 interface JsonRpcRequest {
@@ -21,7 +22,7 @@ export interface McpTool {
     serverIndex: number;
 }
 
-export interface McpServerInfo {
+interface McpServerInfo {
     name?: string;
     version?: string;
 }
@@ -37,16 +38,18 @@ export class McpClient {
     private authToken?: string;
     // Per-server identity from the `initialize` handshake; null until connected.
     private serverInfos: (McpServerInfo | null)[];
-    // Failures from the most recent connect() / listAllTools(), kept separate so each is
-    // reset by its own method and never compounds across calls.
-    private connectErrors: string[] = [];
-    private toolErrors: string[] = [];
+    // Failures from the most recent connect() / listAllTools(), indexed by server so the UI can
+    // attribute one. Kept separate so each is reset by its own method and never compounds.
+    private connectErrors: (string | undefined)[];
+    private toolErrors: (string | undefined)[];
     private nextId = 1;
 
     constructor(urls: string[]) {
         this.urls = urls;
         this.sessionIds = new Array(urls.length).fill(null);
         this.serverInfos = new Array(urls.length).fill(null);
+        this.connectErrors = new Array(urls.length).fill(undefined);
+        this.toolErrors = new Array(urls.length).fill(undefined);
     }
 
     // Set/replace the Bearer token used to authenticate MCP requests. Called per query so a token
@@ -57,9 +60,9 @@ export class McpClient {
 
     async connect(): Promise<void> {
         // Connect all servers concurrently so first-query latency is the slowest server, not their sum.
-        // Errors are written to a fixed-size slot per index (completion order is non-deterministic) and
-        // filtered afterwards to keep per-server messages deterministic.
-        const errs = new Array<string | null>(this.urls.length).fill(null);
+        // Errors are written to a fixed-size slot per index (completion order is non-deterministic) so
+        // per-server messages stay deterministic and attributable.
+        const errs = new Array<string | undefined>(this.urls.length).fill(undefined);
         await Promise.all(this.urls.map(async (url, i) => {
             try {
                 const response = await this.request(i, {
@@ -77,7 +80,7 @@ export class McpClient {
                 });
 
                 if (response.error) {
-                    errs[i] = `MCP server ${i} (${url}) initialization failed: ${response.error.message}`;
+                    errs[i] = `initialization failed: ${response.error.message}`;
                     return;
                 }
 
@@ -90,10 +93,10 @@ export class McpClient {
                 });
             } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
-                errs[i] = `MCP server ${i} (${url}) unreachable: ${msg}`;
+                errs[i] = `unreachable: ${msg}`;
             }
         }));
-        this.connectErrors = errs.filter((e): e is string => e !== null);
+        this.connectErrors = errs;
     }
 
     async listAllTools(): Promise<McpTool[]> {
@@ -101,7 +104,7 @@ export class McpClient {
         // server order at the end so the aggregate list stays server-major (consumers key by
         // serverIndex/name, so order is not load-bearing - this just keeps output stable).
         const perServer = Array.from({ length: this.urls.length }, () => [] as McpTool[]);
-        const errs = new Array<string | null>(this.urls.length).fill(null);
+        const errs = new Array<string | undefined>(this.urls.length).fill(undefined);
         await Promise.all(this.urls.map(async (url, i) => {
             try {
                 const response = await this.request(i, {
@@ -112,7 +115,7 @@ export class McpClient {
                 });
 
                 if (response.error) {
-                    errs[i] = `MCP server ${i} (${url}) tools/list failed: ${response.error.message}`;
+                    errs[i] = `tools/list failed: ${response.error.message}`;
                     return;
                 }
 
@@ -125,10 +128,10 @@ export class McpClient {
                 }));
             } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
-                errs[i] = `MCP server ${i} (${url}) unreachable during tools/list: ${msg}`;
+                errs[i] = `unreachable during tools/list: ${msg}`;
             }
         }));
-        this.toolErrors = errs.filter((e): e is string => e !== null);
+        this.toolErrors = errs;
         return perServer.flat();
     }
 
@@ -138,14 +141,14 @@ export class McpClient {
         return this.serverInfos;
     }
 
-    // Connect / tools-list failures from the most recent connect()/listAllTools(); the provider
-    // logs these to the browser console when MCP falls back to LLM-only. Returns a copy so
-    // callers cannot mutate the client's retained state.
-    getErrors(): string[] {
-        return [...this.connectErrors, ...this.toolErrors];
+    // Connect / tools-list failure per server index (undefined where the server is healthy), from
+    // the most recent connect()/listAllTools(). The provider logs these and surfaces them on the UI
+    // badge when MCP falls back to LLM-only. Returns a copy so callers cannot mutate retained state.
+    getErrors(): (string | undefined)[] {
+        return this.urls.map((_url, i) => this.connectErrors[i] ?? this.toolErrors[i]);
     }
 
-    async callTool(serverIndex: number, name: string, args: any): Promise<string> {
+    async callTool(serverIndex: number, name: string, args: any, signal?: AbortSignal): Promise<string> {
         const response = await this.request(serverIndex, {
             jsonrpc: "2.0",
             id: this.nextId++,
@@ -154,7 +157,7 @@ export class McpClient {
                 name,
                 arguments: args
             }
-        });
+        }, signal);
 
         if (response.error) {
             throw new Error(`Tool call failed: ${response.error.message}`);
@@ -168,7 +171,7 @@ export class McpClient {
         return this.extractTextContent(result?.content);
     }
 
-    private async request(serverIndex: number, body: JsonRpcRequest): Promise<JsonRpcResponse> {
+    private async request(serverIndex: number, body: JsonRpcRequest, signal?: AbortSignal): Promise<JsonRpcResponse> {
         const url = this.urls[serverIndex];
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
@@ -185,11 +188,14 @@ export class McpClient {
             headers["Authorization"] = bearer(this.authToken);
         }
 
+        // Compose the caller's signal with the request timeout so pressing Stop mid tool call
+        // actually cancels it, instead of leaving it in flight for up to MCP_REQUEST_MS.
+        const timeout = AbortSignal.timeout(MCP_REQUEST_MS);
         const response = await fetch(url, {
             method: "POST",
             headers,
             body: JSON.stringify(body),
-            signal: AbortSignal.timeout(MCP_REQUEST_MS)
+            signal: signal ? AbortSignal.any([signal, timeout]) : timeout
         });
 
         if (!response.ok) {
@@ -215,35 +221,20 @@ export class McpClient {
     }
 
     private async parseSseResponse(response: Response, expectedId?: number): Promise<JsonRpcResponse> {
-        const reader = response.body?.getReader();
-        if (!reader) {
+        if (!response.body) {
             throw new Error("No response body for SSE stream");
         }
 
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-
-            for (const line of lines) {
-                if (!line.startsWith("data: ")) continue;
-                const data = line.slice(6).trim();
-                if (!data) continue;
-
-                try {
-                    const parsed: JsonRpcResponse = JSON.parse(data);
-                    if (expectedId === undefined || parsed.id === expectedId) {
-                        return parsed;
-                    }
-                } catch (_e) {
-                    // ignore malformed chunks
+        for await (const line of readLines(response.body)) {
+            const data = sseData(line);
+            if (!data) continue;
+            try {
+                const parsed: JsonRpcResponse = JSON.parse(data);
+                if (expectedId === undefined || parsed.id === expectedId) {
+                    return parsed;
                 }
+            } catch (_e) {
+                // ignore malformed chunks
             }
         }
 

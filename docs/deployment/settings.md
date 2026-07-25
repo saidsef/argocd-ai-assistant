@@ -22,7 +22,7 @@ globalThis.argocdAssistantSettings = {
 
 | Setting | Required | Description |
 |---------|----------|-------------|
-| `provider` | Yes | Must be `"LLM"`. |
+| `provider` | No | Ignored. Accepted for backwards compatibility with existing ConfigMaps; a single generic OpenAI-compatible provider is always used. |
 | `model` | Recommended | Model name (e.g., `gpt-4`). If omitted, queries fail with `LLM model is not configured`. |
 | `data.baseURL` | No | OpenAI-compatible API base URL. Defaults to the Argo CD proxy path if omitted. |
 | `data.apiKey` | No | API key sent **from the browser** as `Authorization: Bearer …`. It is readable in the browser - **not recommended**, prefer server-side injection via the proxy ([Injecting the API token](proxy.md#injecting-the-api-token)). |

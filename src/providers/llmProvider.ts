@@ -1,5 +1,7 @@
 import { AttachmentType, ChatTurn, McpServerStatus, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
-import { argocdProxyHeaders, bearer, containsWord, mcpConfigured } from "../util/util";
+import { capText, MAX_HISTORY_TURN_CHARS, MAX_TOOL_RESULT_CHARS } from "../util/context";
+import { readLines, sseData } from "../util/stream";
+import { argocdHeaders, bearer, canRouteToProxy, containsWord, mcpConfigured } from "../util/util";
 import { McpClient, McpTool } from "./mcpClient";
 
 // Short display label for an MCP server before it reports its own name.
@@ -37,12 +39,16 @@ export class LlmProvider implements QueryProvider {
 
     private mcpClient?: McpClient;
     private mcpTools?: McpTool[];
+    // Per-server failure reason from the last connect/discovery attempt, surfaced on the UI badge so
+    // a silently tool-free answer is explained rather than just logged to the console.
+    private mcpErrors: (string | undefined)[] = [];
 
     // Live status of the configured MCP servers for UI display. Before the first query
     // the client has not connected, so this reports the URL hostname / not-connected / 0
     // tools; after a query it upgrades to the server-reported name and discovered tools.
     getMcpStatus(urls: string[]): McpServerStatus[] {
         const infos = this.mcpClient?.getServerInfos();
+        const errors = this.mcpErrors;
         return urls.map((url, i) => {
             const connected = !!infos && infos[i] != null;
             const toolCount = (this.mcpTools ?? []).filter(t => t.serverIndex === i).length;
@@ -50,7 +56,8 @@ export class LlmProvider implements QueryProvider {
                 url,
                 name: infos?.[i]?.name || hostnameOf(url),
                 connected,
-                toolCount
+                toolCount,
+                error: errors[i]
             };
         });
     }
@@ -73,12 +80,27 @@ export class LlmProvider implements QueryProvider {
 
     async query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal, history?: ChatTurn[], onStatus?: (label: string | null) => void): Promise<QueryResponse> {
         const settings = context.settings;
-        const baseURL = settings.data?.baseURL || `https://${location.host}/extensions/assistant`;
+        // location.origin, not a hardcoded https:// - the documented local-testing path is a
+        // `kubectl port-forward` to http://localhost:8080, which https:// silently breaks.
+        const usingProxy = !settings.data?.baseURL;
+        const baseURL = settings.data?.baseURL || `${location.origin}/extensions/assistant`;
         const model = settings.model;
         if (!model) {
             return {
                 success: false,
                 error: { status: 400, message: 'LLM model is not configured. Check extension settings (model field in argocdAssistantSettings).' },
+            };
+        }
+        // The Argo CD proxy authorises per-Application and rejects a request without a resolvable
+        // one ("400 Invalid headers: invalid value for namespace"). Catch that here so the user gets
+        // an explanation instead of the proxy's raw error, and so Retry means something.
+        if (usingProxy && !canRouteToProxy(context.application)) {
+            return {
+                success: false,
+                error: {
+                    status: 400,
+                    message: 'Still resolving an Argo CD application to authorise this request - the Argo CD proxy authorises LLM traffic per application. Press Retry in a moment; if this persists you may not have access to any application.',
+                },
             };
         }
         const apiKey = settings.data?.apiKey;
@@ -101,9 +123,10 @@ export class LlmProvider implements QueryProvider {
                 if (!this.mcpTools) {
                     this.mcpTools = await this.mcpClient.listAllTools();
                 }
-                const mcpErrors = this.mcpClient.getErrors();
-                if (mcpErrors.length > 0) {
-                    console.warn("MCP issues (answering without those servers/tools):", mcpErrors);
+                this.mcpErrors = this.mcpClient.getErrors();
+                const failed = this.mcpErrors.filter(Boolean);
+                if (failed.length > 0) {
+                    console.warn("MCP issues (answering without those servers/tools):", this.mcpErrors);
                 }
                 mcpTools = this.mcpTools;
                 if (!mcpTools || mcpTools.length === 0) {
@@ -111,7 +134,7 @@ export class LlmProvider implements QueryProvider {
                     // LLM-only. If it failed with errors (rather than genuinely exposing no tools),
                     // drop the cached client so a recovered server is re-probed on the next query.
                     mcpTools = undefined;
-                    if (mcpErrors.length > 0) {
+                    if (failed.length > 0) {
                         this.mcpClient = undefined;
                         this.mcpTools = undefined;
                     }
@@ -119,6 +142,7 @@ export class LlmProvider implements QueryProvider {
             } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
                 console.warn(`MCP initialization failed, answering without tools: ${errMsg}`);
+                this.mcpErrors = (mcpServerUrls ?? []).map(() => errMsg);
                 this.mcpClient = undefined;
                 this.mcpTools = undefined;
                 mcpTools = undefined;
@@ -174,7 +198,7 @@ export class LlmProvider implements QueryProvider {
                 emittedPrefix = prefixAtStart ? `${prefixAtStart}\n\n${emit}` : emit;
                 onStreamUpdate(emittedPrefix);
             };
-            const response = await this.sendChatCompletion(baseURL, model, apiKey, context, stepMessages, signal, onUpdate);
+            const response = await this.sendChatCompletion(baseURL, model, apiKey, context, stepMessages, signal, onUpdate, onStatus);
             return { response, suppressed };
         };
 
@@ -214,8 +238,9 @@ export class LlmProvider implements QueryProvider {
             if (tool && this.mcpClient) {
                 onStatus?.(`Running ${toolCall.name}…`);
                 try {
-                    const toolResult = await this.mcpClient.callTool(tool.serverIndex, toolCall.name, toolCall.arguments);
-                    followUpNote = `Tool result for ${toolCall.name}:\n${toolResult}\n\nPlease answer the original question using this result.`;
+                    const toolResult = await this.mcpClient.callTool(tool.serverIndex, toolCall.name, toolCall.arguments, signal);
+                    const capped = capText(toolResult, MAX_TOOL_RESULT_CHARS, `the ${toolCall.name} result`);
+                    followUpNote = `Tool result for ${toolCall.name}:\n${capped}\n\nPlease answer the original question using this result.`;
                 } catch (err) {
                     const errMsg = err instanceof Error ? err.message : String(err);
                     console.warn(`MCP tool '${toolCall.name}' failed, answering without it: ${errMsg}`);
@@ -246,15 +271,12 @@ export class LlmProvider implements QueryProvider {
         context: QueryContext,
         messages: Array<{ role: string; content: string }>,
         signal: AbortSignal | undefined,
-        onStreamUpdate: (text: string) => void
+        onStreamUpdate: (text: string) => void,
+        onStatus?: (label: string | null) => void
     ): Promise<QueryResponse & { data?: string }> {
-        const headers: Record<string, string> = {
-            'Content-Type': 'application/json',
-        };
-
-        // Argo CD proxy routing headers (Content-Type is already set above; the proxy reads these
-        // to authorise the forwarded request). Empty values are omitted by the helper.
-        Object.assign(headers, argocdProxyHeaders(context.application));
+        // Argo CD proxy routing headers plus the JSON content type; the proxy reads the Argocd-*
+        // pair to authorise the forwarded request.
+        const headers = argocdHeaders(context.application, { 'Content-Type': 'application/json' });
 
         if (apiKey) {
             headers['Authorization'] = bearer(apiKey);
@@ -293,7 +315,17 @@ export class LlmProvider implements QueryProvider {
             });
             resetTimer();
 
-            if (!response.ok || !response.body) {
+            if (!response.body) {
+                return {
+                    success: false,
+                    error: {
+                        status: response.status,
+                        message: `The LLM backend returned ${response.status} with an empty body. It may not support streaming responses at this endpoint.`,
+                    },
+                };
+            }
+
+            if (!response.ok) {
                 let message: string;
                 switch (response.status) {
                     case 401:
@@ -311,7 +343,7 @@ export class LlmProvider implements QueryProvider {
                     default:
                         message = response.status >= 500
                             ? `LLM backend error (${response.status}). The server returned an internal error.`
-                            : (response.body ? await response.text() : response.statusText);
+                            : `${await response.text()}`.trim() || `Request failed (${response.status} ${response.statusText}).`;
                 }
                 return {
                     success: false,
@@ -319,55 +351,54 @@ export class LlmProvider implements QueryProvider {
                 };
             }
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
             let text = '';
+            // Reasoning models (DeepSeek and friends) stream `reasoning_content` before any answer
+            // token. That thinking is deliberately not shown, but knowing it is happening turns an
+            // otherwise silent 30-second wait into visible progress.
+            let sawReasoning = false;
+            let sawAnyChunk = false;
 
-            // Parse a single SSE line. Returns an error response to short-circuit on, or null to continue.
-            const handleLine = (line: string): (QueryResponse & { data?: string }) | null => {
-                if (!line.startsWith('data: ')) return null;
-                const data = line.slice(6).trim();
-                if (data === '[DONE]' || !data) return null;
+            for await (const line of readLines(response.body, resetTimer)) {
+                const data = sseData(line);
+                if (!data) continue;
 
+                let parsed: any;
                 try {
-                    const parsed = JSON.parse(data);
-                    const content = parsed.choices?.[0]?.delta?.content;
-                    if (content) {
-                        text += content;
-                        onStreamUpdate(text);
-                    }
-                    if (parsed.error) {
-                        return {
-                            success: false,
-                            error: { status: 500, message: parsed.error.message || 'Unknown error' },
-                        };
-                    }
+                    parsed = JSON.parse(data);
                 } catch (_e) {
-                    // ignore malformed chunks
+                    continue; // ignore malformed chunks
                 }
-                return null;
-            };
+                sawAnyChunk = true;
 
-            while (true) {
-                const { done, value } = await reader.read();
-                resetTimer();
-                if (done) break;
+                if (parsed.error) {
+                    return {
+                        success: false,
+                        error: { status: 500, message: parsed.error.message || 'Unknown error' },
+                    };
+                }
 
-                // Keep the trailing partial line so events split across chunks are reassembled.
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
-
-                for (const line of lines) {
-                    const errorResponse = handleLine(line);
-                    if (errorResponse) return errorResponse;
+                const delta = parsed.choices?.[0]?.delta;
+                const content = delta?.content;
+                if (content) {
+                    text += content;
+                    onStreamUpdate(text);
+                } else if (!text && delta?.reasoning_content && !sawReasoning) {
+                    sawReasoning = true;
+                    onStatus?.('Reasoning…');
                 }
             }
 
-            // Flush a final event left in the buffer when the stream ends without a trailing newline.
-            const trailing = handleLine(buffer);
-            if (trailing) return trailing;
+            // A stream that produced nothing usable is a failure, not an empty success - otherwise
+            // an incompatible backend resolves as a silent blank reply with no way to diagnose it.
+            if (!text && !sawAnyChunk) {
+                return {
+                    success: false,
+                    error: {
+                        status: 502,
+                        message: 'The LLM backend returned no usable data. It may not be emitting an OpenAI-compatible SSE stream.',
+                    },
+                };
+            }
 
             return { success: true, data: text };
         } catch (err) {
@@ -420,7 +451,12 @@ export class LlmProvider implements QueryProvider {
         messages.push({ role: 'system', content: systemText });
 
         if (history && history.length > 0) {
-            messages.push(...history);
+            // Cap each turn: history is bounded by turn count, not size, so one pasted manifest in an
+            // earlier message would otherwise ride along in full on every subsequent request.
+            messages.push(...history.map((turn) => ({
+                role: turn.role,
+                content: capText(turn.content, MAX_HISTORY_TURN_CHARS, "an earlier message")
+            })));
         }
 
         messages.push({ role: 'user', content: prompt });
