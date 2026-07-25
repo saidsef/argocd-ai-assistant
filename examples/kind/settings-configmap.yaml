@@ -8,7 +8,6 @@ metadata:
 data:
   extension-settings.js: |
     globalThis.argocdAssistantSettings = {
-        provider: "LLM",
         model: "mock-model",
         data: {}
     };

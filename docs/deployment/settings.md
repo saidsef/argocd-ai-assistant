@@ -8,7 +8,6 @@ Create a JavaScript file named `extension-settings.js`:
 
 ```javascript
 globalThis.argocdAssistantSettings = {
-    provider: "LLM",
     model: "gpt-4",
     data: {
         baseURL: "http://local.local.svc.cluster.local:11434/v1"
@@ -50,7 +49,6 @@ metadata:
 data:
   extension-settings.js: |
     globalThis.argocdAssistantSettings = {
-        provider: "LLM",
         model: "deepseek-chat",
         data: {
             baseURL: "https://api.deepseek.com/v1"

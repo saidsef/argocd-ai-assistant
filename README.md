@@ -14,6 +14,7 @@ A single generic provider speaks the **OpenAI-compatible chat completions API**,
 
 - [Argo CD](https://argo-cd.readthedocs.io/en/stable/) >= v2.13
 - A running LLM backend with an OpenAI-compatible API accessible from the Argo CD server
+- A browser supporting CSS nesting and `AbortSignal.any`: Chrome/Edge 116+, Safari 17.4+, Firefox 124+
 
 ## Development
 

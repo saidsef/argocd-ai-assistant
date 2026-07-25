@@ -10,19 +10,21 @@ The LLM provider uses the standard OpenAI-compatible chat completions API. This 
 
 ### Configuration
 
-The provider needs only `provider: "LLM"` and a `model`, everything else is optional. `baseURL`, `apiKey`, and `mcpServers` live under the `data` object, the rest are top-level. The [Settings Extension](../deployment/settings.md#create-the-settings-file) page has the full field reference and how to deploy these settings.
+The provider needs only a `model`, everything else is optional. `baseURL`, `apiKey`, and `mcpServers` live under the `data` object, the rest are top-level. The [Settings Extension](../deployment/settings.md#create-the-settings-file) page has the full field reference and how to deploy these settings.
 
 ### Example Settings
 
 ```javascript
 globalThis.argocdAssistantSettings = {
-    provider: "LLM",
     model: "gpt-4",
     data: {
         baseURL: "http://local.local.svc.cluster.local:11434/v1"
     }
 };
 ```
+
+!!! note "`provider` is no longer required"
+    Earlier versions required `provider: "LLM"`. It is still accepted so existing ConfigMaps keep working, but it is ignored - a single generic OpenAI-compatible provider is always used.
 
 Vary this for other setups:
 
