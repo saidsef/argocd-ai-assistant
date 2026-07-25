@@ -1,11 +1,25 @@
 #chatbot-resource,
 #chatbot-system {
+    /* Accent design tokens. Centralise the teal accent that was repeated across buttons, links,
+       chips, and focus rings so a rebrand touches one place. Dark-mode values are overridden in
+       the body.theme-dark block below; --chat-focus is deliberately theme-independent (the focus
+       ring was #00A2B3 in both themes). */
+    --chat-accent: #00A2B3;            /* filled buttons + user bubble */
+    --chat-accent-text: #00A2B3;       /* links + suggestion chip text */
+    --chat-suggestion-border: #00A2B3; /* suggestion chip outline */
+    --chat-focus: #00A2B3;             /* keyboard focus ring (same in both themes) */
     width: 100%;
     height: 80vh;
     border: none;
     box-shadow: none;
     display: flex;
     flex-direction: column;
+}
+
+body.theme-dark :is(#chatbot-resource, #chatbot-system) {
+    --chat-accent: #007A87;
+    --chat-accent-text: #4dd0e1;
+    --chat-suggestion-border: #33707a;
 }
 
 :is(#chatbot-resource, #chatbot-system) .chat-message-list {
@@ -48,7 +62,7 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-header {
 }
 
 :is(#chatbot-resource, #chatbot-system) .chat-clear-button:focus-visible {
-    outline: 2px solid #00A2B3;
+    outline: 2px solid var(--chat-focus);
     outline-offset: 1px;
 }
 
@@ -124,7 +138,7 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-mcp-dot-on {
 
 :is(#chatbot-resource, #chatbot-system) .chat-message-user {
     margin-left: auto;
-    background-color: #00A2B3;
+    background-color: var(--chat-accent);
     color: #FFFFFF;
 }
 
@@ -154,11 +168,6 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-message-assistant 
 
 body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content {
     background-color: #2E3238;
-}
-
-body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-message-user {
-    background-color: #007A87;
-    color: #FFFFFF;
 }
 
 /* Input area */
@@ -204,13 +213,15 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-input {
     cursor: pointer;
 }
 
+/* Enabled fill uses the accent token (teal in light, darker teal in dark). The base #00A2B3 above
+   stays the disabled colour in both themes, preserving the original disabled appearance. */
+:is(#chatbot-resource, #chatbot-system) .chat-send-button:not(:disabled) {
+    background-color: var(--chat-accent);
+}
+
 :is(#chatbot-resource, #chatbot-system) .chat-send-button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-}
-
-body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-send-button:not(:disabled) {
-    background-color: #007A87;
 }
 
 /* Loading and error states */
@@ -349,8 +360,8 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-error {
 :is(#chatbot-resource, #chatbot-system) .chat-suggestion {
     padding: 5px 12px;
     background-color: transparent;
-    color: #00A2B3;
-    border: 1px solid #00A2B3;
+    color: var(--chat-accent-text);
+    border: 1px solid var(--chat-suggestion-border);
     border-radius: 14px;
     font-size: 13px;
     line-height: 1.3;
@@ -359,24 +370,14 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-error {
 }
 
 :is(#chatbot-resource, #chatbot-system) .chat-suggestion:hover {
-    background-color: #00A2B3;
+    background-color: var(--chat-accent);
     color: #fff;
+    border-color: var(--chat-accent);
 }
 
 :is(#chatbot-resource, #chatbot-system) .chat-suggestion:focus-visible {
-    outline: 2px solid #00A2B3;
+    outline: 2px solid var(--chat-focus);
     outline-offset: 1px;
-}
-
-body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-suggestion {
-    color: #4dd0e1;
-    border-color: #33707a;
-}
-
-body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-suggestion:hover {
-    background-color: #007A87;
-    color: #fff;
-    border-color: #007A87;
 }
 
 /* Flow UI overlays */
@@ -395,16 +396,12 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-flow-ui {
 
 :is(#chatbot-resource, #chatbot-system) .chat-flow-button {
     padding: 6px 12px;
-    background-color: #00A2B3;
+    background-color: var(--chat-accent);
     color: white;
     border: none;
     border-radius: 6px;
     cursor: pointer;
     font-size: 13px;
-}
-
-body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-flow-button {
-    background-color: #007A87;
 }
 
 :is(#chatbot-resource, #chatbot-system) .chat-flow-button-cancel {
@@ -553,7 +550,7 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-flow-error {
 :is(#chatbot-resource, #chatbot-system) .marked-content .code-copy-btn:focus-visible,
 :is(#chatbot-resource, #chatbot-system) .chat-error-retry:focus-visible,
 :is(#chatbot-resource, #chatbot-system) .chat-error-dismiss:focus-visible {
-    outline: 2px solid #00A2B3;
+    outline: 2px solid var(--chat-focus);
     outline-offset: 1px;
     opacity: 1;
 }
@@ -585,7 +582,7 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .chat-flow-error {
 
 /* Links */
 :is(#chatbot-resource, #chatbot-system) .marked-content a {
-    color: #00A2B3;
+    color: var(--chat-accent-text);
     text-decoration: underline;
 }
 
@@ -632,10 +629,6 @@ body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content .code-co
     background-color: #2e3238;
     border-color: #555;
     color: #e8eaed;
-}
-
-body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content a {
-    color: #4dd0e1;
 }
 
 body.theme-dark :is(#chatbot-resource, #chatbot-system) .marked-content blockquote {

@@ -20,7 +20,7 @@ const config = {
         library: ['extensions', 'resources'],
     },
     resolve: {
-        extensions: ['.ts', '.tsx', '.js', '.json', '.ttf', '.scss']
+        extensions: ['.ts', '.tsx', '.js', '.json', '.ttf']
     },
     externals: {
         react: 'React',
@@ -43,10 +43,6 @@ const config = {
                     target: 'es2020',
                     tsconfig: path.resolve('./tsconfig.json'),
                 },
-            },
-            {
-                test: /\.scss$/,
-                use: ['style-loader', 'raw-loader', 'sass-loader'],
             },
             {
                 test: /\.css$/,

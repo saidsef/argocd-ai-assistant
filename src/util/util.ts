@@ -144,17 +144,17 @@ export function argocdProxyHeaders(application: any): Record<string, string> {
 }
 
 export function getHeaders(application: any): Headers {
-    const applicationName = application?.metadata?.name || "";
-    const applicationNamespace = application?.metadata?.namespace || "";
-    const project = application?.spec?.project || "";
-
+    // Reuse argocdProxyHeaders for the Argocd-* routing pair (single source of truth for how the
+    // app/namespace/project are extracted) and add the JSON Content-Type/Accept the API paths need.
     // Origin is a forbidden header name: fetch() silently drops any attempt to set it, so it is
     // omitted here. The proxy authenticates via the argocd.token cookie and the Argocd-* headers.
     const headers: Headers = new Headers({
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        "Argocd-Application-Name": `${applicationNamespace}:${applicationName}`,
-        "Argocd-Project-Name": `${project}`,
+        ...argocdProxyHeaders(application),
     });
+    // getHeaders has always emitted Argocd-Project-Name even when empty (argocdProxyHeaders omits
+    // it for the chat POST path); preserve that byte-for-byte for the same-origin API paths.
+    if (!headers.has('Argocd-Project-Name')) headers.set('Argocd-Project-Name', '');
     return headers;
 }
