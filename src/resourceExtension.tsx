@@ -12,6 +12,7 @@ import {
     isCancelRequest,
     isTokenRequest,
     mcpConfigured,
+    mcpWelcomeHint,
     stripManifestNoise
 } from "./util/util";
 import { capText, MAX_APP_SUMMARY_CHARS, MAX_EVENTS_CHARS, MAX_MANIFEST_CHARS } from "./util/context";
@@ -161,7 +162,8 @@ export const ResourceAssistantExtension = (props: any) => {
         "?" +
         (hasLogs(resource)
             ? " I notice this resource has logs available, to attach one or more container logs type *Attach* at any time."
-            : "");
+            : "") +
+        mcpWelcomeHint((getMcpStatus?.() ?? []).map((s) => s.name));
 
     const handleCancel = React.useCallback(() => {
         setFlowNode("loop");

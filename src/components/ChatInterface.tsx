@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChatTurn, McpServerStatus, QueryContext, QueryProvider } from "../model/provider";
+import { ChatTurn, McpServerStatus, mcpState, QueryContext, QueryProvider } from "../model/provider";
 import { ManageStorage } from "../util/storage";
 import { errorMessage, generateId } from "../util/util";
 import ChatInput from "./ChatInput";
@@ -23,30 +23,32 @@ const buildWelcome = (welcomeMessage?: string): ChatMessageType[] =>
         }]
         : [];
 
-// A server's one-word state, which also picks the dot colour. A failure used to be logged to the
-// console only, leaving the user with a silently tool-free answer and no way to know why.
-const mcpState = (s: McpServerStatus) => s.error ? "unavailable" : s.connected ? "connected" : "configured";
+// How a user turns a configured server into a usable one. Stated here because nothing else in the
+// UI says it - it used to live only in docs/architecture.md.
+const ADDRESSING_HINT = "Name a server in your message to use its tools.";
 
-// Compact indicator that MCP is active, shown left of "New chat" when servers are
-// configured. Starts as the configured hostname (grey dot), then upgrades to the
-// server-reported name + tool count + green dot once the provider has connected, or a red dot
-// with the reason in the tooltip if the server could not be reached.
+// Compact indicator that MCP is active, shown left of "New chat" when servers are configured. Starts
+// as the configured hostname (grey dot), then upgrades to the server-reported name + tool count +
+// green dot once the provider has connected, or a red dot with the reason if a server was
+// unreachable.
+//
+// role="img" so the aria-label is honoured: on a bare <span> the role is `generic`, which prohibits
+// naming, so screen readers ignored the label entirely and the failure reason was mouse-only.
 const McpBadge = React.memo(({ servers }: { servers: McpServerStatus[] }) => {
     const anyConnected = servers.some((s) => s.connected && !s.error);
     const anyFailed = servers.some((s) => s.error);
-    const single = servers.length === 1 ? servers[0] : null;
-    const label = single
-        ? (single.toolCount > 0 ? `${single.name} · ${pluralTools(single.toolCount)}` : single.name)
-        : `${servers.length} MCP servers`;
+    const totalTools = servers.reduce((n, s) => n + s.toolCount, 0);
+    // Names inline, not "N MCP servers": the names are what a user has to type, and hiding them in a
+    // hover tooltip put them out of reach of keyboard and touch entirely. The label ellipsises.
+    const names = servers.map((s) => s.name).join(" · ");
+    const label = totalTools > 0 ? `${names} · ${pluralTools(totalTools)}` : names;
     const describe = (s: McpServerStatus) =>
         `${s.name} — ${mcpState(s)} — ${pluralTools(s.toolCount)}${s.error ? `\n${s.error}` : ""}`;
-    const tooltip = servers.map(describe).join("\n");
-    const ariaLabel = single
-        ? `MCP server ${describe(single).replace(/\n/g, ". ")}`
-        : `${servers.length} MCP servers, ${anyFailed ? "at least one unavailable" : anyConnected ? "at least one connected" : "configured"}`;
+    const tooltip = `${servers.map(describe).join("\n")}\n\n${ADDRESSING_HINT}`;
+    const ariaLabel = `${servers.length === 1 ? "MCP server" : `${servers.length} MCP servers`}: ${servers.map((s) => describe(s).replace(/\n/g, ". ")).join("; ")}. ${ADDRESSING_HINT}`;
     const dotClass = anyFailed && !anyConnected ? " chat-mcp-dot-error" : anyConnected ? " chat-mcp-dot-on" : "";
     return (
-        <span className="chat-mcp-badge" title={tooltip} aria-label={ariaLabel}>
+        <span className="chat-mcp-badge" role="img" title={tooltip} aria-label={ariaLabel}>
             <span className="chat-mcp-icon" aria-hidden="true">&#128268;</span>
             <span className="chat-mcp-label">{label}</span>
             <span className={`chat-mcp-dot${dotClass}`} aria-hidden="true" />

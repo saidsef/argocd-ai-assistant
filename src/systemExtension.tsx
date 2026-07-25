@@ -1,6 +1,6 @@
 import * as React from "react";
 import ChatInterface from "./components/ChatInterface";
-import { injectMessage, isTokenRequest, mcpConfigured } from "./util/util";
+import { injectMessage, isTokenRequest, mcpConfigured, mcpWelcomeHint } from "./util/util";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
 import { type ChatMessage } from "./components/useChat";
@@ -36,7 +36,8 @@ export const SystemAssistantExtension = (_props: any) => {
         mcpToken: storageRef.current?.mcpToken ?? undefined
     }), [settings, routingApp]);
 
-    const welcomeMessage = "How can I help you with Argo CD today?";
+    const welcomeMessage = "How can I help you with Argo CD today?" +
+        mcpWelcomeHint((getMcpStatus?.() ?? []).map((s) => s.name));
 
     const handleCommand = React.useCallback(
         (input: string, _messages: ChatMessage[], setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {

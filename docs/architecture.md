@@ -74,8 +74,24 @@ The Argo CD Proxy Extension authorises every request against a specific Applicat
 When `data.mcpServers` is set, the LLM provider lazily connects to each server over an HTTP-streamable JSON-RPC transport. The browser calls servers directly, so each must send CORS headers for the Argo CD origin. Per message the provider:
 
 1. Sends an `initialize` handshake on first use, then lists tools via `tools/list`.
-2. Injects an "Available tools" section into the system message **only for the server(s) named in that message** (by reported name or hostname, matched as a whole word, case-insensitive). A message naming no server gets no tools - so a normal question never triggers a call.
-3. Scans the response for a `<tool>` tag (only for advertised tools) and, if found, routes it via `tools/call`, appending the result as a follow-up query.
+2. Injects a **server roster** into the system message whenever any server is configured, listing each server's name, hostname, state, and its tool names. This is reference only - nothing in it is callable - and it is what lets the assistant answer "which MCP servers are available?" instead of reporting that it has no information about MCP.
+3. Injects an "Available tools" section (descriptions and JSON schemas, grouped by server) **only for the server(s) the user has named** - see [Addressing a server](#addressing-a-server) below. A conversation naming no server gets no tools, so a normal question never triggers a call.
+4. Scans the response for a `<tool>` tag (only for advertised tools) and, if found, routes it via `tools/call`, appending the result as a follow-up query. If a tool block is emitted when nothing is callable, the assistant retries once tool-free rather than showing the raw block.
+
+#### Addressing a server
+
+A server is addressed when one of its **handles** appears as a whole word, case-insensitively, in the current message **or the one immediately before it**. The two-turn window is what makes a natural follow-up work:
+
+```text
+you:       docs, what does a sync wave do?      <- names "docs", its tools are offered
+assistant: ...
+you:       and how do hooks interact with them? <- names nothing, but "docs" is still offered
+you:       is the pod healthy?                  <- outside the window, no tools offered
+```
+
+Only the user's own previous message counts. Assistant replies are never scanned - they routinely name every server now that the roster exists, and matching one would advertise everything on every subsequent turn.
+
+The handles are the server-reported name, its hostname, and the hostname's first label (`docs.example.com` -> `docs`). A handle shorter than 2 characters is dropped, and a first label shorter than 4 is dropped as well, so a server at `api.example.com` does not turn the word "api" into an invocation. The roster prints the handle it expects, so what the assistant tells a user always matches what the matcher accepts.
 
 Tool calls chain a bounded few times per query (the final turn forced tool-free) to keep multi-step lookups fast. Servers are unauthenticated by default, the `token` flow adds an `Authorization: Bearer` header. A broken server never breaks the assistant - if it is unreachable, exposes no tools, or a call fails, the provider logs the reason to the console and continues in LLM-only mode.
 

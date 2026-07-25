@@ -20,6 +20,10 @@ export const MAX_EVENTS_CHARS = 12000;
 export const MAX_LOG_CHARS = 24000;
 export const MAX_TOOL_RESULT_CHARS = 16000;
 export const MAX_HISTORY_TURN_CHARS = 4000;
+// The MCP server roster. Unlike the caps above this one is not about a single oversized item: it
+// bounds a list that grows with the deployment (twelve servers exposing 200 tools each would be
+// ~5.5KB on every request), and it is sent whether or not the user is using MCP at all.
+export const MAX_MCP_ROSTER_CHARS = 2000;
 
 /**
  * Trim `text` to `max` characters, appending a note naming what was cut. Keeps the *end* of logs

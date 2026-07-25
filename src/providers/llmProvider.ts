@@ -3,17 +3,9 @@ import { capText, MAX_HISTORY_TURN_CHARS, MAX_TOOL_RESULT_CHARS } from "../util/
 import { readLines, sseData } from "../util/stream";
 import { argocdHeaders, bearer, canRouteToProxy, containsWord, errorMessage, mcpConfigured } from "../util/util";
 import { McpClient, McpTool } from "./mcpClient";
-import { exampleArgs, parseToolCall } from "./toolCall";
+import { hostnameOf, mcpRoster, noToolFallback, noToolNote, serverHandles, toolPrompt } from "./mcpPrompt";
+import { parseToolCall } from "./toolCall";
 import { createToolMarkerFilter } from "./toolMarker";
-
-// Short display label for an MCP server before it reports its own name.
-function hostnameOf(url: string): string {
-    try {
-        return new URL(url).hostname;
-    } catch {
-        return url;
-    }
-}
 
 // Explain a completion that produced no answer text. `finish_reason` is the only signal the wire
 // format gives, and each value points at a different fix - so name it rather than reporting one
@@ -30,6 +22,16 @@ export function emptyReplyMessage(finishReason?: string): string {
         default:
             return `The LLM backend ended the response (${finishReason}) without producing any content.`;
     }
+}
+
+// The user's own most recent previous message, for the two-turn addressing window. Deliberately not
+// the last turn of any role: an assistant reply that lists the servers would otherwise address all
+// of them (see addressedServers).
+function lastUserTurn(history?: ChatTurn[]): string {
+    for (let i = (history?.length ?? 0) - 1; i >= 0; i--) {
+        if (history![i].role === "user") return history![i].content;
+    }
+    return "";
 }
 
 // Same URL list, same order - the identity the cached MCP client and its tools' serverIndex rely on.
@@ -54,11 +56,12 @@ export function chatCompletionsUrl(baseURL: string): string {
 export const DEFAULT_SYSTEM_PROMPT = `You are the Argo CD AI Assistant, an expert in Argo CD, Kubernetes, and GitOps. You help users understand and troubleshoot the Kubernetes resources they manage with Argo CD.
 
 Guidelines:
-- Ground every answer in the provided context (resource manifest, events, and logs). If the context does not contain the answer, say so plainly instead of guessing.
+- Ground every answer in the provided context (resource manifest, events, logs, and any attached lists). If the context does not contain the answer, say so plainly instead of guessing.
 - Never invent resource names, namespaces, images, or field values that are not present in the context.
 - Be concise and actionable: prefer short explanations, concrete kubectl/argocd commands, and step-by-step remediation over prose.
 - When diagnosing, cite the specific fields, status conditions, or events you are reasoning from.
 - An "Argo CD Application" summary (a distilled \`argocd app get\`: source/chart, sync status, health, sync policy, images, and any out-of-sync or degraded resources) may be attached. Use it to answer questions about the application's deployment, Helm chart/version, sync, and health, citing its specific fields.
+- A list of configured MCP tool servers may be attached. It is the complete set, so answer questions about which servers exist, their state, and which tools they expose directly from it - do not say you have no information about MCP when that list is present.
 - Format replies in Markdown; put commands, manifests, and log excerpts in fenced code blocks.`;
 
 // Max tools the model may chain within one query. Bounds latency/cost and guarantees termination
@@ -106,20 +109,26 @@ export class LlmProvider implements QueryProvider {
         });
     }
 
-    // Tools are advertised only for MCP servers the user addresses by name in this message, so a
-    // normal question never triggers a tool call. A server is addressed when its reported name, its
-    // hostname, or the hostname's first label appears as a whole word in the prompt. Returns the
-    // subset of `allTools` on addressed servers (empty when none is named).
-    private addressedTools(prompt: string, urls: string[], allTools: McpTool[]): McpTool[] {
+    // The MCP servers the user has addressed by name, so a normal question never triggers a tool
+    // call. A server is addressed when one of its handles (see serverHandles) appears as a whole
+    // word in the current message or in the one immediately before it - the two-turn window is what
+    // makes "use docs" followed by "now find X" work, without letting an addressing drift down the
+    // whole conversation.
+    //
+    // `previousPrompt` must be the user's own previous message and nothing else. Assistant replies
+    // routinely name every server now that the roster exists ("the configured servers are docs,
+    // gitlab, github"), so matching against one would advertise every server's tools on every turn
+    // after the first question about MCP - which is exactly the opt-in this function implements.
+    private addressedServers(prompt: string, previousPrompt: string, urls: string[]): Set<number> {
         const infos = this.mcpClient?.getServerInfos();
         const addressed = new Set<number>();
         for (let i = 0; i < urls.length; i++) {
-            const host = hostnameOf(urls[i]);
-            const handles = [infos?.[i]?.name, host, host.split(".")[0]]
-                .filter((h): h is string => !!h && h.length >= 2);
-            if (handles.some(h => containsWord(prompt, h))) addressed.add(i);
+            const handles = serverHandles(infos?.[i]?.name, urls[i]);
+            if (handles.some(h => containsWord(prompt, h) || containsWord(previousPrompt, h))) {
+                addressed.add(i);
+            }
         }
-        return allTools.filter(t => addressed.has(t.serverIndex));
+        return addressed;
     }
 
     async query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal, history?: ChatTurn[], onStatus?: (label: string | null) => void): Promise<QueryResponse> {
@@ -219,12 +228,28 @@ export class LlmProvider implements QueryProvider {
             if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         }
 
-        // Advertise tools only for MCP server(s) the user named in this message; otherwise answer
-        // LLM-only. This is what keeps a normal question from triggering a tool call.
-        const addressed = (mcpTools && mcpTools.length) ? this.addressedTools(prompt, mcpServerUrls!, mcpTools) : [];
+        // Advertise tools only for MCP server(s) the user named; otherwise answer LLM-only. This is
+        // what keeps a normal question from triggering a tool call. Only the user's own previous
+        // message counts as "before" - see addressedServers.
+        const previousPrompt = lastUserTurn(history);
+        const addressedSet = mcpConfigured(mcpServerUrls)
+            ? this.addressedServers(prompt, previousPrompt, mcpServerUrls!)
+            : new Set<number>();
+        const addressed = (mcpTools && mcpTools.length)
+            ? mcpTools.filter(t => addressedSet.has(t.serverIndex))
+            : [];
         const toolsForModel = addressed.length ? addressed : undefined;
 
-        const messages = this.buildMessages(context, prompt, toolsForModel, history);
+        // Every configured server is described to the model whether or not it was addressed, so
+        // "which MCP servers are available?" has an answer. Without this the prompt was byte-for-byte
+        // identical to a deployment with no MCP at all, and the model correctly said it had no
+        // information - see mcpPrompt.mcpRoster.
+        const serverStatus = mcpConfigured(mcpServerUrls) ? this.getMcpStatus(mcpServerUrls!) : [];
+        const roster = serverStatus.length
+            ? mcpRoster(serverStatus, this.mcpTools ?? [], toolsForModel ? addressedSet : new Set<number>())
+            : "";
+
+        const messages = this.buildMessages(context, prompt, toolsForModel, history, roster, serverStatus);
 
         // The UI derives its deltas from one cumulative string across the whole query, so every
         // completion in the tool loop below must continue from this exact text. It is the last
@@ -252,6 +277,8 @@ export class LlmProvider implements QueryProvider {
         // feed the result back, up to MAX_TOOL_ITERATIONS executions. The final iteration is forced
         // tool-free so a broken/looping tool never leaves the reply blank or hanging.
         let stepMessages = messages;
+        // At most one extra completion, on top of the tool loop's own bound.
+        let retriedToolFree = false;
         for (let iter = 0; iter <= MAX_TOOL_ITERATIONS; iter++) {
             const forceNoTool = iter === MAX_TOOL_ITERATIONS;
             const { response, suppressed } = await streamStep(stepMessages);
@@ -262,15 +289,32 @@ export class LlmProvider implements QueryProvider {
             const toolCall = forceNoTool ? null : parseToolCall(fullText, toolsForModel);
 
             if (!toolCall) {
-                if (iter === 0) {
-                    // No tool at all. If a partial/invalid <tool> attempt was suppressed during
-                    // streaming, reveal the raw text now so the reply is not blank (fullText is a
-                    // superset of what was emitted, so the cumulative cursor stays consistent).
-                    if (suppressed) onStreamUpdate(fullText);
-                } else if (fullText.trim().length === 0 || emittedPrefix.trim().length === 0) {
-                    // Answering after >=1 tool ran, but nothing visible was produced: surface a
-                    // fallback so a tool call never resolves to an empty message.
-                    const fallback = "I couldn't complete that request using the available tools.";
+                // A tool block was hidden but nothing could run it - either no server was addressed
+                // this turn, or the name was not a real tool. This used to reveal the raw text, which
+                // is worse than it sounds: <tool> is not an allowed tag, so the sanitiser drops the
+                // element and keeps its children, leaving the user a bare JSON blob where the answer
+                // should be, with no retry. Ask once more, tool-free, so they get prose.
+                // `iter < MAX_TOOL_ITERATIONS` is load-bearing: continuing on the last iteration
+                // would exit the loop entirely and fall through to the terminal return with nothing
+                // emitted - a blank bubble. The final pass always takes the path below.
+                if (suppressed && !retriedToolFree && iter < MAX_TOOL_ITERATIONS) {
+                    retriedToolFree = true;
+                    const attempted = fullText.match(/<tool\s+name="([^"]+)"/)?.[1];
+                    onStatus?.("Rethinking…");
+                    stepMessages = [
+                        ...stepMessages,
+                        { role: "assistant", content: fullText },
+                        { role: "user", content: noToolNote(attempted, !!toolsForModel) }
+                    ];
+                    continue;
+                }
+                if (emittedPrefix.trim().length === 0) {
+                    // Nothing visible was produced. Never leave a blank bubble. (Not gated on the
+                    // iteration: a whitespace-only first reply passes sendChatCompletion's !text
+                    // check and used to render as an empty bubble.)
+                    const fallback = toolsForModel
+                        ? "I couldn't complete that request using the available tools."
+                        : noToolFallback(serverStatus);
                     onStreamUpdate(emittedPrefix ? `${emittedPrefix}\n\n${fallback}` : fallback);
                 }
                 return { success: true };
@@ -479,7 +523,7 @@ export class LlmProvider implements QueryProvider {
         }
     }
 
-    private buildMessages(context: QueryContext, prompt: string, mcpTools?: McpTool[], history?: ChatTurn[]): Array<{ role: string; content: string }> {
+    private buildMessages(context: QueryContext, prompt: string, mcpTools: McpTool[] | undefined, history: ChatTurn[] | undefined, roster: string, servers: McpServerStatus[]): Array<{ role: string; content: string }> {
         const messages: Array<{ role: string; content: string }> = [];
 
         const override = context.settings.systemPrompt;
@@ -493,8 +537,10 @@ export class LlmProvider implements QueryProvider {
             }
         }
 
+        systemText += roster;
+
         if (mcpTools && mcpTools.length > 0) {
-            systemText += this.toolPrompt(mcpTools);
+            systemText += this.toolPrompt(mcpTools, servers);
         }
 
         messages.push({ role: 'system', content: systemText });
@@ -512,24 +558,13 @@ export class LlmProvider implements QueryProvider {
         return messages;
     }
 
-    // The "Available tools:" block appended to the system prompt, cached by tool-name set: the
-    // schemas are re-serialised identically on every request otherwise.
-    private toolPrompt(mcpTools: McpTool[]): string {
-        const key = mcpTools.map(t => t.name).join("\u0000");
+    // Memo around mcpPrompt.toolPrompt: the JSON schemas are re-serialised identically on every
+    // request otherwise. Keyed by tool names *and* the server names it groups them under.
+    private toolPrompt(mcpTools: McpTool[], servers: McpServerStatus[]): string {
+        const key = [...mcpTools.map(t => `${t.serverIndex}:${t.name}`), ...servers.map(s => s.name)].join("\u0000");
         if (this.toolPromptCache?.key === key) return this.toolPromptCache.text;
 
-        let text = "\n\nAvailable tools:\n";
-        for (const tool of mcpTools) {
-            text += `- ${tool.name}: ${tool.description || "No description"}\n`;
-            if (tool.inputSchema) {
-                text += `  Arguments schema: ${JSON.stringify(tool.inputSchema)}\n`;
-            }
-        }
-        text += "\nTo use a tool, output a tool block using an EXACT tool name from the list above:\n";
-        text += '<tool name="EXACT_TOOL_NAME">\n{ JSON arguments matching that tool\'s schema }\n</tool>\n';
-        text += `For example:\n<tool name="${mcpTools[0].name}">\n${exampleArgs(mcpTools[0])}\n</tool>\n`;
-        text += "Always wrap the arguments in the <tool>...</tool> tags with the exact tool name; never output bare JSON. A brief sentence before the block is allowed. If the request does not require a tool, answer directly without one.";
-
+        const text = toolPrompt(mcpTools, (i) => servers[i]?.name ?? hostnameOf(servers[i]?.url ?? ""));
         this.toolPromptCache = { key, text };
         return text;
     }

@@ -59,6 +59,17 @@ export type McpServerStatus = {
     error?: string;
 }
 
+/**
+ * A server's one-word state. Defined here rather than in the UI because both the header badge and
+ * the MCP roster in the system prompt report it, and they must not disagree - a model telling the
+ * user a server is "connected" while the badge says "unavailable" is worse than either alone.
+ *
+ * Error beats connected deliberately: the real case is a server that completed the `initialize`
+ * handshake and then failed `tools/list`, which is connected but unusable.
+ */
+export const mcpState = (s: McpServerStatus): "unavailable" | "connected" | "configured" =>
+    s.error ? "unavailable" : s.connected ? "connected" : "configured";
+
 export interface QueryProvider {
     query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal, history?: ChatTurn[], onStatus?: (label: string | null) => void): Promise<QueryResponse>;
     /** Optional: live status of the given configured MCP server URLs, for UI display. */

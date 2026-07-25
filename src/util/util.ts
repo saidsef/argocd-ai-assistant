@@ -88,6 +88,18 @@ export function isCancelRequest(input: string): boolean {
 export const mcpConfigured = (servers?: string[]): boolean =>
     Array.isArray(servers) && servers.length > 0;
 
+// One sentence naming the configured MCP servers and how to invoke them, appended to the welcome
+// message. Nothing in the UI used to say that naming a server is what enables its tools - it was
+// documented only in docs/architecture.md, so the feature was effectively undiscoverable.
+export function mcpWelcomeHint(names: string[]): string {
+    if (names.length === 0) return "";
+    const list = names.length === 1
+        ? `**${names[0]}**`
+        : names.slice(0, -1).map((n) => `**${n}**`).join(", ") + ` and **${names[names.length - 1]}**`;
+    return ` I can also use ${names.length === 1 ? "the tool server" : "the tool servers"} ${list}` +
+        ` - name one in your message (for example *${names[0]}, ...*) to use its tools.`;
+}
+
 // Normalise a token into an Authorization header value: accept a raw token or one already
 // prefixed with "Bearer ". Shared by the LLM and MCP request paths. The prefix test is
 // case-insensitive because the scheme is (RFC 7235) - a token pasted as "bearer abc" used to be
