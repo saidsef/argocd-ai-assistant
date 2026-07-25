@@ -1,19 +1,19 @@
 import * as React from "react";
 import ChatInterface from "./components/ChatInterface";
-import { getLogs, hasLogs, MAX_LINES } from "./service/logs";
+import { getLogs, hasLogs, MAX_LINES, summariseLogs } from "./service/logs";
 import { ApplicationSummary, getApplicationSummary, summariseApplication } from "./service/application";
 import {
+    argocdApiHeaders,
     getContainers,
-    getHeaders,
     getResourceIdentifier,
     injectMessage,
     isAttachRequest,
     isCancelRequest,
     isTokenRequest,
     mcpConfigured,
-    QueryContextImpl,
     stripManifestNoise
 } from "./util/util";
+import { capText, MAX_APP_SUMMARY_CHARS, MAX_EVENTS_CHARS, MAX_MANIFEST_CHARS } from "./util/context";
 import { MAX_EVENTS, summariseEvents } from "./service/events";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
@@ -86,24 +86,29 @@ export const ResourceAssistantExtension = (props: any) => {
         const appObject = isApplication ? (application ?? resource) : application;
         const summary = appSummary ?? summariseApplication(appObject);
 
+        // Every attachment is capped by size as well as by item count: the distillers bound how many
+        // entries go in, these bound how large a single entry can be (see util/context.ts).
+        const json = (value: any, max: number, what: string) =>
+            capText(JSON.stringify(value), max, what);
+
         if (isApplication && summary) {
             // For an Application resource the compact summary supersedes the full manifest (which
             // carries the entire resource tree/history) - large token saving, same review signal.
             attachments.push({
-                content: JSON.stringify(summary),
+                content: json(summary, MAX_APP_SUMMARY_CHARS, "the application summary"),
                 mimeType: "application/json",
                 type: AttachmentType.APP_SUMMARY
             });
         } else if (resource) {
             attachments.push({
-                content: JSON.stringify(stripManifestNoise(resource)),
+                content: json(stripManifestNoise(resource), MAX_MANIFEST_CHARS, "the resource manifest"),
                 mimeType: "application/json",
                 type: AttachmentType.MANIFEST
             });
             // Ground a child resource (Deployment, Pod, ...) in its owning Application's GitOps state.
             if (summary) {
                 attachments.push({
-                    content: JSON.stringify(summary),
+                    content: json(summary, MAX_APP_SUMMARY_CHARS, "the application summary"),
                     mimeType: "application/json",
                     type: AttachmentType.APP_SUMMARY
                 });
@@ -114,27 +119,28 @@ export const ResourceAssistantExtension = (props: any) => {
             // Cap + distil to the most recent MAX_EVENTS (kubectl-style signal only), so events -
             // previously the one unbounded context source - can't blow up the prompt on a busy resource.
             attachments.push({
-                content: JSON.stringify(summariseEvents(events.items, MAX_EVENTS)),
+                content: json(summariseEvents(events.items, MAX_EVENTS), MAX_EVENTS_CHARS, "the events"),
                 mimeType: "application/json",
                 type: AttachmentType.EVENTS
             });
         }
 
-        if (storageRef.current!.hasLogs()) {
+        const cachedLogs = storageRef.current?.logs;
+        if (cachedLogs) {
+            // Already distilled and capped when it was fetched (service/logs.ts summariseLogs).
             attachments.push({
-                content: storageRef.current!.logs,
-                mimeType: "application/json",
+                content: cachedLogs,
+                mimeType: "text/plain",
                 type: AttachmentType.LOG
             });
         }
 
-        const currentSettings = globalThis.argocdAssistantSettings ?? settings;
-        return new QueryContextImpl(
+        return {
             application,
             attachments,
-            currentSettings,
-            storageRef.current?.mcpToken ?? undefined
-        );
+            settings: globalThis.argocdAssistantSettings ?? settings,
+            mcpToken: storageRef.current?.mcpToken ?? undefined
+        };
     }, [application, resource, events, settings, appSummary]);
 
     const welcomeMessage =
@@ -225,6 +231,11 @@ export const ResourceAssistantExtension = (props: any) => {
 
     const handleLinesSubmit = React.useCallback(
         (setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
+            const container = form.container;
+            if (!container) {
+                setFlowError("Select a container first.");
+                return;
+            }
             const lines = Number(form.lines);
             if (isNaN(lines)) {
                 setFlowError("The number of lines needs to be a valid number.");
@@ -240,16 +251,24 @@ export const ResourceAssistantExtension = (props: any) => {
             }
             setFlowError(null);
             setFlowNode("get_logs");
-            getLogs(application, resource, form.container, lines)
+            getLogs(application, resource, container, lines)
                 .then((result: LogEntry[]) => {
-                    storageRef.current!.logs = JSON.stringify(result);
-                    setMessages(injectMessage("Requested logs have been attached"));
+                    // Store the distilled text, not the raw stream envelopes: this string is
+                    // re-sent verbatim with every subsequent question, so its size is paid for
+                    // on every request.
+                    storageRef.current!.logs = summariseLogs(result, container);
+                    // Session storage can be full or unavailable, in which case the write is dropped
+                    // - say so rather than claiming an attachment that will not be sent.
+                    const attached = storageRef.current!.logs !== null;
+                    setMessages(injectMessage(attached
+                        ? `Attached ${result.length} log line${result.length === 1 ? "" : "s"} from **${container}**.`
+                        : "The logs could not be stored for this session, so they will not be attached. Session storage may be full or disabled."));
                     setFlowNode("loop");
                 })
                 .catch((error) => {
                     setMessages(
                         injectMessage(
-                            "Unexpected Error: " +
+                            "Could not fetch the logs: " +
                                 (error instanceof Error ? error.message : String(error))
                         )
                     );
@@ -277,8 +296,9 @@ export const ResourceAssistantExtension = (props: any) => {
         if (!resource?.metadata) return;
         // Encode the path + query params (names/namespaces may contain characters that need
         // escaping) and send the same-origin auth/routing headers every other Argo CD call uses
-        // (getHeaders + credentials:'include', matching service/application.ts and service/logs.ts),
-        // so a project-scoped proxy authorises this request instead of silently rejecting it.
+        // (argocdApiHeaders + credentials:'include', matching service/application.ts and
+        // service/logs.ts), so a project-scoped proxy authorises this request rather than
+        // silently rejecting it.
         let url = `/api/v1/applications/${encodeURIComponent(application_name)}/events`;
         if (resource.kind !== "Application") {
             const params = new URLSearchParams();
@@ -287,7 +307,7 @@ export const ResourceAssistantExtension = (props: any) => {
             params.set("resourceName", resource.metadata.name ?? "");
             url += `?${params.toString()}`;
         }
-        fetch(url, { credentials: "include", headers: getHeaders(application) })
+        fetch(url, { credentials: "include", headers: argocdApiHeaders(application) })
             .then((response) => {
                 if (!response.ok) {
                     throw new Error(`Events API returned ${response.status} ${response.statusText}`);
@@ -296,7 +316,7 @@ export const ResourceAssistantExtension = (props: any) => {
             })
             .then((data) => {
                 if (!cancelled) {
-                    setEvents({ apiVersion: "v1", items: data.items ?? [] });
+                    setEvents({ apiVersion: "v1", items: data?.items ?? [] });
                 }
             })
             .catch((err) => {
@@ -305,7 +325,12 @@ export const ResourceAssistantExtension = (props: any) => {
                 }
             });
         return () => { cancelled = true; };
-    }, [application, resource, application_name]);
+        // Keyed on the stable resource identity, not the `application`/`resource` object identities:
+        // the Argo CD host hands down fresh objects as it polls, which re-ran this effect (and so
+        // re-fetched, after blanking the events) on every poll. This matches both the sibling
+        // app-summary effect below and the documented "cached, not continuously updated" behaviour.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [resourceID, application_name]);
 
     // Fetch the owning Application's distilled summary (chart/source, sync, health, resource
     // rollup) once per application, mirroring the events effect's cancellation guard. Keyed on the
@@ -375,6 +400,15 @@ export const ResourceAssistantExtension = (props: any) => {
                                 Cancel
                             </button>
                             {flowError && <span className="chat-flow-error" role="alert">{flowError}</span>}
+                        </div>
+                    );
+                case "get_logs":
+                    // Fetching a container log takes a visible moment; without this the flow UI
+                    // vanished on submit and left the user with no sign anything was happening.
+                    return (
+                        <div className="chat-flow-ui" role="status">
+                            <span className="chat-typing" aria-hidden="true"><span /><span /><span /></span>
+                            <span className="chat-tool-status">Fetching logs from {form.container}…</span>
                         </div>
                     );
                 case "token":

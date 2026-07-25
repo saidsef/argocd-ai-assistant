@@ -47,7 +47,9 @@ Each query is sent to the backend with additional context:
 1. **Resource manifest** - the live manifest, provided by Argo CD when the extension is invoked.
 2. **Argo CD Application summary** - a distilled `argocd app get` view (source/Helm chart, sync status, health, sync policy, images, and any out-of-sync or degraded resources) fetched from the Argo CD REST API. For an Application resource it replaces the full manifest (a large token saving); for a child resource it is attached alongside, grounding it in the owning Application's GitOps state.
 3. **Events** - retrieved automatically and attached. Cached, not continuously updated.
-4. **Logs** (optional) - a single container's log, attached via a guided flow. Cached and re-sent on every request, re-run the flow to refresh.
+4. **Logs** (optional) - a single container's log, attached via a guided flow. Distilled to a `<timestamp> <line>` block with the pod named once in a header, rather than the raw API envelope (measured ~35-60% fewer tokens). Cached and re-sent on every request, re-run the flow to refresh.
+
+Every context item is bounded twice: by item count (events, resource lists, log lines) and by size in characters. When an item exceeds its ceiling it is truncated with a visible `[truncated: showing N of M characters ...]` marker, so the model knows it is reading a fragment.
 
 !!! note
     Most inference providers cap tokens, so large context items can exhaust the query limit.
@@ -64,6 +66,8 @@ The chat interface is a custom React implementation (`ChatInterface` + the `useC
 ### Enabling MCP
 
 MCP is enabled by configuring `data.mcpServers` in the [settings extension](deployment/settings.md) - there is no feature flag. When at least one server is configured, the extension also registers a system-level extension at `/assistant` (in addition to the per-resource tab), where users can manage an Argo CD API token for MCP server access, and the `token` conversation flow becomes available.
+
+The Argo CD Proxy Extension authorises every request against a specific Application, via the `Argocd-Application-Name` and `Argocd-Project-Name` headers. The system-level page has no resource, and therefore no Application of its own, so on load it looks up the first Application the user can read and uses it purely for that authorisation - nothing about it is sent to the model. A user who can read no Applications cannot use the system-level page; the assistant says so rather than surfacing the proxy's raw `400 Invalid headers` response.
 
 ### MCP Tool Integration
 

@@ -5,7 +5,13 @@
 // event to that signal and caps the list to the most recent `max`, mirroring the resource caps in
 // service/application.ts so events are no longer the one unbounded context source.
 
+import { capText } from "../util/context";
+
 export const MAX_EVENTS = 20;
+
+// An event `message` is free text with no length limit (a failed admission webhook can return
+// kilobytes), so cap the longest ones individually rather than letting one event crowd out the rest.
+const MAX_MESSAGE_CHARS = 1000;
 
 interface EventSummary {
     type?: string;
@@ -16,7 +22,7 @@ interface EventSummary {
     object?: string;
 }
 
-export interface EventsSummary {
+interface EventsSummary {
     total: number;
     items: EventSummary[];
 }
@@ -43,7 +49,7 @@ export function summariseEvents(items: any[], max: number = MAX_EVENTS): EventsS
         return {
             type: e?.type,
             reason: e?.reason,
-            message: e?.message,
+            message: capText(e?.message ?? "", MAX_MESSAGE_CHARS, "event message") || undefined,
             count: typeof e?.count === "number" ? e.count : undefined,
             last: recencyKey(e) || undefined,
             object,

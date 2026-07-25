@@ -23,26 +23,33 @@ const buildWelcome = (welcomeMessage?: string): ChatMessageType[] =>
         }]
         : [];
 
+// A server's one-word state, which also picks the dot colour. A failure used to be logged to the
+// console only, leaving the user with a silently tool-free answer and no way to know why.
+const mcpState = (s: McpServerStatus) => s.error ? "unavailable" : s.connected ? "connected" : "configured";
+
 // Compact indicator that MCP is active, shown left of "New chat" when servers are
 // configured. Starts as the configured hostname (grey dot), then upgrades to the
-// server-reported name + tool count + green dot once the provider has connected.
+// server-reported name + tool count + green dot once the provider has connected, or a red dot
+// with the reason in the tooltip if the server could not be reached.
 const McpBadge = ({ servers }: { servers: McpServerStatus[] }) => {
-    const anyConnected = servers.some((s) => s.connected);
+    const anyConnected = servers.some((s) => s.connected && !s.error);
+    const anyFailed = servers.some((s) => s.error);
     const single = servers.length === 1 ? servers[0] : null;
     const label = single
         ? (single.toolCount > 0 ? `${single.name} · ${pluralTools(single.toolCount)}` : single.name)
         : `${servers.length} MCP servers`;
-    const tooltip = servers
-        .map((s) => `${s.name} — ${s.connected ? "connected" : "configured"} — ${pluralTools(s.toolCount)}`)
-        .join("\n");
+    const describe = (s: McpServerStatus) =>
+        `${s.name} — ${mcpState(s)} — ${pluralTools(s.toolCount)}${s.error ? `\n${s.error}` : ""}`;
+    const tooltip = servers.map(describe).join("\n");
     const ariaLabel = single
-        ? `MCP server ${single.name}, ${single.connected ? "connected" : "configured"}, ${pluralTools(single.toolCount)}`
-        : `${servers.length} MCP servers, ${anyConnected ? "at least one connected" : "configured"}`;
+        ? `MCP server ${describe(single).replace(/\n/g, ". ")}`
+        : `${servers.length} MCP servers, ${anyFailed ? "at least one unavailable" : anyConnected ? "at least one connected" : "configured"}`;
+    const dotClass = anyFailed && !anyConnected ? " chat-mcp-dot-error" : anyConnected ? " chat-mcp-dot-on" : "";
     return (
         <span className="chat-mcp-badge" title={tooltip} aria-label={ariaLabel}>
             <span className="chat-mcp-icon" aria-hidden="true">&#128268;</span>
             <span className="chat-mcp-label">{label}</span>
-            <span className={`chat-mcp-dot${anyConnected ? " chat-mcp-dot-on" : ""}`} aria-hidden="true" />
+            <span className={`chat-mcp-dot${dotClass}`} aria-hidden="true" />
         </span>
     );
 };
@@ -197,13 +204,35 @@ const ChatInterface = ({
     const listRef = React.useRef<HTMLDivElement>(null);
     // Auto-scroll only while pinned to the bottom; scrolling up disables it. Starts true.
     const stickToBottomRef = React.useRef(true);
+    // Mirrors stickToBottomRef for rendering the "jump to latest" affordance. Kept as a ref *and*
+    // state because the scroll path must not re-render on every scroll event.
+    const [pinned, setPinned] = React.useState(true);
 
-    const handleScroll = () => {
+    const scrollToBottom = React.useCallback(() => {
         const el = listRef.current;
-        if (!el) return;
-        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-        stickToBottomRef.current = distanceFromBottom <= 40;
-    };
+        if (el) el.scrollTop = el.scrollHeight;
+        stickToBottomRef.current = true;
+        setPinned(true);
+    }, []);
+
+    // Reading scrollHeight/scrollTop forces a synchronous layout, and the streaming path writes
+    // scrollTop on this same element every frame - so coalesce to one measurement per frame.
+    const scrollRafRef = React.useRef<number | null>(null);
+    const handleScroll = React.useCallback(() => {
+        if (scrollRafRef.current !== null) return;
+        scrollRafRef.current = requestAnimationFrame(() => {
+            scrollRafRef.current = null;
+            const el = listRef.current;
+            if (!el) return;
+            const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
+            stickToBottomRef.current = atBottom;
+            setPinned(atBottom);
+        });
+    }, []);
+
+    React.useEffect(() => () => {
+        if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+    }, []);
 
     // Persist on settle, not on every streamed frame: during streaming `messages` updates
     // once per animation frame, so serialising the whole conversation to sessionStorage each
@@ -214,14 +243,43 @@ const ChatInterface = ({
         storage.saveMessages(messages);
     }, [messages, status, storage]);
 
+    // Follow the content, not the message list.
+    //
+    // A `messages`-keyed effect is not enough: MarkedWrapper re-parses on a trailing 120ms timer, so
+    // the bubble grows *after* the last state update lands and the final paragraph of every reply
+    // ends up below the fold. Observing the list's own size catches every growth, whatever caused it.
     React.useEffect(() => {
         const el = listRef.current;
-        if (el && stickToBottomRef.current) {
-            el.scrollTop = el.scrollHeight;
-        }
+        if (!el) return;
+        const follow = () => { if (stickToBottomRef.current) el.scrollTop = el.scrollHeight; };
+        follow();
+        const observer = new ResizeObserver(follow);
+        observer.observe(el);
+        for (const child of Array.from(el.children)) observer.observe(child);
+        return () => observer.disconnect();
     }, [messages]);
 
     const isBusy = status === "submitted" || status === "streaming";
+
+    // Announce a reply once, when it finishes. Only for replies that completed in this session -
+    // seeding it from restored history would read the previous conversation aloud on mount.
+    const [announcement, setAnnouncement] = React.useState("");
+    const wasBusyRef = React.useRef(false);
+    React.useEffect(() => {
+        if (wasBusyRef.current && !isBusy) {
+            const last = [...messages].reverse().find((m) => m.role === "assistant" && !m.local);
+            setAnnouncement(last ? (last.parts || []).map((p) => p.text).join("") : "");
+        }
+        wasBusyRef.current = isBusy;
+    }, [isBusy, messages]);
+
+    // Escape stops a running reply - the same action as the Stop button, without reaching for it.
+    React.useEffect(() => {
+        if (!isBusy) return;
+        const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") stop(); };
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [isBusy, stop]);
 
     const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
         setInput(e.target.value);
@@ -236,7 +294,7 @@ const ChatInterface = ({
             setInput("");
             return;
         }
-        stickToBottomRef.current = true; // user just asked — follow the reply
+        scrollToBottom(); // user just asked — follow the reply
         sendMessage({ text });
         setInput("");
     };
@@ -262,9 +320,9 @@ const ChatInterface = ({
     const handleClear = React.useCallback(() => {
         stop();
         setMessages(buildWelcome(welcomeMessage));
-        stickToBottomRef.current = true;
+        scrollToBottom();
         onClear?.();
-    }, [stop, setMessages, welcomeMessage, onClear]);
+    }, [stop, setMessages, welcomeMessage, onClear, scrollToBottom]);
 
     // Recomputed each render so it upgrades to live names/tools once a query connects.
     const mcpStatus = getMcpStatus?.();
@@ -283,7 +341,10 @@ const ChatInterface = ({
                     New chat
                 </button>
             </div>
-            <div className="chat-message-list" ref={listRef} onScroll={handleScroll} aria-live="polite" aria-label="Chat messages">
+            {/* No aria-live here: the streaming bubble's subtree is replaced several times a second,
+                which makes a live region re-announce the whole growing reply. Completion is
+                announced once, from the dedicated region below the composer. */}
+            <div className="chat-message-list" ref={listRef} onScroll={handleScroll} role="log" aria-label="Chat messages">
                 {messages.map((message) => (
                     <ChatMessage key={message.id} message={message} />
                 ))}
@@ -320,6 +381,16 @@ const ChatInterface = ({
                     </div>
                 )}
             </div>
+            {!pinned && (
+                <button
+                    type="button"
+                    className="chat-jump-latest"
+                    onClick={scrollToBottom}
+                    aria-label="Jump to the latest message"
+                >
+                    ↓ Latest
+                </button>
+            )}
             {typeof children === "function" ? children({ setMessages }) : children}
             {showSuggestions && (
                 <div className="chat-suggestions" role="group" aria-label="Suggested questions">
@@ -341,6 +412,11 @@ const ChatInterface = ({
                 handleSubmit={wrappedSubmit}
                 disabled={isBusy}
             />
+            {/* The single live region for reply progress: one announcement per reply, rather than
+                the message list re-reading itself on every streamed frame. */}
+            <span className="sr-only" role="status" aria-live="polite">
+                {isBusy ? "" : announcement}
+            </span>
         </div>
     );
 };

@@ -1,6 +1,6 @@
 import * as React from "react";
 import { AssistantSettings, McpServerStatus, QueryProvider } from "../model/provider";
-import { createProvider } from "../providers/providerFactory";
+import { LlmProvider } from "../providers/llmProvider";
 import { mcpConfigured } from "../util/util";
 
 // Settings + provider bootstrap shared by both extension entry points. Seeds state from the
@@ -8,9 +8,9 @@ import { mcpConfigured } from "../util/util";
 // provider once, and derives the configured MCP server list plus the header-badge status getter.
 export function useAssistantSettings() {
     const [settings, setSettings] = React.useState<AssistantSettings>(
-        globalThis.argocdAssistantSettings ?? { provider: "LLM" }
+        globalThis.argocdAssistantSettings ?? {}
     );
-    const [provider] = React.useState<QueryProvider>(createProvider);
+    const [provider] = React.useState<QueryProvider>(() => new LlmProvider());
 
     React.useEffect(() => {
         if (globalThis.argocdAssistantSettings) {

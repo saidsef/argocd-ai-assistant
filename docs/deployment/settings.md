@@ -8,7 +8,6 @@ Create a JavaScript file named `extension-settings.js`:
 
 ```javascript
 globalThis.argocdAssistantSettings = {
-    provider: "LLM",
     model: "gpt-4",
     data: {
         baseURL: "http://local.local.svc.cluster.local:11434/v1"
@@ -22,7 +21,7 @@ globalThis.argocdAssistantSettings = {
 
 | Setting | Required | Description |
 |---------|----------|-------------|
-| `provider` | Yes | Must be `"LLM"`. |
+| `provider` | No | Ignored. Accepted for backwards compatibility with existing ConfigMaps; a single generic OpenAI-compatible provider is always used. |
 | `model` | Recommended | Model name (e.g., `gpt-4`). If omitted, queries fail with `LLM model is not configured`. |
 | `data.baseURL` | No | OpenAI-compatible API base URL. Defaults to the Argo CD proxy path if omitted. |
 | `data.apiKey` | No | API key sent **from the browser** as `Authorization: Bearer …`. It is readable in the browser - **not recommended**, prefer server-side injection via the proxy ([Injecting the API token](proxy.md#injecting-the-api-token)). |
@@ -50,7 +49,6 @@ metadata:
 data:
   extension-settings.js: |
     globalThis.argocdAssistantSettings = {
-        provider: "LLM",
         model: "deepseek-chat",
         data: {
             baseURL: "https://api.deepseek.com/v1"

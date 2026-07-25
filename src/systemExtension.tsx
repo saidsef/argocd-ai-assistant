@@ -1,11 +1,12 @@
 import * as React from "react";
 import ChatInterface from "./components/ChatInterface";
-import { injectMessage, isTokenRequest, mcpConfigured, QueryContextImpl } from "./util/util";
+import { injectMessage, isTokenRequest, mcpConfigured } from "./util/util";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
 import { type ChatMessage } from "./components/useChat";
 import { useAssistantSettings } from "./components/useAssistantSettings";
 import { submitToken, TokenFlowNode, TokenPrompt } from "./components/TokenFlow";
+import { getProxyApplication } from "./service/routing";
 
 type FlowNode = "start" | "loop" | TokenFlowNode;
 
@@ -15,16 +16,25 @@ export const SystemAssistantExtension = (_props: any) => {
 
     const [form, setForm] = React.useState<{ token?: string }>({});
     const [flowNode, setFlowNode] = React.useState<FlowNode>("start");
+    // The Argo CD proxy authorises LLM traffic per Application, and this page has none of its own,
+    // so it borrows one purely for routing. Without it every request is rejected with
+    // "400 Invalid headers: invalid value for namespace". Nothing about it reaches the model.
+    const [routingApp, setRoutingApp] = React.useState<any | null>(null);
 
-    const getContext = React.useCallback(() => {
-        const currentSettings = globalThis.argocdAssistantSettings ?? settings;
-        return new QueryContextImpl(
-            undefined,
-            [],
-            currentSettings,
-            storageRef.current?.mcpToken ?? undefined
-        );
-    }, [settings]);
+    React.useEffect(() => {
+        let cancelled = false;
+        getProxyApplication().then((app) => {
+            if (!cancelled) setRoutingApp(app);
+        });
+        return () => { cancelled = true; };
+    }, []);
+
+    const getContext = React.useCallback(() => ({
+        application: routingApp,
+        attachments: [],
+        settings: globalThis.argocdAssistantSettings ?? settings,
+        mcpToken: storageRef.current?.mcpToken ?? undefined
+    }), [settings, routingApp]);
 
     const welcomeMessage = "How can I help you with Argo CD today?";
 

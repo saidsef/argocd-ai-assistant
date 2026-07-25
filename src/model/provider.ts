@@ -1,6 +1,7 @@
 export type AssistantSettings = {
     model?: string;
-    provider: string;
+    /** Accepted for backwards compatibility with existing settings ConfigMaps; ignored. */
+    provider?: string;
     data?: any;
     maximumLogLines?: number;
     /** Overrides the built-in assistant persona/instructions. Falls back to the default when unset or blank. */
@@ -25,12 +26,13 @@ export type ChatTurn = {
     content: string;
 }
 
-export interface QueryContext {
-    get application(): any;
-    get attachments(): Attachment[];
-    get settings(): AssistantSettings;
+export type QueryContext = {
+    /** Argo CD Application used to authorise the proxied LLM request; undefined until resolved. */
+    application?: any;
+    attachments: Attachment[];
+    settings: AssistantSettings;
     /** User-provided Argo CD token (via the token flow) sent as a Bearer header to MCP servers; undefined when unset. */
-    get mcpToken(): string | undefined;
+    mcpToken?: string;
 }
 
 export type QueryError = {
@@ -53,6 +55,8 @@ export type McpServerStatus = {
     connected: boolean;
     /** Number of tools discovered from this server (0 until connected). */
     toolCount: number;
+    /** Why this server is unusable (connect / tools-list failure), else undefined. */
+    error?: string;
 }
 
 export interface QueryProvider {

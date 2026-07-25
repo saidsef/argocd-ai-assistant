@@ -166,6 +166,9 @@ p, role:readonly, extensions, invoke, assistant, allow
 
 This grants the `readonly` role (and above) access to the Assistant. Apply it through your install method:
 
+!!! note "The proxy authorises per Application"
+    Every proxied request carries `Argocd-Application-Name` and `Argocd-Project-Name`, and Argo CD checks the user against that Application - so users also need read access to the Application they are asking about. `role:readonly` already covers this. The system-level `/assistant` page has no Application of its own and borrows the first one the user can read, so a role scoped to *no* Applications can use the resource tab (via the resource's own Application) but not the system-level page.
+
 **Operator:**
 
 ```yaml

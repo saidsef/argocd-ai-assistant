@@ -1,5 +1,4 @@
 import type { ChatMessage } from "../components/useChat";
-import { AssistantSettings, Attachment, QueryContext } from "../model/provider";
 
 export function generateId(): string {
     if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -10,36 +9,6 @@ export function generateId(): string {
 
 export const Kinds = {
     POD: 'Pod',
-}
-
-export class QueryContextImpl implements QueryContext {
-    private _application: any;
-    private _attachments: Attachment[];
-    private _settings: AssistantSettings;
-    private _mcpToken?: string;
-
-    constructor(application: any, attachments: Attachment[], settings: AssistantSettings, mcpToken?: string) {
-        this._application = application;
-        this._attachments = attachments;
-        this._settings = settings;
-        this._mcpToken = mcpToken;
-    }
-
-    get application(): any {
-        return this._application;
-    }
-
-    get attachments(): Attachment[] {
-        return this._attachments;
-    }
-
-    get settings(): AssistantSettings {
-        return this._settings;
-    }
-
-    get mcpToken(): string | undefined {
-        return this._mcpToken;
-    }
 }
 
 export function getResourceIdentifier(resource: any): string {
@@ -124,37 +93,29 @@ export const mcpConfigured = (servers?: string[]): boolean =>
 export const bearer = (token: string): string =>
     token.startsWith("Bearer ") ? token : `Bearer ${token}`;
 
-// Argo CD proxy routing headers only (no Content-Type/Accept), for requests where those are set
-// separately - e.g. the LLM chat-completion POST. Matches what getHeaders() emitted for these two
-// keys: Argocd-Application-Name is always present ("namespace:name"), Argocd-Project-Name only when
-// the project is non-empty. HTTP header names are case-insensitive, so the title-case here is
-// equivalent to the lowercase Headers previously produced.
-export function argocdProxyHeaders(application: any): Record<string, string> {
-    const applicationName = application?.metadata?.name || "";
-    const applicationNamespace = application?.metadata?.namespace || "";
-    const project = application?.spec?.project || "";
-
-    const headers: Record<string, string> = {
-        "Argocd-Application-Name": `${applicationNamespace}:${applicationName}`,
+// Routing headers for every Argo CD request - the same-origin REST API and the proxy extension
+// alike. Both Argocd-* headers are always emitted: the proxy rejects a request that omits either
+// (400 `header "Argocd-Project-Name" must be provided`), so there is nothing to gain by dropping an
+// empty one. `extra` carries the per-call Content-Type/Accept, which differ between the JSON API
+// paths and the streaming chat POST. Origin is a forbidden header name - fetch() silently drops any
+// attempt to set it - so it is omitted; the proxy authenticates via the argocd.token cookie.
+// HTTP header names are case-insensitive, so the title-case here matches the lowercase form too.
+export function argocdHeaders(application: any, extra?: Record<string, string>): Record<string, string> {
+    const namespace = application?.metadata?.namespace || "";
+    const name = application?.metadata?.name || "";
+    return {
+        "Argocd-Application-Name": `${namespace}:${name}`,
+        "Argocd-Project-Name": application?.spec?.project || "",
+        ...extra,
     };
-    if (project) {
-        headers["Argocd-Project-Name"] = project;
-    }
-    return headers;
 }
 
-export function getHeaders(application: any): Headers {
-    // Reuse argocdProxyHeaders for the Argocd-* routing pair (single source of truth for how the
-    // app/namespace/project are extracted) and add the JSON Content-Type/Accept the API paths need.
-    // Origin is a forbidden header name: fetch() silently drops any attempt to set it, so it is
-    // omitted here. The proxy authenticates via the argocd.token cookie and the Argocd-* headers.
-    const headers: Headers = new Headers({
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        ...argocdProxyHeaders(application),
-    });
-    // getHeaders has always emitted Argocd-Project-Name even when empty (argocdProxyHeaders omits
-    // it for the chat POST path); preserve that byte-for-byte for the same-origin API paths.
-    if (!headers.has('Argocd-Project-Name')) headers.set('Argocd-Project-Name', '');
-    return headers;
-}
+// Headers for the same-origin Argo CD REST API (events, logs, applications).
+export const argocdApiHeaders = (application: any): Record<string, string> =>
+    argocdHeaders(application, { "Content-Type": "application/json", "Accept": "application/json" });
+
+// True once an Application carries everything the proxy needs to authorise a request. All three are
+// required: the proxy 400s on an empty namespace/name and 401s when the project does not match the
+// named Application's own project.
+export const canRouteToProxy = (application: any): boolean =>
+    !!application?.metadata?.name && !!application?.metadata?.namespace && !!application?.spec?.project;
