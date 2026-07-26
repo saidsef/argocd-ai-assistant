@@ -87,6 +87,9 @@ export class LlmProvider implements QueryProvider {
     // caching that failure for the session. Without it a partial failure (server A healthy, B down)
     // was sticky: the tool list was non-empty, so the cache was kept and B never re-probed.
     private mcpNeedsReprobe = false;
+    // The in-flight (or settled) connect+discovery, shared by the mount warm-up and any query that
+    // starts while it is still running, so a server is only ever handshaked once per probe.
+    private mcpReady?: Promise<void>;
     // The rendered "Available tools:" prompt block, keyed by the tool names it was built from.
     // Re-serialising every tool's JSON schema on every request is pure waste.
     private toolPromptCache?: { key: string; text: string };
@@ -128,6 +131,105 @@ export class LlmProvider implements QueryProvider {
     // routinely name every server now that the roster exists ("the configured servers are docs,
     // gitlab, github"), so matching against one would advertise every server's tools on every turn
     // after the first question about MCP - which is exactly the opt-in this function implements.
+    /**
+     * Connect and discover tools, at most once for any number of concurrent callers.
+     *
+     * The returned promise is memoised in `mcpReady`, and that is the whole point rather than an
+     * optimisation: the warm-up and the user's first message can overlap, and without it the query
+     * would see no client yet, build a second McpClient and `initialize` every server again. A
+     * server holding a live session may reject the duplicate handshake, which would flap a healthy
+     * server to "unavailable". It also absorbs React StrictMode's double-invoked mount effect.
+     *
+     * Never rejects for an MCP failure - a broken server must not break the assistant - so callers
+     * read the outcome from `this.mcpTools` / `getMcpStatus` afterwards. A user abort still
+     * propagates. Note that a query joining a probe the warm-up started cannot cancel the handshake
+     * itself; Stop takes effect on the completion that follows it.
+     */
+    private ensureMcp(
+        servers: McpServerConfig[],
+        mcpToken: string | undefined,
+        signal?: AbortSignal,
+        onStatus?: (label: string | null) => void
+    ): Promise<void> {
+        // Discard the cached client when a previous attempt had a failing server, or when the
+        // configured URL list has changed (tool `serverIndex` values are positions in that list, so a
+        // stale client would route a call to the wrong server). Rebuilt from scratch rather than
+        // re-handshaked: a server holding a live session may reject a second `initialize`, which
+        // would flap a healthy server into "unavailable".
+        if (this.mcpNeedsReprobe || !sameUrls(this.mcpUrls, servers)) {
+            this.mcpClient = undefined;
+            this.mcpTools = undefined;
+            this.mcpUrls = undefined;
+            this.mcpNeedsReprobe = false;
+            this.mcpReady = undefined;
+        }
+        // Whether or not a probe is needed, adopt the newest token: it may have been entered through
+        // the token flow since this client connected.
+        this.mcpClient?.setAuthToken(mcpToken);
+        if (this.mcpReady) return this.mcpReady;
+
+        // Only a caller that can show it announces the wait; the warm-up passes no onStatus.
+        onStatus?.("Connecting to tools…");
+        this.mcpReady = this.probeMcp(servers, mcpToken, signal).finally(() => onStatus?.(null));
+        return this.mcpReady;
+    }
+
+    private async probeMcp(servers: McpServerConfig[], mcpToken: string | undefined, signal?: AbortSignal): Promise<void> {
+        try {
+            if (!this.mcpClient) {
+                this.mcpUrls = servers.map(s => s.url);
+                this.mcpClient = new McpClient(servers.map(s => s.url));
+                this.mcpClient.setAuthToken(mcpToken);
+                await this.mcpClient.connect(signal);
+            }
+            if (!this.mcpTools) {
+                this.mcpTools = await this.mcpClient.listAllTools(signal);
+            }
+            this.mcpErrors = this.mcpClient.getErrors();
+            const failed = this.mcpErrors.filter(Boolean);
+            if (failed.length > 0) {
+                console.warn("MCP issues (answering without those servers/tools):", this.mcpErrors);
+                // Re-probe next time so a recovered server comes back, and so new tools on a healthy
+                // server are eventually discovered.
+                this.mcpNeedsReprobe = true;
+                this.mcpReady = undefined;
+                // A broken/unreachable server must not break the assistant: fall back to LLM-only.
+                // If nothing at all was discovered, drop the client so the retry starts clean.
+                if (!this.mcpTools?.length) {
+                    this.mcpClient = undefined;
+                    this.mcpTools = undefined;
+                    this.mcpUrls = undefined;
+                }
+            }
+        } catch (err) {
+            // A user Stop during connect/discovery is not an MCP failure; let it unwind.
+            if (err instanceof Error && err.name === "AbortError") throw err;
+            const errMsg = errorMessage(err);
+            console.warn(`MCP initialization failed, answering without tools: ${errMsg}`);
+            this.mcpErrors = servers.map(() => errMsg);
+            this.mcpClient = undefined;
+            this.mcpTools = undefined;
+            this.mcpUrls = undefined;
+            this.mcpNeedsReprobe = false;
+            this.mcpReady = undefined;
+        }
+    }
+
+    /**
+     * Connect ahead of the first message so a server's own name - the short handle shown on the
+     * badge, in the welcome message and in the roster - is known before anything is displayed.
+     * Without it the name is the URL hostname until the user has already sent a message and been
+     * told to type the wrong thing. Never throws, and no-ops once a healthy client exists.
+     */
+    async warmUpMcp(servers: McpServerConfig[], mcpToken?: string): Promise<void> {
+        if (!mcpConfigured(servers)) return;
+        try {
+            await this.ensureMcp(servers, mcpToken);
+        } catch (_e) {
+            // ensureMcp only rejects on abort, which the warm-up never triggers.
+        }
+    }
+
     // Matched against the same status objects every surface displays, so the handle the assistant
     // tells a user to type is by construction one this accepts.
     private addressedServers(prompt: string, previousPrompt: string, status: McpServerStatus[]): Set<number> {
@@ -171,69 +273,8 @@ export class LlmProvider implements QueryProvider {
 
         let mcpTools: McpTool[] | undefined;
         if (mcpConfigured(mcpServers)) {
-            // Discard the cached client when a previous attempt had a failing server, or when the
-            // configured URL list has changed (tool `serverIndex` values are positions in that list,
-            // so a stale client would route a call to the wrong server). Rebuilt from scratch rather
-            // than re-handshaked: a server holding a live session may reject a second `initialize`,
-            // which would flap a healthy server into "unavailable".
-            if (this.mcpNeedsReprobe || !sameUrls(this.mcpUrls, mcpServers)) {
-                this.mcpClient = undefined;
-                this.mcpTools = undefined;
-                this.mcpUrls = undefined;
-                this.mcpNeedsReprobe = false;
-            }
-            // Surface the otherwise-silent connect/list wait (cached thereafter).
-            const announcedConnecting = !this.mcpClient || !this.mcpTools;
-            if (announcedConnecting) onStatus?.("Connecting to tools…");
-            try {
-                if (!this.mcpClient) {
-                    this.mcpUrls = mcpServers.map(s => s.url);
-                    this.mcpClient = new McpClient(mcpServers.map(s => s.url));
-                    this.mcpClient.setAuthToken(context.mcpToken);
-                    await this.mcpClient.connect(signal);
-                } else {
-                    // Refresh the token in case it was entered/changed since the client connected.
-                    this.mcpClient.setAuthToken(context.mcpToken);
-                }
-                if (!this.mcpTools) {
-                    this.mcpTools = await this.mcpClient.listAllTools(signal);
-                }
-                this.mcpErrors = this.mcpClient.getErrors();
-                const failed = this.mcpErrors.filter(Boolean);
-                if (failed.length > 0) {
-                    console.warn("MCP issues (answering without those servers/tools):", this.mcpErrors);
-                    // Re-probe next time so a recovered server comes back, and so new tools on a
-                    // healthy server are eventually discovered.
-                    this.mcpNeedsReprobe = true;
-                }
-                mcpTools = this.mcpTools;
-                if (!mcpTools || mcpTools.length === 0) {
-                    // A broken/unreachable MCP server must not break the assistant: fall back to
-                    // LLM-only. If it failed with errors (rather than genuinely exposing no tools),
-                    // drop the cached client so a recovered server is re-probed from scratch.
-                    mcpTools = undefined;
-                    if (failed.length > 0) {
-                        this.mcpClient = undefined;
-                        this.mcpTools = undefined;
-                        this.mcpUrls = undefined;
-                    }
-                }
-            } catch (err) {
-                // A user Stop during connect/discovery is not an MCP failure; let it unwind.
-                if (err instanceof Error && err.name === "AbortError") throw err;
-                const errMsg = errorMessage(err);
-                console.warn(`MCP initialization failed, answering without tools: ${errMsg}`);
-                this.mcpErrors = mcpServers.map(() => errMsg);
-                this.mcpClient = undefined;
-                this.mcpTools = undefined;
-                this.mcpUrls = undefined;
-                this.mcpNeedsReprobe = false;
-                mcpTools = undefined;
-            }
-            // Connection/discovery is done (or fell back); drop the transient label so it does
-            // not linger over the model's first-token wait. The thinking dots (status
-            // "submitted") carry that wait, and a tool call re-labels via onStatus below.
-            if (announcedConnecting) onStatus?.(null);
+            await this.ensureMcp(mcpServers, context.mcpToken, signal, onStatus);
+            mcpTools = this.mcpTools?.length ? this.mcpTools : undefined;
             // Discovery can take seconds; don't start a completion the user has already cancelled.
             if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         }

@@ -92,4 +92,9 @@ export interface QueryProvider {
     query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal, history?: ChatTurn[], onStatus?: (label: string | null) => void): Promise<QueryResponse>;
     /** Optional: live status of the given configured MCP servers, for UI display. */
     getMcpStatus?(servers: McpServerConfig[]): McpServerStatus[];
+    /**
+     * Optional: connect ahead of the first message so each server's own short name is known before
+     * the badge and welcome message are drawn. Resolves when the attempt settles; never throws.
+     */
+    warmUpMcp?(servers: McpServerConfig[], mcpToken?: string): Promise<void>;
 }

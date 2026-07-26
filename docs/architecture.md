@@ -71,9 +71,13 @@ The Argo CD Proxy Extension authorises every request against a specific Applicat
 
 ### MCP Tool Integration
 
-When `data.mcpServers` is set, the LLM provider lazily connects to each server over an HTTP-streamable JSON-RPC transport. The browser calls servers directly, so each must send CORS headers for the Argo CD origin. Per message the provider:
+When `data.mcpServers` is set, the LLM provider connects to each server over an HTTP-streamable JSON-RPC transport as the tab opens, not on the first message. The browser calls servers directly, so each must send CORS headers for the Argo CD origin.
 
-1. Sends an `initialize` handshake on first use, then lists tools via `tools/list`.
+Connecting early is what makes the short name usable: a server's handle comes from the name it reports during the handshake, so waiting until the first message would mean the badge and the welcome message could only offer a URL hostname - and would then disagree with the assistant once it did connect. The warm-up and a first message sent while it is still running share one handshake, so a server is never initialised twice.
+
+Per message the provider:
+
+1. Reuses that connection, or makes it now if the warm-up has not finished or a server needs re-probing.
 2. Injects a **server roster** into the system message whenever any server is configured, listing each server's name, hostname, state, and its tool names. This is reference only - nothing in it is callable - and it is what lets the assistant answer "which MCP servers are available?" instead of reporting that it has no information about MCP.
 3. Injects an "Available tools" section (descriptions and JSON schemas, grouped by server) **only for the server(s) the user has named** - see [Addressing a server](#addressing-a-server) below. A conversation naming no server gets no tools, so a normal question never triggers a call.
 4. Scans the response for a `<tool>` tag (only for advertised tools) and, if found, routes it via `tools/call`, appending the result as a follow-up query. If a tool block is emitted when nothing is callable, the assistant retries once tool-free rather than showing the raw block.

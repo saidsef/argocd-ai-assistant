@@ -38,8 +38,11 @@ type FlowNode =
 const MAX_LOG_LINES_CEILING = 5000;
 
 export const ResourceAssistantExtension = (props: any) => {
-    const { settings, provider, mcpServers, getMcpStatus } = useAssistantSettings();
     const storageRef = React.useRef<ManageStorage | null>(null);
+    // The stored token, so the MCP warm-up can authenticate. Null on the first render - the storage
+    // is created in an effect below - which is why useAssistantSettings re-runs the warm-up when it
+    // changes.
+    const { settings, provider, mcpServers, getMcpStatus } = useAssistantSettings(storageRef.current?.mcpToken ?? undefined);
 
     const { resource, application } = props;
 

@@ -202,6 +202,19 @@ const ChatInterface = ({
         messages: initialMessages
     });
 
+    // The welcome names the configured MCP servers, and their handles are only known once the
+    // mount-time warm-up connects - after this bubble was first written. Refresh it while it is
+    // still the whole conversation; once a real turn exists the transcript is history and is not
+    // rewritten under the user.
+    const welcomeRef = React.useRef(welcomeMessage);
+    React.useEffect(() => {
+        if (welcomeRef.current === welcomeMessage) return;
+        welcomeRef.current = welcomeMessage;
+        setMessages((prev) =>
+            prev.length <= 1 && prev.every((m) => m.local) ? buildWelcome(welcomeMessage) : prev
+        );
+    }, [welcomeMessage, setMessages]);
+
     const [input, setInput] = React.useState("");
     // Mirrored so the (stable) submit callback reads the current draft without re-creating itself on
     // every keystroke, which would re-render the memoised composer.

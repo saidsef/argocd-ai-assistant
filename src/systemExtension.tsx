@@ -11,8 +11,8 @@ import { getProxyApplication } from "./service/routing";
 type FlowNode = "start" | "loop" | TokenFlowNode;
 
 export const SystemAssistantExtension = (_props: any) => {
-    const { settings, provider, mcpServers, getMcpStatus } = useAssistantSettings();
     const storageRef = React.useRef(new ManageStorage(ExtensionScope.System));
+    const { settings, provider, mcpServers, getMcpStatus } = useAssistantSettings(storageRef.current?.mcpToken ?? undefined);
 
     const [form, setForm] = React.useState<{ token?: string }>({});
     const [flowNode, setFlowNode] = React.useState<FlowNode>("start");
