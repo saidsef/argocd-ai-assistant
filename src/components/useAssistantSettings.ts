@@ -1,7 +1,7 @@
 import * as React from "react";
 import { AssistantSettings, McpServerStatus, QueryProvider } from "../model/provider";
 import { LlmProvider } from "../providers/llmProvider";
-import { mcpConfigured } from "../util/util";
+import { mcpConfigured, parseMcpServers } from "../util/util";
 
 // Settings + provider bootstrap shared by both extension entry points. Reads the host-injected
 // globalThis.argocdAssistantSettings, creates the query provider once, and derives the configured
@@ -17,12 +17,14 @@ export function useAssistantSettings() {
     );
     const [provider] = React.useState<QueryProvider>(() => new LlmProvider());
 
-    const mcpServers = settings.data?.mcpServers as string[] | undefined;
+    // Parsed once, not cast: the setting is hand-written and reaches us as `any`, and a bad entry
+    // used to surface as a TypeError deep inside a query rather than as one missing server.
+    const mcpServers = React.useMemo(() => parseMcpServers(settings.data?.mcpServers), [settings]);
     const mcpEnabled = mcpConfigured(mcpServers);
     // Stable identity so the caller can memoise the (allocating) status computation instead of
     // re-running it on every streamed frame.
     const getMcpStatus = React.useCallback(
-        (): McpServerStatus[] => provider.getMcpStatus?.(mcpServers ?? []) ?? [],
+        (): McpServerStatus[] => provider.getMcpStatus?.(mcpServers) ?? [],
         [provider, mcpServers]
     );
 

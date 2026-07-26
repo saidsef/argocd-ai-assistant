@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../components/useChat";
+import type { McpServerConfig } from "../model/provider";
 
 export function generateId(): string {
     if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -84,20 +85,49 @@ export function isCancelRequest(input: string): boolean {
     return matchesKeyword(input, 'CANCEL', 'QUIT', 'EXIT');
 }
 
-// MCP is active whenever at least one server URL is configured in settings.data.mcpServers.
-export const mcpConfigured = (servers?: string[]): boolean =>
+/**
+ * Read `settings.data.mcpServers` into a checked shape.
+ *
+ * The setting is hand-written into a ConfigMap and reaches us as `any`; it used to be *cast* to
+ * `string[]` at every read site and never checked, so one malformed entry would surface much later
+ * as a TypeError inside a query rather than as a missing server. Entries that are neither a
+ * non-empty URL string nor an object with a string `url` are dropped, so a bad line costs that one
+ * server and nothing else.
+ */
+export function parseMcpServers(raw: unknown): McpServerConfig[] {
+    if (!Array.isArray(raw)) return [];
+    const out: McpServerConfig[] = [];
+    for (const entry of raw) {
+        if (typeof entry === "string") {
+            const url = entry.trim();
+            if (url) out.push({ url });
+        } else if (entry && typeof entry === "object" && typeof (entry as any).url === "string") {
+            const url = (entry as any).url.trim();
+            const name = typeof (entry as any).name === "string" ? (entry as any).name.trim() : undefined;
+            if (url) out.push(name ? { url, name } : { url });
+        }
+    }
+    return out;
+}
+
+// MCP is active whenever at least one server is configured in settings.data.mcpServers.
+export const mcpConfigured = (servers?: McpServerConfig[]): boolean =>
     Array.isArray(servers) && servers.length > 0;
 
 // One sentence naming the configured MCP servers and how to invoke them, appended to the welcome
 // message. Nothing in the UI used to say that naming a server is what enables its tools - it was
 // documented only in docs/architecture.md, so the feature was effectively undiscoverable.
-export function mcpWelcomeHint(names: string[]): string {
-    if (names.length === 0) return "";
-    const list = names.length === 1
-        ? `**${names[0]}**`
-        : names.slice(0, -1).map((n) => `**${n}**`).join(", ") + ` and **${names[names.length - 1]}**`;
-    return ` I can also use ${names.length === 1 ? "the tool server" : "the tool servers"} ${list}` +
-        ` - name one in your message (for example *${names[0]}, ...*) to use its tools.`;
+//
+// Takes handles, not display names, and renders them as code spans: the point of the sentence is to
+// show a literal string to type, and a code span cannot be broken (or exploited) by whatever
+// punctuation a remote server put in its reported name.
+export function mcpWelcomeHint(handles: string[]): string {
+    if (handles.length === 0) return "";
+    const list = handles.length === 1
+        ? `\`${handles[0]}\``
+        : handles.slice(0, -1).map((h) => `\`${h}\``).join(", ") + ` and \`${handles[handles.length - 1]}\``;
+    return ` I can also use ${handles.length === 1 ? "the tool server" : "the tool servers"} ${list}` +
+        ` - name one in your message (for example *${handles[0]}, ...*) to use its tools.`;
 }
 
 // Normalise a token into an Authorization header value: accept a raw token or one already

@@ -53,10 +53,13 @@ The assistant can call tools on [MCP](https://modelcontextprotocol.io/) servers.
 
 ```yaml
 data:
-  mcpServers: ["https://docs.example.com/mcp", "https://github-mcp.example.com/mcp"]
+  mcpServers:
+    - "https://docs.example.com/mcp"
+    - url: "https://github-mcp.example.com/mcp"
+      name: "github"          # optional - one is derived from the server or hostname otherwise
 ```
 
-Tools are opt-in per message: name a server and its tools are offered for that turn and the next one.
+Each server gets a short name, shown in the badge. Tools are opt-in per message: use that name and its tools are offered for that turn and the next one.
 
 ```text
 docs, what does a sync wave do?

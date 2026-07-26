@@ -37,7 +37,7 @@ export const SystemAssistantExtension = (_props: any) => {
     }), [settings, routingApp]);
 
     const welcomeMessage = "How can I help you with Argo CD today?" +
-        mcpWelcomeHint((getMcpStatus?.() ?? []).map((s) => s.name));
+        mcpWelcomeHint((getMcpStatus?.() ?? []).map((s) => s.handle));
 
     const handleCommand = React.useCallback(
         (input: string, _messages: ChatMessage[], setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {

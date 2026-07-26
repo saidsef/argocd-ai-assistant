@@ -91,7 +91,22 @@ you:       is the pod healthy?                  <- outside the window, no tools 
 
 Only the user's own previous message counts. Assistant replies are never scanned - they routinely name every server now that the roster exists, and matching one would advertise everything on every subsequent turn.
 
-The handles are the server-reported name, its hostname, and the hostname's first label (`docs.example.com` -> `docs`). A handle shorter than 2 characters is dropped, and a first label shorter than 4 is dropped as well, so a server at `api.example.com` does not turn the word "api" into an invocation. The roster prints the handle it expects, so what the assistant tells a user always matches what the matcher accepts.
+#### The short name
+
+Each server gets one short **handle**. It is what the badge shows, what the welcome message suggests, what the roster lists, and what the assistant asks you to type - one string, decided once, so no surface can advertise a name the matcher does not accept.
+
+It is derived from the first distinctive word of the server-reported name, or failing that of the hostname's first label. Filler words are dropped (`mcp`, `server`, `service`, `svc`, `api`, `tool`, `www`, `local`, `internal`, `cluster`, `default`), as is anything shorter than 4 characters - so a server at `api.example.com` never turns the word "api" into an invocation.
+
+| server | reports | handle |
+|---|---|---|
+| `mcp.docs.example.com` | `docs-mcp-server` | `docs` |
+| `github-mcp.saidsef.co.uk` | `github-mcp-saidsef` | `github` |
+| `searxng.internal` | nothing | `searxng` |
+| `api.example.com` | nothing | `api.example.com` (nothing distinctive to use) |
+
+Set `name` on the server entry to override it (see [Settings](deployment/settings.md)). If two servers would end up with the same handle, neither keeps it - both fall back to their hostname, then to `host:port` - so you are never asked to type something that addresses two servers at once.
+
+Addressing still accepts the server's reported name, its full hostname, and the hostname's first label, so anything that worked before the handle existed keeps working.
 
 Tool calls chain a bounded few times per query (the final turn forced tool-free) to keep multi-step lookups fast. Servers are unauthenticated by default, the `token` flow adds an `Authorization: Bearer` header. A broken server never breaks the assistant - if it is unreachable, exposes no tools, or a call fails, the provider logs the reason to the console and continues in LLM-only mode.
 

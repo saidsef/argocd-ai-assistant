@@ -38,12 +38,15 @@ const McpBadge = React.memo(({ servers }: { servers: McpServerStatus[] }) => {
     const anyConnected = servers.some((s) => s.connected && !s.error);
     const anyFailed = servers.some((s) => s.error);
     const totalTools = servers.reduce((n, s) => n + s.toolCount, 0);
-    // Names inline, not "N MCP servers": the names are what a user has to type, and hiding them in a
-    // hover tooltip put them out of reach of keyboard and touch entirely. The label ellipsises.
-    const names = servers.map((s) => s.name).join(" · ");
-    const label = totalTools > 0 ? `${names} · ${pluralTools(totalTools)}` : names;
+    // Handles inline, not "N MCP servers" and not the reported names: the handle is the string a
+    // user has to type, and hiding it in a hover tooltip put it out of reach of keyboard and touch
+    // entirely. The label ellipsises.
+    const handles = servers.map((s) => s.handle).join(" · ");
+    const label = totalTools > 0 ? `${handles} · ${pluralTools(totalTools)}` : handles;
+    // The reported name is worth showing when it differs, so a server whose handle was shortened (or
+    // forced to its hostname by a collision) is still identifiable.
     const describe = (s: McpServerStatus) =>
-        `${s.name} — ${mcpState(s)} — ${pluralTools(s.toolCount)}${s.error ? `\n${s.error}` : ""}`;
+        `${s.handle}${s.name && s.name !== s.handle ? ` (${s.name})` : ""} — ${mcpState(s)} — ${pluralTools(s.toolCount)}${s.error ? `\n${s.error}` : ""}`;
     const tooltip = `${servers.map(describe).join("\n")}\n\n${ADDRESSING_HINT}`;
     const ariaLabel = `${servers.length === 1 ? "MCP server" : `${servers.length} MCP servers`}: ${servers.map((s) => describe(s).replace(/\n/g, ". ")).join("; ")}. ${ADDRESSING_HINT}`;
     const dotClass = anyFailed && !anyConnected ? " chat-mcp-dot-error" : anyConnected ? " chat-mcp-dot-on" : "";

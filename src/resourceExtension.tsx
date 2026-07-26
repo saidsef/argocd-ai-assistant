@@ -163,7 +163,7 @@ export const ResourceAssistantExtension = (props: any) => {
         (hasLogs(resource)
             ? " I notice this resource has logs available, to attach one or more container logs type *Attach* at any time."
             : "") +
-        mcpWelcomeHint((getMcpStatus?.() ?? []).map((s) => s.name));
+        mcpWelcomeHint((getMcpStatus?.() ?? []).map((s) => s.handle));
 
     const handleCancel = React.useCallback(() => {
         setFlowNode("loop");

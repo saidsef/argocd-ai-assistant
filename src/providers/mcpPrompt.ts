@@ -24,54 +24,146 @@ const MAX_ROSTER_TOOL_NAMES = 20;
 // roster puts them in the *system* message of every request - the highest-trust position in the
 // prompt, and one the user has not opted into per-server the way the tool block requires. Strip
 // anything that could restructure the prompt (newlines, control characters) and bound the length.
-const MAX_NAME_CHARS = 64;
+export const MAX_SERVER_NAME_CHARS = 64;
 const MAX_ERROR_CHARS = 200;
 
-function clean(value: string | undefined, max: number): string {
-    return (value ?? "").replace(/[\p{C}\s]+/gu, " ").trim().slice(0, max);
+export function clean(value: string | undefined, max: number): string {
+    return (value ?? "")
+        // Control characters and newlines are the injection risk: they would let a remote-supplied
+        // name restructure the prompt it is embedded in. Backticks are stripped because a handle is
+        // rendered as a markdown code span in the welcome bubble and would otherwise close it.
+        //
+        // Nothing else is removed. Underscores in particular must survive: tool names here are the
+        // exact strings the model is told to call and parseToolCall matches on, so mangling
+        // `docs_fetch_docs` into `docsfetchdocs` would advertise a name that can never work.
+        .replace(/[\p{C}\s]+/gu, " ")
+        .replace(/`/g, "")
+        .trim()
+        .slice(0, max);
 }
 
-// A short label for a server before it reports its own name. Never the full URL: getMcpStatus
-// carries the configured URL verbatim, which may hold `user:pass@` or a query token.
+/**
+ * The host of a configured server URL. Never the URL itself, which may carry `user:pass@` or a
+ * query token and is shown to the user and sent to the model.
+ *
+ * Falls back through a scheme-less retry (`docs.example.com/mcp` is a plausible thing to configure)
+ * and then a hand-rolled host extraction, because the previous `catch { return url }` handed back
+ * the very string this function exists to avoid.
+ */
 export function hostnameOf(url: string): string {
+    for (const candidate of [url, `https://${url}`]) {
+        try {
+            const host = new URL(candidate).hostname;
+            if (host) return host;
+        } catch { /* try the next form */ }
+    }
+    return url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split(/[/?#]/)[0].split("@").pop() ?? "";
+}
+
+/** As hostnameOf, but keeping a non-default port - the tiebreak when two servers share a host. */
+function hostPortOf(url: string): string {
     try {
-        return new URL(url).hostname;
+        const u = new URL(url);
+        return u.port ? `${u.hostname}:${u.port}` : u.hostname;
     } catch {
-        return url;
+        return hostnameOf(url);
     }
 }
 
+// Words that identify no particular server. Dropped while deriving a handle so `docs-mcp-server`
+// becomes `docs` rather than `docs-mcp-server`, and so a bare `api.example.com` yields nothing
+// distinctive and falls back to its hostname instead of turning "api" into an invocation.
+const FILLER = new Set([
+    "mcp", "server", "servers", "service", "services", "svc", "api", "apis",
+    "tool", "tools", "www", "http", "https", "local", "internal", "cluster", "default",
+]);
+
+// A handle has to survive containsWord as a whole word, and short words collide with ordinary Argo
+// CD questions ("the api server is failing").
+const MIN_HANDLE_CHARS = 4;
+
 /**
- * The strings that address a server in a message: its reported name, its hostname, and the
- * hostname's first label.
+ * The short name a user types to address a server.
  *
- * Shared by the roster (which tells the user how to address a server) and by the matcher (which
- * decides whether they did). Deriving them twice would let the roster advertise a handle the
- * matcher rejects.
- *
- * Two are dropped. A handle under 2 characters is too short to match a word reliably. A *first
- * label* under 4 characters is usually a generic infrastructure word - `api.example.com` would
- * otherwise make "api" mean "call that server", and "the API server is failing" is a normal Argo CD
- * question. The full hostname and the reported name are kept whatever their length.
+ * An explicitly configured name wins outright. Otherwise the first distinctive word of the
+ * server-reported name, else of the hostname's *first label only* - tokenising the whole hostname
+ * would turn `api.example.com` into "example", which names nothing. When nothing distinctive
+ * survives, the hostname itself is the handle.
  */
-export function serverHandles(name: string | undefined, url: string): string[] {
+export function deriveHandle(configured: string | undefined, reported: string | undefined, url: string): string {
+    const explicit = clean(configured, MAX_SERVER_NAME_CHARS);
+    if (explicit) return explicit;
+
     const host = hostnameOf(url);
-    const label = host.split(".")[0];
-    const handles = [name, host, label !== host && label.length >= 4 ? label : undefined];
-    return handles.filter((h): h is string => !!h && h.length >= 2);
+    for (const source of [clean(reported, MAX_SERVER_NAME_CHARS), host.split(".")[0]]) {
+        const word = source
+            .toLowerCase()
+            .split(/[^\p{L}\p{N}]+/u)
+            .find(t => t.length >= MIN_HANDLE_CHARS && !FILLER.has(t));
+        if (word) return word;
+    }
+    return clean(host, MAX_SERVER_NAME_CHARS);
 }
 
 /**
- * The handle to *show*, as opposed to the handles that match.
+ * Handles for a whole set of servers, guaranteed distinct.
  *
- * The first single-word one, which is normally the reported name and otherwise the hostname. A
- * server free-texting its name ("Docs MCP Server", or something adversarial) would otherwise have
- * the assistant instruct the user to type a whole sentence. Matching still accepts every handle from
- * serverHandles, so a user who does type the full name is still understood.
+ * Uniqueness cannot be decided per server, so it is decided here: a candidate two servers both want
+ * is given to neither, and each falls back to its first unique rung. Telling the user to type
+ * something that addresses two servers at once is worse than telling them to type a hostname - it
+ * silently merges both tool sets, and a tool name present on both routes to whichever was configured
+ * first. Servers configured with the *same* URL are genuinely the same server, so they are allowed
+ * to share a handle rather than being given an invented suffix.
  */
-function preferredHandle(status: McpServerStatus): string {
-    const handles = serverHandles(status.name, status.url).map(h => clean(h, MAX_NAME_CHARS));
-    return handles.find(h => !/\s/.test(h)) ?? handles[0] ?? "";
+export function resolveHandles(servers: Array<{ configured?: string; reported?: string; url: string }>): string[] {
+    const rungs = servers.map(s => [
+        deriveHandle(s.configured, s.reported, s.url),
+        clean(hostnameOf(s.url), MAX_SERVER_NAME_CHARS),
+        clean(hostPortOf(s.url), MAX_SERVER_NAME_CHARS),
+        clean(s.url, MAX_SERVER_NAME_CHARS),
+    ].filter(Boolean));
+
+    const claims = new Map<string, Set<number>>();
+    rungs.forEach((candidates, i) => {
+        for (const c of candidates) {
+            if (!claims.has(c)) claims.set(c, new Set());
+            claims.get(c)!.add(i);
+        }
+    });
+    // Two entries for one URL produce identical rungs; that is not a real collision.
+    const sameUrlGroups = new Map<string, number>();
+    servers.forEach(s => sameUrlGroups.set(s.url, (sameUrlGroups.get(s.url) ?? 0) + 1));
+    const unique = (candidate: string, i: number) => {
+        const holders = claims.get(candidate)!;
+        if (holders.size === 1) return true;
+        return [...holders].every(j => servers[j].url === servers[i].url);
+    };
+
+    // The positional last resort exists only so `handle` is never empty - every rung would have to
+    // be blank, which parseMcpServers already prevents by dropping empty URLs.
+    return rungs.map((candidates, i) => candidates.find(c => unique(c, i)) ?? candidates[0] ?? `server-${i + 1}`);
+}
+
+/**
+ * Everything that addresses a server in a message: its resolved handle, its reported name, its
+ * hostname and the hostname's first label.
+ *
+ * The handle is what the assistant advertises; the rest are kept so the hostname and reported-name
+ * forms documented before it existed keep working. A candidate under 2 characters is dropped - too
+ * short to match a word reliably - and a *first label* under MIN_HANDLE_CHARS is dropped for the
+ * same reason `api.example.com` derives no handle.
+ */
+export function serverHandles(status: Pick<McpServerStatus, "handle" | "name" | "url">): string[] {
+    const host = hostnameOf(status.url);
+    const label = host.split(".")[0];
+    const candidates = [
+        status.handle,
+        status.name,
+        host,
+        hostPortOf(status.url),
+        label !== host && label.length >= MIN_HANDLE_CHARS ? label : undefined,
+    ];
+    return [...new Set(candidates.filter((h): h is string => !!h && h.length >= 2))];
 }
 
 /**
@@ -86,18 +178,25 @@ export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addresse
     if (servers.length === 0) return "";
 
     const lines = servers.map((s, i) => {
-        const name = clean(s.name, MAX_NAME_CHARS);
-        const host = hostnameOf(s.url);
-        // Only when it adds something: an unnamed server already shows its hostname as its name.
-        const where = clean(host, MAX_NAME_CHARS) === name ? "" : ` (${clean(host, MAX_NAME_CHARS)})`;
+        // The handle leads the line, because it is the string the user types and the string the
+        // assistant must quote back at them. The reported name and host follow only when they add
+        // something, so a server whose handle was shortened (or pushed to its hostname by a
+        // collision) is still identifiable.
+        const name = clean(s.name, MAX_SERVER_NAME_CHARS);
+        const host = clean(hostnameOf(s.url), MAX_SERVER_NAME_CHARS);
+        const shownName = name === s.handle ? "" : name;
+        const shownHost = host === s.handle || host === name ? "" : host;
+        const detail = [shownName, shownName && shownHost ? `at ${shownHost}` : shownHost]
+            .filter(Boolean)
+            .join(" ");
+        const where = detail ? ` (${detail})` : "";
 
         const state = mcpState(s);
         const status = state === "unavailable"
             ? `unavailable: ${clean(s.error, MAX_ERROR_CHARS)}`
             : state === "connected" ? "connected" : "configured, not connected yet";
 
-        const handle = preferredHandle(s);
-        const names = tools.filter(t => t.serverIndex === i).map(t => clean(t.name, MAX_NAME_CHARS));
+        const names = tools.filter(t => t.serverIndex === i).map(t => clean(t.name, MAX_SERVER_NAME_CHARS));
         let toolPart: string;
         if (addressed.has(i)) {
             toolPart = "tools listed in full below";
@@ -108,16 +207,18 @@ export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addresse
         } else {
             const shown = names.slice(0, MAX_ROSTER_TOOL_NAMES).join(", ");
             const rest = names.length - MAX_ROSTER_TOOL_NAMES;
-            toolPart = `${names.length} tools: ${shown}${rest > 0 ? ` (+${rest} more)` : ""}`;
+            toolPart = `${names.length} ${names.length === 1 ? "tool" : "tools"}: ${shown}${rest > 0 ? ` (+${rest} more)` : ""}`;
         }
 
-        return `- ${name}${where} - ${status} - address it as "${handle}" - ${toolPart}`;
+        return `- ${s.handle}${where} - ${status} - ${toolPart}`;
     });
 
     const anyAddressed = addressed.size > 0;
+    // The addressing rule is stated with the list rather than only in the guidance below, so a model
+    // that quotes a server back to the user quotes the name they can actually type.
     const header = anyAddressed
-        ? "\n\nMCP servers configured for this conversation:\n"
-        : "\n\nMCP servers configured for this conversation (reference only - no tool can be called in this reply):\n";
+        ? "\n\nMCP servers configured for this conversation. Each is addressed by the name at the start of its line:\n"
+        : "\n\nMCP servers configured for this conversation, each addressed by the name at the start of its line (reference only - no tool can be called in this reply):\n";
 
     return capText(header + lines.join("\n") + "\n" + guidance(anyAddressed), MAX_MCP_ROSTER_CHARS, "the MCP server list");
 }
@@ -131,7 +232,7 @@ Only the tools under "Available tools:" below can be called in this reply; they 
 The list above is background information, not a set of callable tools, and there is no way to run one in this reply. Do not output a <tool> block, a tool-call JSON object, or any other invocation syntax: nothing will execute it and the user's question will go unanswered.
 - If the user asks which MCP servers or tools are available, answer from the list above in prose.
 - Refer to a tool only by the name shown. Do not state what it does, what arguments it takes, or what it returns - that is not given here.
-- If answering properly needs a tool, say so, name the server that has it, and ask the user to include that server's name in their next message. Then answer as far as you can without it.`;
+- If answering properly needs a tool, say so and ask the user to include that server's name - exactly as written at the start of its line above - in their next message. Then answer as far as you can without it.`;
 }
 
 /**
@@ -144,7 +245,7 @@ export function toolPrompt(tools: McpTool[], serverName: (index: number) => stri
     for (const index of [...new Set(tools.map(t => t.serverIndex))]) {
         const group = tools.filter(t => t.serverIndex === index);
         if (group.length === 0) continue;
-        text += `\nFrom the ${clean(serverName(index), MAX_NAME_CHARS)} server:\n`;
+        text += `\nFrom the ${clean(serverName(index), MAX_SERVER_NAME_CHARS)} server:\n`;
         for (const tool of group) {
             text += `- ${tool.name}: ${tool.description || "No description"}\n`;
             if (tool.inputSchema) {
@@ -176,6 +277,6 @@ export function noToolNote(attempted: string | undefined, hadTools: boolean): st
 export function noToolFallback(servers: McpServerStatus[]): string {
     const usable = servers.find(s => mcpState(s) === "connected") ?? servers[0];
     return usable
-        ? `I tried to use a tool, but none was available for this message. Include a server name in your question - for example "${preferredHandle(usable)}, ..." - and I can use its tools.`
+        ? `I tried to use a tool, but none was available for this message. Include a server name in your question - for example "${usable.handle}, ..." - and I can use its tools.`
         : "I tried to use a tool, but none was available for this message.";
 }

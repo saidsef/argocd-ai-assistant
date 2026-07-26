@@ -1,9 +1,9 @@
-import { AttachmentType, ChatTurn, McpServerStatus, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
+import { AttachmentType, ChatTurn, McpServerConfig, McpServerStatus, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
 import { capText, MAX_HISTORY_TURN_CHARS, MAX_TOOL_RESULT_CHARS } from "../util/context";
 import { readLines, sseData } from "../util/stream";
-import { argocdHeaders, bearer, canRouteToProxy, containsWord, errorMessage, mcpConfigured } from "../util/util";
+import { argocdHeaders, bearer, canRouteToProxy, containsWord, errorMessage, mcpConfigured, parseMcpServers } from "../util/util";
 import { McpClient, McpTool } from "./mcpClient";
-import { hostnameOf, mcpRoster, noToolFallback, noToolNote, serverHandles, toolPrompt } from "./mcpPrompt";
+import { clean, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, noToolFallback, noToolNote, resolveHandles, serverHandles, toolPrompt } from "./mcpPrompt";
 import { parseToolCall } from "./toolCall";
 import { createToolMarkerFilter } from "./toolMarker";
 
@@ -35,8 +35,9 @@ function lastUserTurn(history?: ChatTurn[]): string {
 }
 
 // Same URL list, same order - the identity the cached MCP client and its tools' serverIndex rely on.
-function sameUrls(a: string[] | undefined, b: string[]): boolean {
-    return !!a && a.length === b.length && a.every((u, i) => u === b[i]);
+// Names are deliberately not part of it: renaming a server in settings must not drop its connection.
+function sameUrls(a: string[] | undefined, b: McpServerConfig[]): boolean {
+    return !!a && a.length === b.length && a.every((u, i) => u === b[i].url);
 }
 
 // Resolve the chat-completions endpoint from a configured base URL.
@@ -90,23 +91,31 @@ export class LlmProvider implements QueryProvider {
     // Re-serialising every tool's JSON schema on every request is pure waste.
     private toolPromptCache?: { key: string; text: string };
 
-    // Live status of the configured MCP servers for UI display. Before the first query
-    // the client has not connected, so this reports the URL hostname / not-connected / 0
-    // tools; after a query it upgrades to the server-reported name and discovered tools.
-    getMcpStatus(urls: string[]): McpServerStatus[] {
+    // Live status of the configured MCP servers. Before the first query the client has not
+    // connected, so this reports the URL hostname / not-connected / 0 tools; after a query it
+    // upgrades to the server-reported name and discovered tools.
+    //
+    // The single place a server's `handle` is decided. It has to be: the handle must be unique
+    // across the whole set, which no per-server helper can know, and every surface - badge, welcome
+    // message, prompt roster, tool block, error fallback, and the matcher itself - reads it from
+    // here, so none of them can advertise a name the others do not recognise. Names are sanitised
+    // here too, because both the badge and the welcome bubble render them.
+    getMcpStatus(servers: McpServerConfig[]): McpServerStatus[] {
         const infos = this.mcpClient?.getServerInfos();
         const errors = this.mcpErrors;
-        return urls.map((url, i) => {
-            const connected = !!infos && infos[i] != null;
-            const toolCount = (this.mcpTools ?? []).filter(t => t.serverIndex === i).length;
-            return {
-                url,
-                name: infos?.[i]?.name || hostnameOf(url),
-                connected,
-                toolCount,
-                error: errors[i]
-            };
-        });
+        const handles = resolveHandles(servers.map((s, i) => ({
+            configured: s.name,
+            reported: infos?.[i]?.name,
+            url: s.url,
+        })));
+        return servers.map((server, i) => ({
+            url: server.url,
+            name: clean(infos?.[i]?.name || hostnameOf(server.url), MAX_SERVER_NAME_CHARS),
+            handle: handles[i],
+            connected: !!infos && infos[i] != null,
+            toolCount: (this.mcpTools ?? []).filter(t => t.serverIndex === i).length,
+            error: errors[i],
+        }));
     }
 
     // The MCP servers the user has addressed by name, so a normal question never triggers a tool
@@ -119,15 +128,16 @@ export class LlmProvider implements QueryProvider {
     // routinely name every server now that the roster exists ("the configured servers are docs,
     // gitlab, github"), so matching against one would advertise every server's tools on every turn
     // after the first question about MCP - which is exactly the opt-in this function implements.
-    private addressedServers(prompt: string, previousPrompt: string, urls: string[]): Set<number> {
-        const infos = this.mcpClient?.getServerInfos();
+    // Matched against the same status objects every surface displays, so the handle the assistant
+    // tells a user to type is by construction one this accepts.
+    private addressedServers(prompt: string, previousPrompt: string, status: McpServerStatus[]): Set<number> {
         const addressed = new Set<number>();
-        for (let i = 0; i < urls.length; i++) {
-            const handles = serverHandles(infos?.[i]?.name, urls[i]);
+        status.forEach((s, i) => {
+            const handles = serverHandles(s);
             if (handles.some(h => containsWord(prompt, h) || containsWord(previousPrompt, h))) {
                 addressed.add(i);
             }
-        }
+        });
         return addressed;
     }
 
@@ -157,16 +167,16 @@ export class LlmProvider implements QueryProvider {
             };
         }
         const apiKey = settings.data?.apiKey;
-        const mcpServerUrls: string[] | undefined = settings.data?.mcpServers;
+        const mcpServers = parseMcpServers(settings.data?.mcpServers);
 
         let mcpTools: McpTool[] | undefined;
-        if (mcpConfigured(mcpServerUrls)) {
+        if (mcpConfigured(mcpServers)) {
             // Discard the cached client when a previous attempt had a failing server, or when the
             // configured URL list has changed (tool `serverIndex` values are positions in that list,
             // so a stale client would route a call to the wrong server). Rebuilt from scratch rather
             // than re-handshaked: a server holding a live session may reject a second `initialize`,
             // which would flap a healthy server into "unavailable".
-            if (this.mcpNeedsReprobe || !sameUrls(this.mcpUrls, mcpServerUrls!)) {
+            if (this.mcpNeedsReprobe || !sameUrls(this.mcpUrls, mcpServers)) {
                 this.mcpClient = undefined;
                 this.mcpTools = undefined;
                 this.mcpUrls = undefined;
@@ -177,8 +187,8 @@ export class LlmProvider implements QueryProvider {
             if (announcedConnecting) onStatus?.("Connecting to tools…");
             try {
                 if (!this.mcpClient) {
-                    this.mcpUrls = mcpServerUrls!.slice();
-                    this.mcpClient = new McpClient(mcpServerUrls!);
+                    this.mcpUrls = mcpServers.map(s => s.url);
+                    this.mcpClient = new McpClient(mcpServers.map(s => s.url));
                     this.mcpClient.setAuthToken(context.mcpToken);
                     await this.mcpClient.connect(signal);
                 } else {
@@ -213,7 +223,7 @@ export class LlmProvider implements QueryProvider {
                 if (err instanceof Error && err.name === "AbortError") throw err;
                 const errMsg = errorMessage(err);
                 console.warn(`MCP initialization failed, answering without tools: ${errMsg}`);
-                this.mcpErrors = (mcpServerUrls ?? []).map(() => errMsg);
+                this.mcpErrors = mcpServers.map(() => errMsg);
                 this.mcpClient = undefined;
                 this.mcpTools = undefined;
                 this.mcpUrls = undefined;
@@ -231,10 +241,11 @@ export class LlmProvider implements QueryProvider {
         // Advertise tools only for MCP server(s) the user named; otherwise answer LLM-only. This is
         // what keeps a normal question from triggering a tool call. Only the user's own previous
         // message counts as "before" - see addressedServers.
+        // One status array feeds the matcher, the roster, the tool block and the UI badge, so the
+        // handle a user is told to type is the handle the matcher accepts.
+        const serverStatus = mcpConfigured(mcpServers) ? this.getMcpStatus(mcpServers) : [];
         const previousPrompt = lastUserTurn(history);
-        const addressedSet = mcpConfigured(mcpServerUrls)
-            ? this.addressedServers(prompt, previousPrompt, mcpServerUrls!)
-            : new Set<number>();
+        const addressedSet = this.addressedServers(prompt, previousPrompt, serverStatus);
         const addressed = (mcpTools && mcpTools.length)
             ? mcpTools.filter(t => addressedSet.has(t.serverIndex))
             : [];
@@ -244,7 +255,6 @@ export class LlmProvider implements QueryProvider {
         // "which MCP servers are available?" has an answer. Without this the prompt was byte-for-byte
         // identical to a deployment with no MCP at all, and the model correctly said it had no
         // information - see mcpPrompt.mcpRoster.
-        const serverStatus = mcpConfigured(mcpServerUrls) ? this.getMcpStatus(mcpServerUrls!) : [];
         const roster = serverStatus.length
             ? mcpRoster(serverStatus, this.mcpTools ?? [], toolsForModel ? addressedSet : new Set<number>())
             : "";
@@ -561,10 +571,10 @@ export class LlmProvider implements QueryProvider {
     // Memo around mcpPrompt.toolPrompt: the JSON schemas are re-serialised identically on every
     // request otherwise. Keyed by tool names *and* the server names it groups them under.
     private toolPrompt(mcpTools: McpTool[], servers: McpServerStatus[]): string {
-        const key = [...mcpTools.map(t => `${t.serverIndex}:${t.name}`), ...servers.map(s => s.name)].join("\u0000");
+        const key = [...mcpTools.map(t => `${t.serverIndex}:${t.name}`), ...servers.map(s => s.handle)].join("\u0000");
         if (this.toolPromptCache?.key === key) return this.toolPromptCache.text;
 
-        const text = toolPrompt(mcpTools, (i) => servers[i]?.name ?? hostnameOf(servers[i]?.url ?? ""));
+        const text = toolPrompt(mcpTools, (i) => servers[i]?.handle ?? "");
         this.toolPromptCache = { key, text };
         return text;
     }
