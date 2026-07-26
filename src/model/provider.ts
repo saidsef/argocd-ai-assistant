@@ -46,11 +46,29 @@ export type QueryResponse = {
     error?: QueryError;
 }
 
+/**
+ * One configured MCP server. `data.mcpServers` accepts a bare URL string or this object form, so a
+ * deployment can pin a short name rather than depending on whatever the server reports about itself
+ * (or on what can be derived from its hostname).
+ */
+export interface McpServerConfig {
+    url: string;
+    /** Overrides the derived handle. Optional; omit and one is derived from the server or hostname. */
+    name?: string;
+}
+
 /** Live view of a configured MCP server, surfaced in the assistant UI. */
 export type McpServerStatus = {
     url: string;
     /** Server-reported name once connected; falls back to the URL hostname before then. */
     name: string;
+    /**
+     * The short, unique string a user types to address this server. Derived once, in getMcpStatus,
+     * and used by every surface - badge, welcome message, prompt roster, tool block, error fallback -
+     * so none of them can advertise a different name from the one the matcher accepts. Sanitised,
+     * so it is safe to render and safe to put in the system prompt.
+     */
+    handle: string;
     /** True once the `initialize` handshake has completed for this server. */
     connected: boolean;
     /** Number of tools discovered from this server (0 until connected). */
@@ -59,8 +77,24 @@ export type McpServerStatus = {
     error?: string;
 }
 
+/**
+ * A server's one-word state. Defined here rather than in the UI because both the header badge and
+ * the MCP roster in the system prompt report it, and they must not disagree - a model telling the
+ * user a server is "connected" while the badge says "unavailable" is worse than either alone.
+ *
+ * Error beats connected deliberately: the real case is a server that completed the `initialize`
+ * handshake and then failed `tools/list`, which is connected but unusable.
+ */
+export const mcpState = (s: McpServerStatus): "unavailable" | "connected" | "configured" =>
+    s.error ? "unavailable" : s.connected ? "connected" : "configured";
+
 export interface QueryProvider {
     query(context: QueryContext, prompt: string, onStreamUpdate: (text: string) => void, signal?: AbortSignal, history?: ChatTurn[], onStatus?: (label: string | null) => void): Promise<QueryResponse>;
-    /** Optional: live status of the given configured MCP server URLs, for UI display. */
-    getMcpStatus?(urls: string[]): McpServerStatus[];
+    /** Optional: live status of the given configured MCP servers, for UI display. */
+    getMcpStatus?(servers: McpServerConfig[]): McpServerStatus[];
+    /**
+     * Optional: connect ahead of the first message so each server's own short name is known before
+     * the badge and welcome message are drawn. Resolves when the attempt settles; never throws.
+     */
+    warmUpMcp?(servers: McpServerConfig[], mcpToken?: string): Promise<void>;
 }

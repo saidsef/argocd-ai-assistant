@@ -1,6 +1,6 @@
 import * as React from "react";
 import ChatInterface from "./components/ChatInterface";
-import { injectMessage, isTokenRequest, mcpConfigured } from "./util/util";
+import { injectMessage, isTokenRequest, mcpConfigured, mcpWelcomeHint } from "./util/util";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
 import { type ChatMessage } from "./components/useChat";
@@ -11,8 +11,8 @@ import { getProxyApplication } from "./service/routing";
 type FlowNode = "start" | "loop" | TokenFlowNode;
 
 export const SystemAssistantExtension = (_props: any) => {
-    const { settings, provider, mcpServers, getMcpStatus } = useAssistantSettings();
     const storageRef = React.useRef(new ManageStorage(ExtensionScope.System));
+    const { settings, provider, mcpServers, getMcpStatus } = useAssistantSettings(storageRef.current?.mcpToken ?? undefined);
 
     const [form, setForm] = React.useState<{ token?: string }>({});
     const [flowNode, setFlowNode] = React.useState<FlowNode>("start");
@@ -36,14 +36,8 @@ export const SystemAssistantExtension = (_props: any) => {
         mcpToken: storageRef.current?.mcpToken ?? undefined
     }), [settings, routingApp]);
 
-    const welcomeMessage = "How can I help you with Argo CD today?";
-
-    // General starter prompts for the context-free system page (no resource/application attached).
-    const suggestions = [
-        "How do I troubleshoot an out-of-sync application?",
-        "What does a Degraded health status mean?",
-        "Explain Argo CD sync waves and hooks"
-    ];
+    const welcomeMessage = "How can I help you with Argo CD today?" +
+        mcpWelcomeHint((getMcpStatus?.() ?? []).map((s) => s.handle));
 
     const handleCommand = React.useCallback(
         (input: string, _messages: ChatMessage[], setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
@@ -106,7 +100,6 @@ export const SystemAssistantExtension = (_props: any) => {
             onCommand={handleCommand}
             onClear={handleClearFlow}
             getMcpStatus={getMcpStatus}
-            suggestions={suggestions}
         >
             {(helpers) => flowUI(helpers.setMessages)}
         </ChatInterface>

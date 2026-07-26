@@ -1,10 +1,18 @@
 import * as React from "react";
 import DOMPurify from 'dompurify';
 import { marked } from "marked";
+import { copyText, useCopyState } from "./useCopy";
 
-// Open assistant links in a new tab with rel hardening. Post-sanitise; anchors only.
+const ABSOLUTE_URI = /^(?:https?|mailto):/i;
+
+// Open *external* assistant links in a new tab with rel hardening. Post-sanitise; anchors only.
+// Same-origin links (an Argo CD deep link like /applications/foo, or a #fragment) stay in the tab,
+// which is where the user expects the console to navigate. target/rel are set only here and are not
+// allow-listed below, so model output can neither supply nor override them.
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-    if (node.tagName === 'A' && node.getAttribute('href')) {
+    if (node.tagName !== 'A') return;
+    const href = node.getAttribute('href');
+    if (href && ABSOLUTE_URI.test(href)) {
         node.setAttribute('target', '_blank');
         node.setAttribute('rel', 'noopener noreferrer');
     }
@@ -22,20 +30,36 @@ marked.use({ gfm: true, breaks: true });
 // blocks scripts and event handlers, but it permits <form>, <input>, <select> and <img> - enough to
 // render a convincing credential prompt, or a tracking pixel that phones home, inside the Argo CD
 // console. None of those are reachable from Markdown syntax, so nothing is lost by dropping them.
+//
+// `div`, `span` and `class` are dropped for the same reason, and they are not merely unnecessary:
+// this component injects its own copy button and keys the click handler on `.code-copy-btn`, so
+// allowing model output to carry classes on generic containers let it render a convincing fake Copy
+// button over a `.sr-only` <pre> and put attacker-chosen text on the clipboard. Markdown produces no
+// div/span at all, and the only class marked emits is `language-*` on <code>, which nothing styles.
+// `align` stays: marked does emit it on table cells.
+//
 // Deliberately not annotated as DOMPurify.Config: the widened type matches the RETURN_TRUSTED_TYPE
 // overload, and sanitize() would then be typed as returning TrustedHTML rather than a string.
 const SANITIZE_CONFIG = {
     ALLOWED_TAGS: [
-        'p', 'br', 'hr', 'span', 'div',
+        'p', 'br', 'hr',
         'strong', 'em', 'del', 'code', 'pre', 'blockquote',
         'ul', 'ol', 'li',
         'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
         'table', 'thead', 'tbody', 'tr', 'th', 'td',
         'a'
     ],
-    ALLOWED_ATTR: ['href', 'title', 'class', 'align', 'target', 'rel'],
-    // Anchors are hardened above; block the javascript:/data: schemes outright.
-    ALLOWED_URI_REGEXP: /^(?:https?|mailto):/i
+    ALLOWED_ATTR: ['href', 'title', 'align'],
+    // `align` is not a URL, but a custom ALLOWED_URI_REGEXP is applied to the value of *every*
+    // attribute DOMPurify does not already consider URI-safe (`title` is on that default list;
+    // `align` is not). So align="left" was tested as a URL, failed, and was dropped - which is why
+    // Markdown table alignment silently never rendered despite being allow-listed. Declaring it
+    // URI-safe exempts it from the URL test without widening the URL policy itself.
+    ADD_URI_SAFE_ATTR: ['align'],
+    // Anchors are hardened above; block javascript:/data: outright while still allowing the
+    // same-origin links marked emits for relative paths and fragments - those used to be stripped,
+    // leaving an underlined, clickable-looking, dead link. `//host` is excluded: it is external.
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|#|\/(?!\/))/i
 };
 
 const parseMarkdown = (children: React.ReactNode): string => {
@@ -53,7 +77,7 @@ const MarkedWrapper = ({
     children: React.ReactNode
 }) => {
     // Announce copy outcome to screen readers; the visible button only swaps its label.
-    const [copyState, setCopyState] = React.useState<"" | "copied" | "failed">("");
+    const [copyState, setCopyState] = useCopyState();
     const contentRef = React.useRef<HTMLDivElement>(null);
 
     const onCopyClick = React.useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -61,15 +85,20 @@ const MarkedWrapper = ({
         if (!btn) return;
         const code = btn.parentElement?.querySelector('pre')?.textContent ?? '';
         if (!code) return;
-        const settle = (state: "copied" | "failed") => {
-            btn.textContent = state === "copied" ? 'Copied' : 'Copy failed';
-            setCopyState(state);
-            setTimeout(() => { btn.textContent = 'Copy'; setCopyState(""); }, 1500);
-        };
-        // navigator.clipboard is undefined on insecure origins; say so rather than doing nothing.
-        if (!navigator.clipboard) return settle("failed");
-        navigator.clipboard.writeText(code).then(() => settle("copied"), () => settle("failed"));
-    }, []);
+        copyText(code).then((state) => {
+            // The label lives on injected DOM, which a re-parse replaces - so only touch it while
+            // the node is still in the document, and let the live region carry the outcome.
+            if (btn.isConnected) {
+                btn.textContent = state === "copied" ? 'Copied' : 'Copy failed';
+                btn.setAttribute('aria-label', state === "copied" ? 'Code copied' : 'Copy code failed');
+            }
+            setCopyState(state, () => {
+                if (!btn.isConnected) return;
+                btn.textContent = 'Copy';
+                btn.setAttribute('aria-label', 'Copy code');
+            });
+        });
+    }, [setCopyState]);
 
     // Parse once synchronously so static/stored messages paint immediately (no throttle delay).
     const [html, setHtml] = React.useState(() => parseMarkdown(children));

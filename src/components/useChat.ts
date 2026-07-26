@@ -78,18 +78,26 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
         // Mirror of the current tool/progress label so we clear it exactly once per phase
         // (on the first answer token) instead of dispatching setToolStatus(null) per delta.
         let toolLabel: string | null = null;
+        // True while this invocation still owns the abort controller. Stop-then-send, and a resource
+        // switch mid-reply, interleave two invocations: without this, the older one's unwinding
+        // `finally` nulled the newer one's controller (disabling Stop, Escape and the unmount abort)
+        // and its `setStatus("ready")` landed after the newer "submitted", freeing the composer for a
+        // second concurrent send.
+        const isCurrent = () => abortControllerRef.current === controller;
 
         // Coalesce streaming updates to one render per frame to avoid per-token re-parses.
         let rafId: number | null = null;
         const renderAssistantText = () => {
             rafId = null;
-            setMessages((prev) =>
-                prev.map((m) =>
+            setMessages((prev) => {
+                // The bubble can be gone (e.g. "New chat" mid-stream); don't rebuild the array for it.
+                if (!prev.some((m) => m.id === assistantId)) return prev;
+                return prev.map((m) =>
                     m.id === assistantId
                         ? { ...m, parts: [{ type: "text", text: assistantText }] }
                         : m
-                )
-            );
+                );
+            });
         };
 
         try {
@@ -129,10 +137,11 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
                 }
             }
 
-            setStatus("ready");
+            if (isCurrent()) setStatus("ready");
         } catch (err) {
             // AbortError is expected when stop() is called; status is already "ready".
             if (err instanceof Error && err.name === "AbortError") return;
+            if (!isCurrent()) return; // a newer send owns the UI now
             const errorObj = err instanceof Error ? err : new Error(String(err));
             setError(errorObj);
             setStatus("error");
@@ -140,8 +149,10 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
             // Flush any pending frame so the final text always renders (end, error, or abort).
             if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
             if (assistantId) renderAssistantText();
-            setToolStatus(null);
-            abortControllerRef.current = null;
+            if (isCurrent()) {
+                setToolStatus(null);
+                abortControllerRef.current = null;
+            }
         }
     }, []); // stable - reads messages/transport via refs
 
@@ -167,7 +178,9 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
         abortControllerRef.current?.abort();
         abortControllerRef.current = null;
         setStatus("ready");
-        // toolStatus is cleared by the in-flight sendMessage's finally when the abort unwinds.
+        // Cleared here rather than in the aborted invocation's finally: releasing ownership above is
+        // what stops that invocation writing over a newer send's state, so it no longer clears this.
+        setToolStatus(null);
     }, []);
 
     const clearError = React.useCallback(() => setError(undefined), []);

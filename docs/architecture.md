@@ -56,11 +56,11 @@ Every context item is bounded twice: by item count (events, resource lists, log 
 
 ### Chatbot Interface
 
-The chat interface is a custom React implementation (`ChatInterface` + the `useChat` hook), with streaming responses and Markdown rendering (`marked` + `dompurify`). A fresh conversation shows one-click starter prompts tailored to the resource. The conversation flow:
+The chat interface is a custom React implementation (`ChatInterface` + the `useChat` hook), with streaming responses and Markdown rendering (`marked` + `dompurify`). The conversation flow:
 
 1. **Start** - an opening message with the resource Kind and Name, plus how to attach logs if the resource supports them.
 2. **Loop** - the user enters queries, the node loops after each one. Keywords switch to other flows.
-3. **`attach`** - starts the Attach Logs flow: pick a container, then the number of lines (up to the configured limit).
+3. **`attach`** - starts the Attach Logs flow: pick a container, then the number of lines (up to the configured limit). The distilled log is attached to every subsequent question in the session until **New chat** detaches it.
 4. **`token`** (when `data.mcpServers` is set) - the user supplies an Argo CD API token. It is stored in `sessionStorage` and sent to every configured MCP server as an `Authorization: Bearer` header, so a server such as [mcp-github-pr-issue-analyser](https://github.com/saidsef/mcp-github-pr-issue-analyser) can act on Argo CD on the user's behalf.
 
 ### Enabling MCP
@@ -71,11 +71,46 @@ The Argo CD Proxy Extension authorises every request against a specific Applicat
 
 ### MCP Tool Integration
 
-When `data.mcpServers` is set, the LLM provider lazily connects to each server over an HTTP-streamable JSON-RPC transport. The browser calls servers directly, so each must send CORS headers for the Argo CD origin. Per message the provider:
+When `data.mcpServers` is set, the LLM provider connects to each server over an HTTP-streamable JSON-RPC transport as the tab opens, not on the first message. The browser calls servers directly, so each must send CORS headers for the Argo CD origin.
 
-1. Sends an `initialize` handshake on first use, then lists tools via `tools/list`.
-2. Injects an "Available tools" section into the system message **only for the server(s) named in that message** (by reported name or hostname, matched as a whole word, case-insensitive). A message naming no server gets no tools - so a normal question never triggers a call.
-3. Scans the response for a `<tool>` tag (only for advertised tools) and, if found, routes it via `tools/call`, appending the result as a follow-up query.
+Connecting early is what makes the short name usable: a server's handle comes from the name it reports during the handshake, so waiting until the first message would mean the badge and the welcome message could only offer a URL hostname - and would then disagree with the assistant once it did connect. The warm-up and a first message sent while it is still running share one handshake, so a server is never initialised twice.
+
+Per message the provider:
+
+1. Reuses that connection, or makes it now if the warm-up has not finished or a server needs re-probing.
+2. Injects a **server roster** into the system message whenever any server is configured, listing each server's name, hostname, state, and its tool names. This is reference only - nothing in it is callable - and it is what lets the assistant answer "which MCP servers are available?" instead of reporting that it has no information about MCP.
+3. Injects an "Available tools" section (descriptions and JSON schemas, grouped by server) **only for the server(s) the user has named** - see [Addressing a server](#addressing-a-server) below. A conversation naming no server gets no tools, so a normal question never triggers a call.
+4. Scans the response for a `<tool>` tag (only for advertised tools) and, if found, routes it via `tools/call`, appending the result as a follow-up query. If a tool block is emitted when nothing is callable, the assistant retries once tool-free rather than showing the raw block.
+
+#### Addressing a server
+
+A server is addressed when one of its **handles** appears as a whole word, case-insensitively, in the current message **or the one immediately before it**. The two-turn window is what makes a natural follow-up work:
+
+```text
+you:       docs, what does a sync wave do?      <- names "docs", its tools are offered
+assistant: ...
+you:       and how do hooks interact with them? <- names nothing, but "docs" is still offered
+you:       is the pod healthy?                  <- outside the window, no tools offered
+```
+
+Only the user's own previous message counts. Assistant replies are never scanned - they routinely name every server now that the roster exists, and matching one would advertise everything on every subsequent turn.
+
+#### The short name
+
+Each server gets one short **handle**. It is what the badge shows, what the welcome message suggests, what the roster lists, and what the assistant asks you to type - one string, decided once, so no surface can advertise a name the matcher does not accept.
+
+It is derived from the first distinctive word of the server-reported name, or failing that of the hostname's first label. Filler words are dropped (`mcp`, `server`, `service`, `svc`, `api`, `tool`, `www`, `local`, `internal`, `cluster`, `default`), as is anything shorter than 4 characters - so a server at `api.example.com` never turns the word "api" into an invocation.
+
+| server | reports | handle |
+|---|---|---|
+| `mcp.docs.example.com` | `docs-mcp-server` | `docs` |
+| `github-mcp.saidsef.co.uk` | `github-mcp-saidsef` | `github` |
+| `searxng.internal` | nothing | `searxng` |
+| `api.example.com` | nothing | `api.example.com` (nothing distinctive to use) |
+
+Set `name` on the server entry to override it (see [Settings](deployment/settings.md)). If two servers would end up with the same handle, neither keeps it - both fall back to their hostname, then to `host:port` - so you are never asked to type something that addresses two servers at once.
+
+Addressing still accepts the server's reported name, its full hostname, and the hostname's first label, so anything that worked before the handle existed keeps working.
 
 Tool calls chain a bounded few times per query (the final turn forced tool-free) to keep multi-step lookups fast. Servers are unauthenticated by default, the `token` flow adds an `Authorization: Bearer` header. A broken server never breaks the assistant - if it is unreachable, exposes no tools, or a call fails, the provider logs the reason to the console and continues in LLM-only mode.
 

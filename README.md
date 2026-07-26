@@ -47,6 +47,28 @@ To try the extension end to end on a throwaway [kind](https://kind.sigs.k8s.io/)
 
 A successful run installs Argo CD, installs this extension built from source, and verifies the full path (including a streamed proxy request) with `== 8 passed, 0 failed ==`. See [`examples/kind/README.md`](./examples/kind/README.md).
 
+## MCP tool servers
+
+The assistant can call tools on [MCP](https://modelcontextprotocol.io/) servers. Set `data.mcpServers` in the settings extension and each one appears in the header badge:
+
+```yaml
+data:
+  mcpServers:
+    - "https://docs.example.com/mcp"
+    - url: "https://github-mcp.example.com/mcp"
+      name: "github"          # optional - one is derived from the server or hostname otherwise
+```
+
+Each server gets a short name, shown in the badge. Tools are opt-in per message: use that name and its tools are offered for that turn and the next one.
+
+```text
+docs, what does a sync wave do?
+```
+
+A question that names no server never triggers a tool call. Ask "which MCP servers are available?" at any time - the assistant knows the full list, each server's state, and which tools it exposes. Servers are called directly from the browser, so each must send CORS headers for the Argo CD origin; type `token` to supply an Argo CD API token for servers that need one.
+
+See [MCP Tool Integration](./docs/architecture.md#mcp-tool-integration) for the full behaviour.
+
 ## Documentation
 
 Full documentation is in the [`docs/`](./docs) directory and built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/).

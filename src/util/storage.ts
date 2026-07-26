@@ -18,7 +18,9 @@ export class ManageStorage {
         // v2: logs are now stored distilled (see service/logs.ts summariseLogs) rather than as the
         // raw API envelope, so a session carrying the old shape must not be read back.
         this.LOGS_KEY = `${prefix}-${KEY_MARKER}-logs-v2`;
-        this.ARGOCD_MCP_TOKEN = `${prefix}-argocd-mcp-token`;
+        // Carries KEY_MARKER like every other key: without it pruneOtherKeys could never reclaim a
+        // stale token, so one token key per resource visited accumulated for the whole session.
+        this.ARGOCD_MCP_TOKEN = `${prefix}-${KEY_MARKER}-mcp-token`;
     }
 
     public loadMessages(): ChatMessage[] {
@@ -38,7 +40,10 @@ export class ManageStorage {
         // the oldest turns and prune stale keys from other resources before giving up.
         if (this.write(this.CHAT_HISTORY_KEY, JSON.stringify(messages))) return;
         this.pruneOtherKeys();
+        // Each `keep` must be >= 1: slice(-0) returns the *whole* array, so a 0 here would retry the
+        // write that just failed. Halving first, then hard floors.
         for (const keep of [Math.ceil(messages.length / 2), 4, 1]) {
+            if (keep < 1) continue;
             if (this.write(this.CHAT_HISTORY_KEY, JSON.stringify(messages.slice(-keep)))) return;
         }
         console.warn("Chat history could not be persisted: session storage is full or unavailable.");
@@ -52,16 +57,24 @@ export class ManageStorage {
         return this.read(this.LOGS_KEY);
     }
 
-    set logs(value: string) {
-        this.write(this.LOGS_KEY, value);
+    // Methods rather than a setter, because both outcomes matter to the caller: the attached log is
+    // re-sent with every subsequent question, so a dropped write must be reported (it used to be
+    // probed by reading the key back, which returned a *previous* container's log as success), and
+    // "New chat" needs a way to detach one.
+    setLogs(value: string): boolean {
+        return this.write(this.LOGS_KEY, value);
+    }
+
+    clearLogs(): void {
+        this.remove(this.LOGS_KEY);
     }
 
     get mcpToken(): string | null {
         return this.read(this.ARGOCD_MCP_TOKEN);
     }
 
-    set mcpToken(value: string) {
-        this.write(this.ARGOCD_MCP_TOKEN, value);
+    setMcpToken(value: string): boolean {
+        return this.write(this.ARGOCD_MCP_TOKEN, value);
     }
 
     // sessionStorage throws rather than returning null when storage is disabled or partitioned
@@ -80,6 +93,14 @@ export class ManageStorage {
             return true;
         } catch (_e) {
             return false;
+        }
+    }
+
+    private remove(key: string): void {
+        try {
+            sessionStorage.removeItem(key);
+        } catch (_e) {
+            // Storage is unavailable, so there is nothing stored to remove.
         }
     }
 

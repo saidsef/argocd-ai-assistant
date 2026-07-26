@@ -23,10 +23,10 @@ globalThis.argocdAssistantSettings = {
 |---------|----------|-------------|
 | `provider` | No | Ignored. Accepted for backwards compatibility with existing ConfigMaps; a single generic OpenAI-compatible provider is always used. |
 | `model` | Recommended | Model name (e.g., `gpt-4`). If omitted, queries fail with `LLM model is not configured`. |
-| `data.baseURL` | No | OpenAI-compatible API base URL. Defaults to the Argo CD proxy path if omitted. |
+| `data.baseURL` | No | OpenAI-compatible API base URL, with or without a trailing `/v1` (both forms resolve to the same `/v1/chat/completions` endpoint). Defaults to the Argo CD proxy path if omitted. |
 | `data.apiKey` | No | API key sent **from the browser** as `Authorization: Bearer …`. It is readable in the browser - **not recommended**, prefer server-side injection via the proxy ([Injecting the API token](proxy.md#injecting-the-api-token)). |
-| `data.mcpServers` | No | Array of MCP server HTTP endpoints (e.g. `["https://mcp.example.com"]`), each CORS-enabled for the Argo CD origin. Tools are offered to the model only when the user names the server in the message. See [MCP Tool Integration](../architecture.md#mcp-tool-integration). |
-| `maximumLogLines` | No | Max log lines attachable (default: 250). |
+| `data.mcpServers` | No | MCP servers, each CORS-enabled for the Argo CD origin. An entry is either a URL string or `{url, name}`, where `name` overrides the short handle the assistant would otherwise derive (e.g. `["https://mcp.example.com", {url: "https://cf.example.com/mcp", name: "wiki"}]`). The assistant always knows which servers are configured, but only offers a server's tools when the user names it in their message or the one before it. See [MCP Tool Integration](../architecture.md#mcp-tool-integration). |
+| `maximumLogLines` | No | Max log lines attachable (default: 250, hard ceiling 5000). A value that is not a positive whole number falls back to the default. |
 | `systemPrompt` | No | Overrides the built-in assistant persona/instructions. Defaults to an Argo CD / Kubernetes expert prompt that grounds answers in the attached manifest, events, and logs. |
 
 !!! note "Leave `baseURL` unset to route through the proxy"

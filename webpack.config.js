@@ -1,5 +1,3 @@
-/* eslint-env node */
-
 const path = require("path");
 
 const PACKAGE = require('./package.json');
@@ -20,7 +18,7 @@ const config = {
         library: ['extensions', 'resources'],
     },
     resolve: {
-        extensions: ['.ts', '.tsx', '.js', '.json', '.ttf']
+        extensions: ['.ts', '.tsx', '.js', '.json']
     },
     externals: {
         react: 'React',
@@ -56,10 +54,8 @@ if (process.env.NODE_ENV === "production") {
     config.mode = "production";
     if (config.output) {
         config.output.filename = `extension-${extName}-bundle-${version}.min.js`;
-        config.output.chunkFilename = '[name]-chunk-[chunkhash].min.js';
     }
     if (config.optimization) {
-        config.optimization.chunkIds = 'deterministic';
         config.optimization.minimize = true;
     }
     config.devtool = false;
