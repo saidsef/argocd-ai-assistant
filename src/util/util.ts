@@ -181,22 +181,33 @@ const ARGOCD_REQUEST_MS = 30000;
  *
  * The timeout covers the body as well as the headers, so a streaming caller must allow for the whole
  * stream (service/logs.ts passes a longer window; its stream is bounded by `follow=false`+`tailLines`).
+ *
+ * `options.signal` composes with that deadline, so an unmount, a resource switch or a Cancel button
+ * actually drops the request rather than leaving it in flight for up to `timeoutMs`. A caller cancel
+ * unwinds as an AbortError for the caller to filter; the deadline still becomes the friendly message.
  */
 export async function argocdFetch(
     url: string,
     application: any,
     what: string,
-    timeoutMs: number = ARGOCD_REQUEST_MS
+    options?: { timeoutMs?: number; signal?: AbortSignal }
 ): Promise<Response> {
+    const timeoutMs = options?.timeoutMs ?? ARGOCD_REQUEST_MS;
+    const signal = options?.signal;
     let response: Response;
     try {
+        const deadline = AbortSignal.timeout(timeoutMs);
         response = await fetch(url, {
             method: "GET",
             credentials: "include",
             headers: argocdApiHeaders(application),
-            signal: AbortSignal.timeout(timeoutMs),
+            signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
         });
     } catch (err) {
+        // AbortSignal.any adopts the reason of whichever signal fired first, so a caller cancel is an
+        // AbortError and the deadline a TimeoutError. The `signal?.aborted` test is what keeps the
+        // no-signal behaviour byte-identical for callers that pass none.
+        if (err instanceof Error && err.name === "AbortError" && signal?.aborted) throw err;
         if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
             throw new Error(`${what} request timed out after ${Math.round(timeoutMs / 1000)}s. The Argo CD API may be unreachable or overloaded.`);
         }

@@ -30,6 +30,13 @@ interface McpServerInfo {
 // surfaces as a tracked error / LLM-only fallback instead of freezing the assistant.
 const MCP_REQUEST_MS = 30000;
 
+// A user Stop is not a server failure, and the two arrive through the same channel: `AbortSignal.any`
+// propagates the reason of whichever signal fired first, so a caller cancel surfaces as AbortError
+// and the MCP_REQUEST_MS deadline as TimeoutError. Recording the former as `unreachable` painted
+// every configured server red on the badge - and, because those errors feed the MCP roster, told the
+// model in the system prompt that every server was down.
+const isAbort = (err: unknown): boolean => err instanceof Error && err.name === "AbortError";
+
 export class McpClient {
     private urls: string[];
     private sessionIds: (string | null)[];
@@ -91,6 +98,8 @@ export class McpClient {
                     method: "notifications/initialized"
                 }, signal);
             } catch (err) {
+                // Let a cancel reject the whole probe (see isAbort); a TimeoutError is still recorded.
+                if (isAbort(err)) throw err;
                 errs[i] = `unreachable: ${errorMessage(err)}`;
             }
         }));
@@ -125,6 +134,7 @@ export class McpClient {
                     serverIndex: i
                 }));
             } catch (err) {
+                if (isAbort(err)) throw err;
                 errs[i] = `unreachable during tools/list: ${errorMessage(err)}`;
             }
         }));

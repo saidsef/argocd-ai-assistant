@@ -1,15 +1,20 @@
 import * as React from "react";
 import DOMPurify from 'dompurify';
 import { marked } from "marked";
+import { ABSOLUTE_URI, keepClass, SANITIZE_CONFIG } from "./sanitize";
 import { copyText, useCopyState } from "./useCopy";
 
-const ABSOLUTE_URI = /^(?:https?|mailto):/i;
-
-// Open *external* assistant links in a new tab with rel hardening. Post-sanitise; anchors only.
-// Same-origin links (an Argo CD deep link like /applications/foo, or a #fragment) stay in the tab,
-// which is where the user expects the console to navigate. target/rel are set only here and are not
-// allow-listed below, so model output can neither supply nor override them.
+// Post-sanitise hardening, applied to every node:
+//  - drop any class that is not a fenced-block language token (see keepClass in ./sanitize);
+//  - open *external* assistant links in a new tab with rel hardening. Same-origin links (an Argo CD
+//    deep link like /applications/foo, or a #fragment) stay in the tab, which is where the user
+//    expects the console to navigate. target/rel are set only here and are not allow-listed in
+//    SANITIZE_CONFIG, so model output can neither supply nor override them.
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+    const className = node.getAttribute?.('class');
+    if (className != null && !keepClass(node.tagName, className)) {
+        node.removeAttribute('class');
+    }
     if (node.tagName !== 'A') return;
     const href = node.getAttribute('href');
     if (href && ABSOLUTE_URI.test(href)) {
@@ -22,45 +27,6 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 // CommonMark would otherwise reflow into one paragraph. Set once - marked.parse re-reads options
 // on every call, and this runs several times a second while streaming.
 marked.use({ gfm: true, breaks: true });
-
-// Exactly the tags Markdown can produce, and nothing else.
-//
-// Replies are grounded in cluster data an attacker may influence (annotations, event messages, log
-// lines), and marked passes raw HTML straight through. DOMPurify's *default* allow-list already
-// blocks scripts and event handlers, but it permits <form>, <input>, <select> and <img> - enough to
-// render a convincing credential prompt, or a tracking pixel that phones home, inside the Argo CD
-// console. None of those are reachable from Markdown syntax, so nothing is lost by dropping them.
-//
-// `div`, `span` and `class` are dropped for the same reason, and they are not merely unnecessary:
-// this component injects its own copy button and keys the click handler on `.code-copy-btn`, so
-// allowing model output to carry classes on generic containers let it render a convincing fake Copy
-// button over a `.sr-only` <pre> and put attacker-chosen text on the clipboard. Markdown produces no
-// div/span at all, and the only class marked emits is `language-*` on <code>, which nothing styles.
-// `align` stays: marked does emit it on table cells.
-//
-// Deliberately not annotated as DOMPurify.Config: the widened type matches the RETURN_TRUSTED_TYPE
-// overload, and sanitize() would then be typed as returning TrustedHTML rather than a string.
-const SANITIZE_CONFIG = {
-    ALLOWED_TAGS: [
-        'p', 'br', 'hr',
-        'strong', 'em', 'del', 'code', 'pre', 'blockquote',
-        'ul', 'ol', 'li',
-        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-        'table', 'thead', 'tbody', 'tr', 'th', 'td',
-        'a'
-    ],
-    ALLOWED_ATTR: ['href', 'title', 'align'],
-    // `align` is not a URL, but a custom ALLOWED_URI_REGEXP is applied to the value of *every*
-    // attribute DOMPurify does not already consider URI-safe (`title` is on that default list;
-    // `align` is not). So align="left" was tested as a URL, failed, and was dropped - which is why
-    // Markdown table alignment silently never rendered despite being allow-listed. Declaring it
-    // URI-safe exempts it from the URL test without widening the URL policy itself.
-    ADD_URI_SAFE_ATTR: ['align'],
-    // Anchors are hardened above; block javascript:/data: outright while still allowing the
-    // same-origin links marked emits for relative paths and fragments - those used to be stripped,
-    // leaving an underlined, clickable-looking, dead link. `//host` is excluded: it is external.
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|#|\/(?!\/))/i
-};
 
 const parseMarkdown = (children: React.ReactNode): string => {
     const markdown = typeof children === "string" ? children.replace(/\n{3,}/g, "\n\n") : "";
@@ -83,7 +49,9 @@ const MarkedWrapper = ({
     const onCopyClick = React.useCallback((e: React.MouseEvent<HTMLDivElement>) => {
         const btn = (e.target as HTMLElement).closest('.code-copy-btn') as HTMLElement | null;
         if (!btn) return;
-        const code = btn.parentElement?.querySelector('pre')?.textContent ?? '';
+        // Resolved from the block, not the button's parent: the button now sits inside an actions
+        // cluster alongside the language label, so parentElement is no longer the wrapper.
+        const code = btn.closest('.code-block')?.querySelector('pre')?.textContent ?? '';
         if (!code) return;
         copyText(code).then((state) => {
             // The label lives on injected DOM, which a re-parse replaces - so only touch it while
@@ -123,7 +91,8 @@ const MarkedWrapper = ({
         return () => clearTimeout(t);
     }, [children]);
 
-    // Wrap each code block with a container + copy button, as real DOM after sanitising.
+    // Wrap each code block with a container, a language label and a copy button, as real DOM after
+    // sanitising.
     //
     // This used to be a string replace of <pre> before DOMPurify ran, which forced <button> to stay
     // in the allow-list and broke outright on model output containing `<pre class="...">` - the
@@ -135,13 +104,31 @@ const MarkedWrapper = ({
             if (pre.parentElement?.classList.contains('code-block')) continue;
             const wrapper = document.createElement('div');
             wrapper.className = 'code-block';
+
+            // Both controls live in one absolutely-positioned cluster, so they stay pinned to the
+            // top-right when a long line scrolls the <pre> underneath them.
+            const actions = document.createElement('div');
+            actions.className = 'code-block-actions';
+
+            // The sanitiser lets exactly one class through here - `language-*` on <code> - so this
+            // reads the fence's info string and nothing an attacker chose. See keepClass.
+            const language = pre.querySelector('code')?.getAttribute('class')?.replace(/^language-/, '');
+            if (language) {
+                const tag = document.createElement('span');
+                tag.className = 'code-lang';
+                tag.textContent = language;
+                actions.append(tag);
+            }
+
             const button = document.createElement('button');
             button.type = 'button';
             button.className = 'code-copy-btn';
             button.setAttribute('aria-label', 'Copy code');
             button.textContent = 'Copy';
+            actions.append(button);
+
             pre.replaceWith(wrapper);
-            wrapper.append(button, pre);
+            wrapper.append(actions, pre);
         }
     }, [html]);
 

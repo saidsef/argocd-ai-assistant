@@ -7,6 +7,14 @@ export interface ChatMessage {
     parts: Array<{ type: "text"; text: string }>;
     /** UI-only message (welcome banner, flow prompts) — excluded from LLM history. */
     local?: boolean;
+    /**
+     * The reply was cut short by Stop. Unlike `local` this is still a real turn that counts as
+     * history — it is just a truncated one, so it is marked rather than passed off as a complete
+     * answer. Deliberately a flag and not appended text: the partial reply is genuine history that
+     * flows into the next request, and a synthetic "_Stopped._" would be re-sent to the model as
+     * something the assistant actually said.
+     */
+    stopped?: boolean;
 }
 
 type ChatStatus = "submitted" | "streaming" | "ready" | "error";
@@ -181,6 +189,16 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
         // Cleared here rather than in the aborted invocation's finally: releasing ownership above is
         // what stops that invocation writing over a newer send's state, so it no longer clears this.
         setToolStatus(null);
+        // Mark the bubble as truncated. Done here rather than in sendMessage's finally because this
+        // is the only path that knows a *user* cancelled - the unmount effect below aborts the
+        // controller directly and must not mark anything on a tree that is going away.
+        setMessages((prev) => {
+            const i = prev.length - 1;
+            // Only a bubble that actually started: Stop pressed before the first token leaves the
+            // user's own turn last, and there is nothing truncated to mark.
+            if (i < 0 || prev[i].role !== "assistant" || prev[i].local) return prev;
+            return [...prev.slice(0, i), { ...prev[i], stopped: true }];
+        });
     }, []);
 
     const clearError = React.useCallback(() => setError(undefined), []);

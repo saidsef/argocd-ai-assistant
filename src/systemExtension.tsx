@@ -36,8 +36,13 @@ export const SystemAssistantExtension = (_props: any) => {
         mcpToken: storageRef.current?.mcpToken ?? undefined
     }), [settings, routingApp]);
 
-    const welcomeMessage = "How can I help you with Argo CD today?" +
-        mcpWelcomeHint((getMcpStatus?.() ?? []).map((s) => s.handle));
+    // Memoised on the stable getMcpStatus identity - see the same note in resourceExtension.tsx.
+    const mcpHint = React.useMemo(
+        () => mcpWelcomeHint((getMcpStatus?.() ?? []).map((s) => s.handle)),
+        [getMcpStatus]
+    );
+
+    const welcomeMessage = "How can I help you with Argo CD today?" + mcpHint;
 
     const handleCommand = React.useCallback(
         (input: string, _messages: ChatMessage[], setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {

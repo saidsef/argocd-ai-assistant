@@ -1,7 +1,7 @@
 import * as React from "react";
 import { ChatTurn, McpServerStatus, mcpState, QueryContext, QueryProvider } from "../model/provider";
 import { ManageStorage } from "../util/storage";
-import { errorMessage, generateId } from "../util/util";
+import { errorMessage, generateId, injectMessage } from "../util/util";
 import ChatInput from "./ChatInput";
 import ChatMessage from "./ChatMessage";
 import { useChat, type ChatMessage as ChatMessageType, type ChatChunk, type UseChatOptions } from "./useChat";
@@ -27,13 +27,46 @@ const buildWelcome = (welcomeMessage?: string): ChatMessageType[] =>
 // UI says it - it used to live only in docs/architecture.md.
 const ADDRESSING_HINT = "Name a server in your message to use its tools.";
 
+/** State dot for a header chip: neutral, healthy, or failing. */
+export type ChipState = "idle" | "on" | "error";
+
+/**
+ * One compact header chip: icon, ellipsising label, state dot.
+ *
+ * role="img" so the aria-label is honoured: on a bare <span> the role is `generic`, which prohibits
+ * naming, so screen readers ignored the label entirely and the detail was mouse-only. `title` and
+ * `aria-label` are separate because the tooltip is multi-line and the accessible name must not be.
+ */
+const Chip = React.memo(({ icon, label, state, title, ariaLabel }: {
+    icon: string;
+    label: string;
+    state: ChipState;
+    title: string;
+    ariaLabel: string;
+}) => (
+    <span className="chat-mcp-badge" role="img" title={title} aria-label={ariaLabel}>
+        <span className="chat-mcp-icon" aria-hidden="true">{icon}</span>
+        <span className="chat-mcp-label">{label}</span>
+        <span
+            className={`chat-mcp-dot${state === "on" ? " chat-mcp-dot-on" : state === "error" ? " chat-mcp-dot-error" : ""}`}
+            aria-hidden="true"
+        />
+    </span>
+));
+
+/** What is grounding the current answer, for the header chip. */
+export interface ContextStatus {
+    /** Short inventory of attached sources, e.g. "manifest · app · events". */
+    label: string;
+    state: ChipState;
+    /** Full sentence for the tooltip and the accessible name. */
+    detail: string;
+}
+
 // Compact indicator that MCP is active, shown left of "New chat" when servers are configured. Starts
 // as the configured hostname (grey dot), then upgrades to the server-reported name + tool count +
 // green dot once the provider has connected, or a red dot with the reason if a server was
 // unreachable.
-//
-// role="img" so the aria-label is honoured: on a bare <span> the role is `generic`, which prohibits
-// naming, so screen readers ignored the label entirely and the failure reason was mouse-only.
 const McpBadge = React.memo(({ servers }: { servers: McpServerStatus[] }) => {
     const anyConnected = servers.some((s) => s.connected && !s.error);
     const anyFailed = servers.some((s) => s.error);
@@ -49,14 +82,8 @@ const McpBadge = React.memo(({ servers }: { servers: McpServerStatus[] }) => {
         `${s.handle}${s.name && s.name !== s.handle ? ` (${s.name})` : ""} — ${mcpState(s)} — ${pluralTools(s.toolCount)}${s.error ? `\n${s.error}` : ""}`;
     const tooltip = `${servers.map(describe).join("\n")}\n\n${ADDRESSING_HINT}`;
     const ariaLabel = `${servers.length === 1 ? "MCP server" : `${servers.length} MCP servers`}: ${servers.map((s) => describe(s).replace(/\n/g, ". ")).join("; ")}. ${ADDRESSING_HINT}`;
-    const dotClass = anyFailed && !anyConnected ? " chat-mcp-dot-error" : anyConnected ? " chat-mcp-dot-on" : "";
-    return (
-        <span className="chat-mcp-badge" role="img" title={tooltip} aria-label={ariaLabel}>
-            <span className="chat-mcp-icon" aria-hidden="true">&#128268;</span>
-            <span className="chat-mcp-label">{label}</span>
-            <span className={`chat-mcp-dot${dotClass}`} aria-hidden="true" />
-        </span>
-    );
+    const state: ChipState = anyFailed && !anyConnected ? "error" : anyConnected ? "on" : "idle";
+    return <Chip icon={"\u{1F50C}"} label={label} state={state} title={tooltip} ariaLabel={ariaLabel} />;
 });
 
 export interface ChatInterfaceProps {
@@ -74,6 +101,13 @@ export interface ChatInterfaceProps {
     onClear?: () => void;
     /** Live MCP server status for the header badge; omitted when MCP is disabled/unconfigured. */
     getMcpStatus?: () => McpServerStatus[];
+    /** What is grounding the answer, for the header chip. Omitted where there is no context (the
+     *  system-level page attaches none). */
+    contextStatus?: ContextStatus;
+    /** One-off message to post into the transcript when it becomes non-null - used to tell the user
+     *  a context source failed. Posted once per distinct value; the parent's effects cannot reach
+     *  this component's message state any other way. */
+    notice?: string | null;
     children?: React.ReactNode | ((helpers: { setMessages: React.Dispatch<React.SetStateAction<ChatMessageType[]>> }) => React.ReactNode);
 }
 
@@ -86,6 +120,8 @@ const ChatInterface = ({
     onCommand,
     onClear,
     getMcpStatus,
+    contextStatus,
+    notice,
     children
 }: ChatInterfaceProps) => {
     const getContextRef = React.useRef(getContext);
@@ -215,6 +251,18 @@ const ChatInterface = ({
         );
     }, [welcomeMessage, setMessages]);
 
+    // Post a context-failure notice into the transcript, once per distinct message. Keyed on the text
+    // rather than a boolean so a *different* failure after the first still gets said, while a
+    // re-render with the same one does not repeat itself.
+    // Seeded null, not `notice`: seeding from the prop meant a notice already present at mount was
+    // silently swallowed, and this component remounts (key={chatKey}) on every resource change.
+    const noticeRef = React.useRef<string | null | undefined>(null);
+    React.useEffect(() => {
+        if (noticeRef.current === notice) return;
+        noticeRef.current = notice;
+        if (notice) setMessages(injectMessage(notice));
+    }, [notice, setMessages]);
+
     const [input, setInput] = React.useState("");
     // Mirrored so the (stable) submit callback reads the current draft without re-creating itself on
     // every keystroke, which would re-render the memoised composer.
@@ -296,11 +344,23 @@ const ChatInterface = ({
     const wasBusyRef = React.useRef(false);
     React.useEffect(() => {
         if (wasBusyRef.current && !isBusy) {
-            const last = [...messages].reverse().find((m) => m.role === "assistant" && !m.local);
-            setAnnouncement(last ? (last.parts || []).map((p) => p.text).join("") : "");
+            // The newest message, not "the last assistant message anywhere": a reply stopped before
+            // its first token leaves no new bubble, and searching backwards then re-announced the
+            // *previous* answer. (It also copied the whole array to do it.)
+            const last = messages[messages.length - 1];
+            const done = last && last.role === "assistant" && !last.local && status !== "error" ? last : undefined;
+            // Announce *that* the reply landed, not the reply itself. Piping a 2,000-word answer
+            // through a live region reads the whole thing aloud, uninterruptibly, on top of whatever
+            // the user was already reading. The transcript is a role="log" region they navigate at
+            // their own pace.
+            const words = done
+                ? (done.parts || []).map((p) => p.text).join("").trim().split(/\s+/).filter(Boolean).length
+                : 0;
+            const count = `${words} ${words === 1 ? "word" : "words"}`;
+            setAnnouncement(!done ? "" : done.stopped ? `Response stopped after ${count}.` : `Response ready, ${count}.`);
         }
         wasBusyRef.current = isBusy;
-    }, [isBusy, messages]);
+    }, [isBusy, messages, status]);
 
     // Escape stops a running reply - the same action as the Stop button, without reaching for it.
     // Scoped to this extension's subtree, not window: Argo CD uses Escape to close its own sliding
@@ -370,6 +430,15 @@ const ChatInterface = ({
     return (
         <div id={id} ref={rootRef}>
             <div className="chat-header">
+                {contextStatus && (
+                    <Chip
+                        icon={"\u{1F4CE}"}
+                        label={contextStatus.label}
+                        state={contextStatus.state}
+                        title={contextStatus.detail}
+                        ariaLabel={contextStatus.detail}
+                    />
+                )}
                 {mcpStatus && mcpStatus.length > 0 && <McpBadge servers={mcpStatus} />}
                 <button
                     type="button"
