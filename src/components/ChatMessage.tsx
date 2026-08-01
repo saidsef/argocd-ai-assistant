@@ -29,6 +29,9 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
                     ? <span key={`${message.id}-${i}`}>{part.text}</span>
                     : <MarkedWrapper key={`${message.id}-${i}`}>{part.text}</MarkedWrapper>
             )}
+            {/* A cut-short reply must not read as a finished one - the truncated half of a
+                remediation step looks exactly like complete advice. */}
+            {!isUser && message.stopped && <span className="chat-message-stopped">Stopped</span>}
             {!isUser && fullText.length > 0 && (
                 <button
                     type="button"

@@ -47,7 +47,7 @@ export function summariseLogs(entries: LogEntry[], container?: string): string {
     return `${header}\n${capText(rows.join("\n"), MAX_LOG_CHARS, "container log", "end")}`;
 }
 
-export const getLogs = async (application: any, resource: any, container: string, count: number): Promise<LogEntry[]> => {
+export const getLogs = async (application: any, resource: any, container: string, count: number, signal?: AbortSignal): Promise<LogEntry[]> => {
     const params = new URLSearchParams({
         appNamespace: application?.metadata?.namespace ?? "",
         namespace: resource?.metadata?.namespace ?? "",
@@ -67,7 +67,7 @@ export const getLogs = async (application: any, resource: any, container: string
 
     const url = `/api/v1/applications/${encodeURIComponent(application?.metadata?.name ?? "")}/logs?${params.toString()}`;
 
-    const response = await argocdFetch(url, application, "Pod logs", LOGS_REQUEST_MS);
+    const response = await argocdFetch(url, application, "Pod logs", { timeoutMs: LOGS_REQUEST_MS, signal });
     if (!response.body) {
         throw new Error("The Pod logs API returned no response body.");
     }

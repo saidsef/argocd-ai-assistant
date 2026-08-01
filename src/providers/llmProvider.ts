@@ -1,5 +1,5 @@
 import { AttachmentType, ChatTurn, McpServerConfig, McpServerStatus, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
-import { capText, MAX_HISTORY_TURN_CHARS, MAX_TOOL_RESULT_CHARS } from "../util/context";
+import { budgetHistory, capText, MAX_HISTORY_TURN_CHARS, MAX_TOOL_RESULT_CHARS } from "../util/context";
 import { readLines, sseData } from "../util/stream";
 import { argocdHeaders, bearer, canRouteToProxy, containsWord, errorMessage, mcpConfigured, parseMcpServers } from "../util/util";
 import { McpClient, McpTool } from "./mcpClient";
@@ -202,8 +202,27 @@ export class LlmProvider implements QueryProvider {
                 }
             }
         } catch (err) {
-            // A user Stop during connect/discovery is not an MCP failure; let it unwind.
-            if (err instanceof Error && err.name === "AbortError") throw err;
+            // A user Stop during connect/discovery is not an MCP failure; let it unwind - but reset
+            // the probe state *before* rethrowing.
+            //
+            // `mcpReady` memoises this promise. Leaving a rejected one cached with `mcpUrls` set and
+            // `mcpNeedsReprobe` false made `sameUrls` match on the next ensureMcp, so every later
+            // query was handed the same rejected promise and rethrew this AbortError - which the
+            // transport filters as an expected cancel. The assistant went permanently dead for the
+            // rest of the session with nothing shown.
+            //
+            // The client is dropped rather than reused because a cancelled handshake leaves some
+            // servers initialized and some not, and a half-built client would go straight to
+            // tools/list against the ones that never connected. `mcpErrors` is deliberately left
+            // alone: a cancellation should neither erase nor invent a per-server diagnosis.
+            if (err instanceof Error && err.name === "AbortError") {
+                this.mcpClient = undefined;
+                this.mcpTools = undefined;
+                this.mcpUrls = undefined;
+                this.mcpNeedsReprobe = false;
+                this.mcpReady = undefined;
+                throw err;
+            }
             const errMsg = errorMessage(err);
             console.warn(`MCP initialization failed, answering without tools: ${errMsg}`);
             this.mcpErrors = servers.map(() => errMsg);
@@ -597,12 +616,19 @@ export class LlmProvider implements QueryProvider {
         messages.push({ role: 'system', content: systemText });
 
         if (history && history.length > 0) {
-            // Cap each turn: history is bounded by turn count, not size, so one pasted manifest in an
-            // earlier message would otherwise ride along in full on every subsequent request.
-            messages.push(...history.map((turn) => ({
+            // Two bounds, both needed. Per turn: one pasted manifest in an earlier message would
+            // otherwise ride along in full on every subsequent request. In aggregate: the turn count
+            // alone let a long conversation re-send up to MAX_HISTORY_MESSAGES x
+            // MAX_HISTORY_TURN_CHARS on every request, which was the largest term in the prompt.
+            //
+            // Applied here rather than in the UI transport because this is the only place that sees
+            // the whole prompt - persona, attachments, roster, tool block and history together.
+            // Note lastUserTurn() reads the *raw* history argument, so trimming here cannot break
+            // the two-turn MCP addressing window.
+            messages.push(...budgetHistory(history.map((turn) => ({
                 role: turn.role,
                 content: capText(turn.content, MAX_HISTORY_TURN_CHARS, "an earlier message")
-            })));
+            }))));
         }
 
         messages.push({ role: 'user', content: prompt });

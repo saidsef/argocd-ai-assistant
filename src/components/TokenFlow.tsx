@@ -60,8 +60,12 @@ export const TokenPrompt = ({ value, onChange, onSubmit }: TokenPromptProps) => 
                 }}
                 className="chat-flow-input"
                 aria-label="Argo CD token"
+                // An Argo CD API token is not a site password. Without this the browser offers to
+                // save it, and offers to fill it back in on the next visit.
+                autoComplete="off"
+                spellCheck={false}
             />
-            <button onClick={onSubmit} className="chat-flow-button">
+            <button type="button" onClick={onSubmit} className="chat-flow-button">
                 Save
             </button>
         </div>

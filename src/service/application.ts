@@ -148,7 +148,7 @@ export function summariseApplication(app: any): ApplicationSummary | null {
 // Read-only: no `refresh` param, so this never triggers a reconcile. On any failure it falls back
 // to summarising the Application object already held in props, so the assistant never loses
 // grounding just because the extra fetch failed.
-export async function getApplicationSummary(application: any): Promise<ApplicationSummary | null> {
+export async function getApplicationSummary(application: any, signal?: AbortSignal): Promise<ApplicationSummary | null> {
     const name = application?.metadata?.name;
     const namespace = application?.metadata?.namespace;
     if (!name) return summariseApplication(application);
@@ -159,11 +159,15 @@ export async function getApplicationSummary(application: any): Promise<Applicati
         const qs = params.toString();
         const url = `/api/v1/applications/${encodeURIComponent(name)}${qs ? `?${qs}` : ""}`;
 
-        const response = await argocdFetch(url, application, "Application");
+        const response = await argocdFetch(url, application, "Application", { signal });
         const fresh = await response.json();
         return summariseApplication(fresh) ?? summariseApplication(application);
     } catch (err) {
-        console.warn("Failed to fetch Argo CD application summary, falling back to cached manifest:", err);
+        // A caller cancel (resource switch / unmount) is not a failure worth reporting - without this
+        // every resource switch logged a spurious warning.
+        if (!(err instanceof Error && err.name === "AbortError")) {
+            console.warn("Failed to fetch Argo CD application summary, falling back to cached manifest:", err);
+        }
         return summariseApplication(application);
     }
 }
