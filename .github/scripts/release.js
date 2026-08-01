@@ -1,24 +1,38 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 
-// Fetch all tags from the remote
-execSync('git fetch --tags');
+const REPO = process.env.GITHUB_REPOSITORY || 'saidsef/argocd-ai-assistant';
+const SEMVER_TAG = /^v\d+\.\d+\.\d+$/;
+const DRY_RUN = process.env.DRY_RUN === '1';
 
-function getLatestTag() {
+// Field/record separators so multi-line commit bodies survive parsing
+const FIELD = '\x1f';
+const RECORD = '\x1e';
+
+function git(command, fallback = '') {
   try {
-    return execSync('git describe --tags --abbrev=0', { encoding: 'utf8' }).trim();
+    return execSync(command, { encoding: 'utf8' }).trim();
   } catch {
-    return 'v0.0.0';
+    return fallback;
   }
 }
 
+// Fetch all tags from the remote
+if (!DRY_RUN) {
+  execSync('git fetch --tags');
+}
+
 function getAllTags() {
-  try {
-    const tags = execSync('git tag', { encoding: 'utf8' }).trim().split('\n');
-    return tags.filter(tag => tag.match(/^v\d+\.\d+\.\d+$/));
-  } catch {
-    return [];
-  }
+  const output = git('git tag --list --sort=-v:refname');
+  if (!output) return [];
+  return output.split('\n').map(tag => tag.trim()).filter(tag => SEMVER_TAG.test(tag));
+}
+
+// Highest released version, not the nearest reachable tag. `git describe` can
+// point at an older tag on a merged branch, which then produces a tag that
+// already exists.
+function getLatestTag(allTags) {
+  return allTags.length > 0 ? allTags[0] : 'v0.0.0';
 }
 
 function incrementVersion(version, type) {
@@ -37,158 +51,104 @@ function incrementVersion(version, type) {
 }
 
 function getCommitsSinceTag(lastTag) {
-  const command = lastTag === 'v0.0.0'
-    ? 'git log --oneline --format="%H|%an|%ae|%s"'
-    : `git log ${lastTag}..HEAD --oneline --format="%H|%an|%ae|%s"`;
-  try {
-    const output = execSync(command, { encoding: 'utf8' }).trim();
-    if (!output) return [];
+  const format = `--format=%H${FIELD}%an${FIELD}%ae${FIELD}%s${FIELD}%b${RECORD}`;
+  const range = lastTag === 'v0.0.0' ? '' : `${lastTag}..HEAD `;
+  const output = git(`git log ${range}${format}`);
+  if (!output) return [];
 
-    return output.split('\n').map(line => {
-      const [hash, author, email, ...messageParts] = line.split('|');
-      const message = messageParts.join('|');
-      const prMatch = message.match(/#(\d+)/);
+  return output.split(RECORD)
+    .map(record => record.trim())
+    .filter(record => record)
+    .map(record => {
+      const [hash, author, email, subject, body = ''] = record.split(FIELD);
+      // Squash merges append the PR number to the subject: strip it so the
+      // rendered line does not carry the same reference twice.
+      const prMatch = subject.match(/\s*\(#(\d+)\)\s*$/);
       return {
         hash: hash.substring(0, 7),
         fullHash: hash,
         author,
         email,
-        message,
+        subject: prMatch ? subject.slice(0, prMatch.index).trim() : subject.trim(),
+        body: body.trim(),
         prNumber: prMatch ? prMatch[1] : null
       };
     });
-  } catch {
-    return [];
-  }
+}
+
+// Only @-mention a handle we can trust. Deriving one from a vanity address
+// (said@example.com -> @said) pings an unrelated GitHub account.
+function attribution(commit) {
+  const noreply = (commit.email || '').match(/^(?:\d+\+)?([^@]+)@users\.noreply\.github\.com$/i);
+  return noreply ? `@${noreply[1]}` : commit.author;
 }
 
 function getNewContributors(commits, lastTag) {
-  try {
-    const oldAuthorsCommand = lastTag === 'v0.0.0'
-      ? 'echo ""'
-      : `git log --format="%ae" ${lastTag}`;
-    const oldAuthorsOutput = execSync(oldAuthorsCommand, { encoding: 'utf8' }).trim();
-    const oldAuthors = new Set(oldAuthorsOutput.split('\n').filter(e => e));
+  if (lastTag === 'v0.0.0') return [];
 
-    const newAuthors = [];
-    const seenEmails = new Set();
+  const oldAuthorsOutput = git(`git log --format=%ae ${lastTag}`);
+  const oldAuthors = new Set(oldAuthorsOutput.split('\n').map(e => e.trim()).filter(e => e));
 
-    for (const commit of commits) {
-      if (!oldAuthors.has(commit.email) && !seenEmails.has(commit.email)) {
-        seenEmails.add(commit.email);
-        let username = commit.email.split('@')[0];
-        const plusIndex = username.indexOf('+');
-        if (plusIndex !== -1) {
-          username = username.substring(plusIndex + 1);
-        }
-        newAuthors.push({ name: commit.author, username, email: commit.email });
-      }
+  const newContributors = [];
+  const seenEmails = new Set();
+
+  for (const commit of commits) {
+    if (!oldAuthors.has(commit.email) && !seenEmails.has(commit.email)) {
+      seenEmails.add(commit.email);
+      newContributors.push({ name: commit.author, credit: attribution(commit) });
     }
-    return newAuthors;
-  } catch {
-    return [];
   }
+  return newContributors;
 }
 
 function formatCommitsForRelease(commits) {
-  if (commits.length === 0) return '- Initial release';
   return commits.map(commit => {
-    let username = commit.email.split('@')[0];
-    const plusIndex = username.indexOf('+');
-    if (plusIndex !== -1) {
-      username = username.substring(plusIndex + 1);
-    }
-    let line = `- ${commit.message} (${commit.hash})`;
+    let line = `- ${commit.subject}`;
     if (commit.prNumber) {
-      line += ` ([#${commit.prNumber}](https://github.com/${process.env.GITHUB_REPOSITORY}/pull/${commit.prNumber}))`;
+      line += ` ([#${commit.prNumber}](https://github.com/${REPO}/pull/${commit.prNumber}))`;
     }
-    line += ` by @${username}`;
+    line += ` by ${attribution(commit)} (${commit.hash})`;
     return line;
   }).join('\n');
 }
 
-function getDiffSinceTag(lastTag) {
-  const command = lastTag === 'v0.0.0'
-    ? 'git diff $(git hash-object -t tree /dev/null)..HEAD'
-    : `git diff ${lastTag}..HEAD`;
-  try {
-    return execSync(command, { encoding: 'utf8' });
-  } catch {
-    return '';
-  }
-}
+// Classify from conventional commit headers rather than raw diff lines. The
+// diff heuristics matched every `--- a/package.json` header and every moved
+// `export`, so routine dependency bumps were published as minor or major.
+function classifyVersion(commits) {
+  const override = (process.env.RELEASE_TYPE || '').toLowerCase();
+  if (['major', 'minor', 'patch'].includes(override)) return override;
 
-function classifyVersion(diff) {
-  const lines = diff.split('\n');
-  let hasMajorChange = false;
-  let hasMinorChange = false;
+  let releaseType = 'patch';
 
-  for (const line of lines) {
-    const trimmedLine = line.trim();
+  for (const commit of commits) {
+    const header = commit.subject.match(/^([a-zA-Z]+)(\([^)]*\))?(!)?:/);
+    const breakingHeader = Boolean(header && header[3]);
+    const breakingBody = /^BREAKING[ -]CHANGE:/m.test(commit.body);
 
-    // MAJOR: Breaking changes
-    if (line.startsWith('-resource "')) {
-      hasMajorChange = true;
-    }
-    if (line.includes('def ') && line.startsWith('-')) {
-      hasMajorChange = true;
-    }
-    if (line.includes('class ') && line.startsWith('-')) {
-      hasMajorChange = true;
-    }
-    if (trimmedLine.includes('"main":') && line.startsWith('-')) {
-      hasMajorChange = true;
-    }
-    if (trimmedLine.includes('"exports":') && line.startsWith('-')) {
-      hasMajorChange = true;
-    }
-    if (line.includes('export ') && line.startsWith('-')) {
-      hasMajorChange = true;
-    }
-    if (trimmedLine.includes('destroy') && line.startsWith('-')) {
-      hasMajorChange = true;
-    }
-
-    // MINOR: New features
-    if (line.startsWith('+resource "') || line.startsWith('+variable "') || line.startsWith('+output "')) {
-      hasMinorChange = true;
-    }
-    if ((line.includes('def ') || line.includes('class ')) && line.startsWith('+')) {
-      hasMinorChange = true;
-    }
-    if (line.includes('export ') && line.startsWith('+')) {
-      hasMinorChange = true;
-    }
-    if (trimmedLine.includes('"dependencies":') && line.startsWith('+')) {
-      hasMinorChange = true;
-    }
-    if (line.includes('package.json') || (line.startsWith('+') && trimmedLine.match(/"[^"]+": "[\^~]?\d+\.\d+\.\d+"/))) {
-      hasMinorChange = true;
-    }
+    if (breakingHeader || breakingBody) return 'major';
+    if (header && header[1].toLowerCase() === 'feat') releaseType = 'minor';
   }
 
-  if (hasMajorChange) return 'major';
-  if (hasMinorChange) return 'minor';
-  return 'patch';
+  return releaseType;
 }
 
 function createReleaseNotes(newTag, commits, lastTag, newContributors) {
   const date = new Date().toISOString().split('T')[0];
   const compareUrl = lastTag === 'v0.0.0'
-    ? `https://github.com/${process.env.GITHUB_REPOSITORY}/commits/${newTag}`
-    : `https://github.com/${process.env.GITHUB_REPOSITORY}/compare/${lastTag}...${newTag}`;
+    ? `https://github.com/${REPO}/commits/${newTag}`
+    : `https://github.com/${REPO}/compare/${lastTag}...${newTag}`;
 
-  const formattedCommits = formatCommitsForRelease(commits);
   let notes = `## Release ${newTag} - ${date}
 
 ### What Changed
-${formattedCommits}
+${formatCommitsForRelease(commits)}
 `;
 
   if (newContributors.length > 0) {
     notes += `\n### New Contributors\n`;
     newContributors.forEach(contributor => {
-      notes += `- @${contributor.username}\n`;
+      notes += `- ${contributor.credit}\n`;
     });
   }
 
@@ -196,45 +156,56 @@ ${formattedCommits}
   return notes;
 }
 
-// Main execution
-const lastTag = getLatestTag();
-const allTags = getAllTags();
-const allTagsSet = new Set(allTags);
-
-const diff = getDiffSinceTag(lastTag);
-const releaseType = classifyVersion(diff);
-
-let newTag = incrementVersion(lastTag, releaseType);
-
-while (allTagsSet.has(newTag)) {
-  console.log(`Tag ${newTag} already exists. Recalculating...`);
-  const highestTag = allTags.sort((a, b) => {
-    const aParts = a.replace('v', '').split('.').map(Number);
-    const bParts = b.replace('v', '').split('.').map(Number);
-    if (aParts[0] !== bParts[0]) return bParts[0] - aParts[0];
-    if (aParts[1] !== bParts[1]) return bParts[1] - aParts[1];
-    return bParts[2] - aParts[2];
-  })[0];
-  newTag = incrementVersion(highestTag, releaseType);
+function setOutput(key, value) {
+  if (process.env.GITHUB_OUTPUT) {
+    fs.appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
+  }
 }
 
+// Main execution
+const allTags = getAllTags();
+const allTagsSet = new Set(allTags);
+const lastTag = getLatestTag(allTags);
 const commits = getCommitsSinceTag(lastTag);
+
+// Nothing new since the last tag - most often a second CI run completing on an
+// already released commit. Publishing here duplicates the previous release.
+if (commits.length === 0) {
+  console.log(`No commits since ${lastTag} - skipping release`);
+  setOutput('should_release', 'false');
+  process.exit(0);
+}
+
+const releaseType = classifyVersion(commits);
+
+let newTag = incrementVersion(lastTag, releaseType);
+while (allTagsSet.has(newTag)) {
+  console.log(`Tag ${newTag} already exists. Recalculating...`);
+  newTag = incrementVersion(newTag, 'patch');
+}
+
 const newContributors = getNewContributors(commits, lastTag);
 
 console.log(`Creating release ${newTag} from ${lastTag} (type: ${releaseType})`);
 console.log(`Found ${commits.length} commits and ${newContributors.length} new contributors`);
 
-// Write outputs for later steps
-fs.writeFileSync('new-tag.txt', newTag);
-if (process.env.GITHUB_OUTPUT) {
-  fs.appendFileSync(process.env.GITHUB_OUTPUT, `new_tag=${newTag}\n`);
+const releaseNotes = createReleaseNotes(newTag, commits, lastTag, newContributors);
+
+if (DRY_RUN) {
+  console.log('DRY_RUN - no tag created, no files written');
+  console.log('Release notes preview:');
+  console.log(releaseNotes);
+  process.exit(0);
 }
 
-// Create annotated tag locally (do not push yet — build first)
+// Write outputs for later steps
+fs.writeFileSync('new-tag.txt', newTag);
+setOutput('new_tag', newTag);
+setOutput('should_release', 'true');
+
+// Create annotated tag locally (do not push yet - build first)
 execSync(`git tag -a ${newTag} -m "Release ${newTag}"`);
 
-// Generate release notes
-const releaseNotes = createReleaseNotes(newTag, commits, lastTag, newContributors);
 fs.writeFileSync('release-notes.md', releaseNotes);
 
 console.log(`Tag ${newTag} created locally`);
