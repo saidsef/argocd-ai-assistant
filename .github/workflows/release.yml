@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: tag-release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -43,16 +43,19 @@ jobs:
         run: node .github/scripts/release.js
 
       - name: Build and package
+        if: steps.release.outputs.should_release == 'true'
         run: |
           NEW_TAG=$(cat new-tag.txt)
           VERSION="$NEW_TAG" yarn run package
 
       - name: Push tag
+        if: steps.release.outputs.should_release == 'true'
         run: |
           NEW_TAG=$(cat new-tag.txt)
           git push origin "$NEW_TAG"
 
       - name: Create GitHub Release
+        if: steps.release.outputs.should_release == 'true'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.release.outputs.new_tag }}
