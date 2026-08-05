@@ -16,22 +16,52 @@ export interface ToolCall {
     arguments: any;
 }
 
-export function parseToolCall(text: string, tools?: ToolSpec[]): ToolCall | null {
-    // Primary: a <tool name="X">{json}</tool> block anywhere in the reply (tolerate a preamble).
-    const xml = text.match(/<tool\s+name="([^"]+)">\s*([\s\S]*?)\s*<\/tool>/);
-    if (xml) {
+/**
+ * Every tool call in a reply, in the order the model wrote them.
+ *
+ * All blocks, not just the first: a model that batches several searches into one reply had the
+ * rest dropped with no result and no error, which reads to the user as the tool never running.
+ */
+export function parseToolCalls(text: string, tools?: ToolSpec[]): ToolCall[] {
+    const block = /<tool\s+name="([^"]+)">\s*([\s\S]*?)\s*<\/tool>/g;
+    const calls: ToolCall[] = [];
+    const seen = new Set<string>();
+    let sawBlock = false;
+
+    for (let xml = block.exec(text); xml; xml = block.exec(text)) {
+        sawBlock = true;
         const name = xml[1];
         // Only a real tool name is a call; this ignores the prompt's own name="EXACT_TOOL_NAME"
         // template and any <tool> syntax the model quotes inside a normal answer.
-        if (!tools || !tools.some(t => t.name === name)) return null;
+        if (!tools || !tools.some(t => t.name === name)) continue;
+        let args: any;
         try {
-            return { name, arguments: JSON.parse(xml[2].trim()) };
+            args = JSON.parse(xml[2].trim());
         } catch (_e) {
-            return { name, arguments: {} };
+            args = {};
         }
+        // A repeated identical call spends a round trip to return what the first one already did.
+        const key = JSON.stringify([name, args]);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        calls.push({ name, arguments: args });
     }
 
-    // Fallback: the model emitted a bare or fenced JSON object instead of the wrapper.
+    // A block naming no available tool is still a tool attempt, not prose. Falling through to the
+    // JSON heuristic here would parse the example object out of an ordinary answer.
+    if (sawBlock) return calls;
+
+    const bare = parseBareJsonCall(text, tools);
+    return bare ? [bare] : [];
+}
+
+/** The first tool call in `text`, or null when there is none. */
+export function parseToolCall(text: string, tools?: ToolSpec[]): ToolCall | null {
+    return parseToolCalls(text, tools)[0] ?? null;
+}
+
+// The model emitted a bare or fenced JSON object instead of the <tool> wrapper.
+function parseBareJsonCall(text: string, tools?: ToolSpec[]): ToolCall | null {
     const json = extractJsonObject(text);
     if (!json || typeof json.value !== "object") return null;
     // A real bare-JSON call ends the model's turn; if prose follows the object it is incidental

@@ -37,6 +37,34 @@ const MCP_REQUEST_MS = 30000;
 // model in the system prompt that every server was down.
 const isAbort = (err: unknown): boolean => err instanceof Error && err.name === "AbortError";
 
+// One transient gateway failure should not lose a tool call. An MCP server behind an ingress returns
+// 503 for however long it has no ready endpoint - a rollout, a restart, a scale event - and a single
+// fetch turns that moment into "the tool never ran" with nothing to distinguish it from a quiet model.
+const MCP_ATTEMPTS = 3;
+const MCP_RETRY_BACKOFF_MS = 250;
+
+// Carries the status so the retry policy can decide on it rather than parsing the message. The
+// message is unchanged: it is what the user sees in a tool-failure notice.
+class McpHttpError extends Error {
+    constructor(public readonly status: number, serverIndex: number) {
+        super(`MCP server ${serverIndex} returned HTTP ${status}`);
+        this.name = "McpHttpError";
+    }
+}
+
+/**
+ * Whether a failed attempt may be replayed.
+ *
+ * 502/503 come from the gateway *before* the request reaches the MCP server, so replaying one cannot
+ * re-run a tool that never ran. Everything else is excluded on purpose - including 504 and a dropped
+ * connection, where the server may have received the call and be running it - because `tools/call`
+ * is not guaranteed idempotent and a silent double-execution is worse than a reported failure.
+ */
+const isRetryable = (err: unknown): boolean =>
+    err instanceof McpHttpError && (err.status === 502 || err.status === 503);
+
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export class McpClient {
     private urls: string[];
     private sessionIds: (string | null)[];
@@ -179,7 +207,48 @@ export class McpClient {
         return this.extractTextContent(result?.content);
     }
 
+    /**
+     * One JSON-RPC round trip, retried through a transient gateway failure.
+     *
+     * Between attempts the server's session is dropped and the handshake re-run: a 503 usually means
+     * the pod that held the session is gone, so replaying against a stale `Mcp-Session-Id` would fail
+     * a second time for a different reason. Stateless servers issue no session, where this is a no-op.
+     */
     private async request(serverIndex: number, body: JsonRpcRequest, signal?: AbortSignal): Promise<JsonRpcResponse> {
+        for (let attempt = 1; ; attempt++) {
+            try {
+                return await this.sendOnce(serverIndex, body, signal);
+            } catch (err) {
+                if (isAbort(err) || attempt >= MCP_ATTEMPTS || !isRetryable(err)) throw err;
+                console.warn(`MCP server ${serverIndex}: ${errorMessage(err)} - retrying (${attempt}/${MCP_ATTEMPTS - 1})`);
+                await delay(MCP_RETRY_BACKOFF_MS * attempt);
+                if (body.method !== "initialize") await this.reinitialise(serverIndex, signal);
+            }
+        }
+    }
+
+    // Re-handshake a server whose session may have died with the pod behind it. Failure is not fatal:
+    // the retry still runs, and reports the original error if the server is genuinely down.
+    private async reinitialise(serverIndex: number, signal?: AbortSignal): Promise<void> {
+        this.sessionIds[serverIndex] = null;
+        try {
+            const response = await this.sendOnce(serverIndex, {
+                jsonrpc: "2.0",
+                id: this.nextId++,
+                method: "initialize",
+                params: {
+                    protocolVersion: "2024-11-05",
+                    capabilities: {},
+                    clientInfo: { name: "argocd-ai-assistant", version: "1.0.0" }
+                }
+            }, signal);
+            if (!response.error) this.serverInfos[serverIndex] = response.result?.serverInfo ?? {};
+        } catch (err) {
+            if (isAbort(err)) throw err;
+        }
+    }
+
+    private async sendOnce(serverIndex: number, body: JsonRpcRequest, signal?: AbortSignal): Promise<JsonRpcResponse> {
         const url = this.urls[serverIndex];
         const headers: Record<string, string> = {
             "Content-Type": "application/json",
@@ -207,7 +276,7 @@ export class McpClient {
         });
 
         if (!response.ok) {
-            throw new Error(`MCP server ${serverIndex} returned HTTP ${response.status}`);
+            throw new McpHttpError(response.status, serverIndex);
         }
 
         const newSessionId = response.headers.get("mcp-session-id");
