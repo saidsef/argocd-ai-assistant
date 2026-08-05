@@ -1,8 +1,26 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { AssistantSettings, ChatTurn, QueryContext } from "../model/provider";
+import { AssistantSettings, AttachmentType, ChatTurn, QueryContext } from "../model/provider";
 import { MAX_HISTORY_CHARS, MAX_HISTORY_TURN_CHARS } from "../util/context";
-import { chatCompletionsUrl, emptyReplyMessage, LlmProvider } from "./llmProvider";
+import { chatCompletionsUrl, DEFAULT_SYSTEM_PROMPT, emptyReplyMessage, LlmProvider } from "./llmProvider";
+
+// Stub the chat-completions endpoint and hand back the request body the provider actually sent, so
+// prompt assembly is asserted on the wire rather than through a private method.
+function captureRequest(): { body: () => any } {
+    let captured: any;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+        captured = JSON.parse(String(init.body));
+        const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+                const encoder = new TextEncoder();
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "ok" } }] })}\n\n`));
+                controller.close();
+            },
+        });
+        return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+    }) as unknown as typeof fetch;
+    return { body: () => captured };
+}
 
 describe("chatCompletionsUrl", () => {
     it("accepts a base URL with or without the version segment", () => {
@@ -34,22 +52,6 @@ describe("history budget on the wire", () => {
 
     const settings: AssistantSettings = { model: "test-model", data: { baseURL: "http://llm.test/v1" } };
     const context: QueryContext = { attachments: [], settings };
-
-    function captureRequest(): { body: () => any } {
-        let captured: any;
-        globalThis.fetch = (async (_url: string, init: RequestInit) => {
-            captured = JSON.parse(String(init.body));
-            const stream = new ReadableStream<Uint8Array>({
-                start(controller) {
-                    const encoder = new TextEncoder();
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "ok" } }] })}\n\n`));
-                    controller.close();
-                },
-            });
-            return new Response(stream, { headers: { "content-type": "text/event-stream" } });
-        }) as unknown as typeof fetch;
-        return { body: () => captured };
-    }
 
     it("caps the total history sent, dropping the oldest turns", async () => {
         const request = captureRequest();
@@ -85,5 +87,91 @@ describe("history budget on the wire", () => {
 
         const messages = request.body().messages as Array<{ role: string; content: string }>;
         assert.deepEqual(messages.slice(1, -1).map((m) => m.content), history.map((h) => h.content));
+    });
+});
+
+// The accuracy rules are the whole reason the default prompt is as long as it is, so they are pinned
+// here rather than left to drift: each of the four named failure modes must be forbidden by name.
+// Matched on the rule's own wording, not on a whole sentence, so the prompt can still be reworded.
+describe("DEFAULT_SYSTEM_PROMPT", () => {
+    it("forbids each of the four failure modes by name", () => {
+        assert.match(DEFAULT_SYSTEM_PROMPT, /No guessing\./);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /No assuming\./);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /No lying\./);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /No waffling\./);
+    });
+
+    it("makes each rule checkable rather than an adjective", () => {
+        // A model can satisfy "be accurate" while filling gaps with defaults, so the prompt has to
+        // say what unknown means, that uncertainty is an acceptable answer, and that a truncated
+        // attachment is a fragment - the three places a plausible answer gets invented.
+        assert.match(DEFAULT_SYSTEM_PROMPT, /unknown, not default/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /Say when you cannot tell/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /\[truncated: \.\.\.\]/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /Never claim to have run a command/);
+    });
+
+    it("describes no attachment that may be absent", () => {
+        // This is prepended to every request, including from deployments with no MCP configured at
+        // all, where MCP wording is pure cost and describes something that is not there. It lives
+        // with the roster instead (see mcpPrompt.mcpRoster), which is emitted only when servers are.
+        assert.doesNotMatch(DEFAULT_SYSTEM_PROMPT, /MCP/);
+    });
+
+    it("stays short enough to be worth sending on every request", () => {
+        // A guard against the rules growing back into prose, not a tuned budget: the whole point of
+        // one line per rule is that it does not creep. Roughly 400 tokens.
+        assert.ok(DEFAULT_SYSTEM_PROMPT.length < 1800, `prompt is ${DEFAULT_SYSTEM_PROMPT.length} chars`);
+    });
+});
+
+describe("system prompt assembly", () => {
+    const realFetch = globalThis.fetch;
+    afterEach(() => { globalThis.fetch = realFetch; });
+
+    const base: AssistantSettings = { model: "test-model", data: { baseURL: "http://llm.test/v1" } };
+    const manifest = {
+        content: '{"kind":"Deployment"}',
+        mimeType: "application/json",
+        type: AttachmentType.MANIFEST,
+    };
+
+    const systemMessage = async (settings: AssistantSettings, attachments = [manifest]) => {
+        const request = captureRequest();
+        await new LlmProvider().query({ attachments, settings }, "why is it degraded?", () => { });
+        return (request.body().messages as Array<{ role: string; content: string }>)[0].content;
+    };
+
+    it("sends the default persona when no override is configured", async () => {
+        const system = await systemMessage(base);
+        assert.ok(system.startsWith(DEFAULT_SYSTEM_PROMPT), "the default persona leads the system message");
+    });
+
+    it("falls back to the default when the override is blank", async () => {
+        // `systemPrompt: ""` in a hand-edited ConfigMap must not strip the accuracy rules and leave
+        // the model with nothing but the attachments.
+        for (const systemPrompt of ["", "   ", "\n\t "]) {
+            const system = await systemMessage({ ...base, systemPrompt });
+            assert.ok(system.startsWith(DEFAULT_SYSTEM_PROMPT), JSON.stringify(systemPrompt));
+        }
+    });
+
+    it("replaces the persona with a configured override", async () => {
+        const system = await systemMessage({ ...base, systemPrompt: "You are a terse operator." });
+        assert.ok(system.startsWith("You are a terse operator."));
+        assert.ok(!system.includes("No waffling."), "the default persona is replaced, not appended to");
+    });
+
+    it("still attaches the context to an overridden persona", async () => {
+        // The override replaces the persona only. Losing the attachments with it would silently
+        // unground every answer in that deployment.
+        const system = await systemMessage({ ...base, systemPrompt: "You are a terse operator." });
+        assert.match(system, /\[Manifest - application\/json\]:/);
+        assert.match(system, /"kind":"Deployment"/);
+    });
+
+    it("omits the context block when nothing is attached", async () => {
+        const system = await systemMessage(base, []);
+        assert.equal(system, DEFAULT_SYSTEM_PROMPT);
     });
 });
