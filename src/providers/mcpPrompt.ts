@@ -254,7 +254,7 @@ Do not output a <tool> block or any tool-call JSON: nothing will execute it and 
  * model can attribute a result to one; tool names are reproduced exactly, because that is what
  * parseToolCall matches on.
  */
-export function toolPrompt(tools: McpTool[], serverName: (index: number) => string): string {
+export function toolPrompt(tools: McpTool[], serverName: (index: number) => string, maxCalls: number): string {
     let text = "\n\nAvailable tools:\n";
     for (const index of [...new Set(tools.map(t => t.serverIndex))]) {
         const group = tools.filter(t => t.serverIndex === index);
@@ -270,8 +270,27 @@ export function toolPrompt(tools: McpTool[], serverName: (index: number) => stri
     text += "\nTo use a tool, output a tool block using an EXACT tool name from the list above:\n";
     text += '<tool name="EXACT_TOOL_NAME">\n{ JSON arguments matching that tool\'s schema }\n</tool>\n';
     text += `For example:\n<tool name="${tools[0].name}">\n${exampleArgs(tools[0])}\n</tool>\n`;
-    text += "Always wrap the arguments in the <tool>...</tool> tags with the exact tool name; never output bare JSON. A brief sentence before the block is allowed. If the request does not require a tool, answer directly without one.";
+    text += "Always wrap the arguments in the <tool>...</tool> tags with the exact tool name; never output bare JSON. A brief sentence before the block is allowed. If the request does not require a tool, answer directly without one.\n";
+    // Stating the budget is what makes batching safe to invite: a question needing three lookups
+    // becomes one round trip instead of three, and the model knows where the ceiling is.
+    text += `You may emit more than one block in a reply when a question needs several independent lookups; at most ${maxCalls} tool${maxCalls === 1 ? "" : "s"} will run for this question, and blocks beyond that are not executed.`;
     return text;
+}
+
+// Bound on the server-supplied error text in a failure notice. Enough for "HTTP 503" or a short
+// server message; a returned HTML error page does not become the reply.
+export const MAX_NOTICE_DETAIL_CHARS = 200;
+
+/**
+ * The line shown to the user when a tool does not run, so a broken server is distinguishable from
+ * the model choosing not to search.
+ *
+ * Both halves are remote-supplied - the name from `tools/list`, the detail from whatever the server
+ * returned - so each is flattened and bounded by `clean`: a newline or a backtick would otherwise
+ * break out of the blockquote and code span this renders as.
+ */
+export function toolFailureNotice(name: string, detail: string): string {
+    return `> ⚠ \`${clean(name, MAX_SERVER_NAME_CHARS)}\` could not be run: ${clean(detail, MAX_NOTICE_DETAIL_CHARS)}`;
 }
 
 /**

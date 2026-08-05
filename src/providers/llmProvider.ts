@@ -3,8 +3,8 @@ import { budgetHistory, capText, MAX_HISTORY_TURN_CHARS, MAX_TOOL_RESULT_CHARS }
 import { readLines, sseData } from "../util/stream";
 import { argocdHeaders, bearer, canRouteToProxy, containsWord, errorMessage, mcpConfigured, parseMcpServers } from "../util/util";
 import { McpClient, McpTool } from "./mcpClient";
-import { clean, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, noToolFallback, noToolNote, resolveHandles, serverHandles, toolPrompt } from "./mcpPrompt";
-import { parseToolCall } from "./toolCall";
+import { clean, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, noToolFallback, noToolNote, resolveHandles, serverHandles, toolFailureNotice, toolPrompt } from "./mcpPrompt";
+import { parseToolCalls } from "./toolCall";
 import { createToolMarkerFilter } from "./toolMarker";
 
 // Explain a completion that produced no answer text. `finish_reason` is the only signal the wire
@@ -83,9 +83,14 @@ Answering:
 - Prefer concrete kubectl/argocd commands and remediation steps over explanation.
 - Reply in Markdown; put commands, manifests and log excerpts in fenced code blocks with a language tag.`;
 
-// Max tools the model may chain within one query. Bounds latency/cost and guarantees termination
-// in at most MAX_TOOL_ITERATIONS + 1 completions (the final one is forced tool-free).
+// Max tools the model may run within one query, whether it asks for them one per reply or several
+// at once. Bounds latency/cost and guarantees termination in at most MAX_TOOL_ITERATIONS + 1
+// completions (the final one is forced tool-free).
 const MAX_TOOL_ITERATIONS = 3;
+
+// Per-result cap when one reply runs several tools, so a batch cannot crowd out the manifest, logs
+// and history that share the same context window.
+const MAX_BATCH_RESULT_CHARS = Math.floor(MAX_TOOL_RESULT_CHARS / 2);
 
 // Abort a stream that goes silent for this long (measured between bytes, not total), so a stalled
 // or dropped backend surfaces a clear error instead of spinning the typing indicator forever. Kept
@@ -361,22 +366,34 @@ export class LlmProvider implements QueryProvider {
             return { response, suppressed: filter.suppressed };
         };
 
+        // A tool that fails is reported to the user, not only fed back to the model. Without this an
+        // MCP server returning 503 reads exactly like the model choosing not to search: the reply
+        // just narrates an absence, and nothing distinguishes a broken server from a quiet one.
+        const noticeFailure = (name: string, detail: string) => {
+            const notice = toolFailureNotice(name, detail);
+            emittedPrefix = emittedPrefix ? `${emittedPrefix}\n\n${notice}` : notice;
+            onStreamUpdate(emittedPrefix);
+        };
+
         // Bounded tool loop: stream a completion; if the model calls an available tool, run it and
         // feed the result back, up to MAX_TOOL_ITERATIONS executions. The final iteration is forced
         // tool-free so a broken/looping tool never leaves the reply blank or hanging.
         let stepMessages = messages;
         // At most one extra completion, on top of the tool loop's own bound.
         let retriedToolFree = false;
+        // Tools executed so far. The bound is on tools, not iterations, so a reply asking for three
+        // at once spends the same budget as three replies asking for one.
+        let toolsRun = 0;
         for (let iter = 0; iter <= MAX_TOOL_ITERATIONS; iter++) {
-            const forceNoTool = iter === MAX_TOOL_ITERATIONS;
+            const forceNoTool = iter === MAX_TOOL_ITERATIONS || toolsRun >= MAX_TOOL_ITERATIONS;
             const { response, suppressed } = await streamStep(stepMessages);
             if (!response.success) {
                 return response;
             }
             const fullText = response.data || "";
-            const toolCall = forceNoTool ? null : parseToolCall(fullText, toolsForModel);
+            const toolCalls = forceNoTool ? [] : parseToolCalls(fullText, toolsForModel);
 
-            if (!toolCall) {
+            if (toolCalls.length === 0) {
                 // A tool block was hidden but nothing could run it - either no server was addressed
                 // this turn, or the name was not a real tool. This used to reveal the raw text, which
                 // is worse than it sounds: <tool> is not an allowed tag, so the sanitiser drops the
@@ -408,33 +425,50 @@ export class LlmProvider implements QueryProvider {
                 return { success: true };
             }
 
-            // The model asked for a tool. Whether or not it can run (tools may be absent because MCP
-            // fell back to LLM-only, or the call may fail), feed a follow-up note back so the raw
-            // <tool> XML is never the reply and a broken tool never breaks the answer.
-            const tool = toolsForModel?.find(t => t.name === toolCall.name);
-            let followUpNote: string;
-            if (tool && this.mcpClient) {
-                onStatus?.(`Running ${toolCall.name}…`);
-                try {
-                    const toolResult = await this.mcpClient.callTool(tool.serverIndex, toolCall.name, toolCall.arguments, signal);
-                    const capped = capText(toolResult, MAX_TOOL_RESULT_CHARS, `the ${toolCall.name} result`);
-                    // "using this result" alone invites the model to round the result out with what it
-                    // expected the tool to say. This is the one place a fabricated fact arrives wearing
-                    // the authority of a tool call, so the bound is stated with the result.
-                    followUpNote = `Tool result for ${toolCall.name}:\n${capped}\n\nAnswer the original question from this result and the context already provided. Use only what the result contains - do not extrapolate from it. If it does not answer the question, say so.`;
-                } catch (err) {
-                    // Stop pressed mid-tool is a cancellation, not a tool failure: reporting it as
-                    // one fed a misleading note back and burned another completion that aborted
-                    // immediately. Let the abort unwind instead.
-                    if (err instanceof Error && err.name === "AbortError") throw err;
-                    const errMsg = errorMessage(err);
-                    console.warn(`MCP tool '${toolCall.name}' failed, answering without it: ${errMsg}`);
-                    followUpNote = `The tool ${toolCall.name} could not be run (error: ${errMsg}) and returned nothing. Answer from the context already provided; do not imply what it would have returned. If that is not possible, say so.`;
+            // The model asked for one or more tools. Whether or not they can run (tools may be absent
+            // because MCP fell back to LLM-only, or a call may fail), feed a follow-up note back so
+            // the raw <tool> XML is never the reply and a broken tool never breaks the answer.
+            const runnable = toolCalls.slice(0, MAX_TOOL_ITERATIONS - toolsRun);
+            const deferred = toolCalls.length - runnable.length;
+            // Several results share one context window, so each is capped tighter than a lone one.
+            const resultCap = runnable.length > 1 ? MAX_BATCH_RESULT_CHARS : MAX_TOOL_RESULT_CHARS;
+            const notes: string[] = [];
+
+            for (const call of runnable) {
+                const tool = toolsForModel?.find(t => t.name === call.name);
+                toolsRun++;
+                if (tool && this.mcpClient) {
+                    onStatus?.(`Running ${call.name}…`);
+                    try {
+                        const toolResult = await this.mcpClient.callTool(tool.serverIndex, call.name, call.arguments, signal);
+                        notes.push(`Tool result for ${call.name}:\n${capText(toolResult, resultCap, `the ${call.name} result`)}`);
+                    } catch (err) {
+                        // Stop pressed mid-tool is a cancellation, not a tool failure: reporting it as
+                        // one fed a misleading note back and burned another completion that aborted
+                        // immediately. Let the abort unwind instead.
+                        if (err instanceof Error && err.name === "AbortError") throw err;
+                        const errMsg = errorMessage(err);
+                        console.warn(`MCP tool '${call.name}' failed, answering without it: ${errMsg}`);
+                        noticeFailure(call.name, errMsg);
+                        notes.push(`The tool ${call.name} could not be run (error: ${errMsg}) and returned nothing.`);
+                    }
+                } else {
+                    console.warn(`MCP tool '${call.name}' was requested but not available; answering without it.`);
+                    noticeFailure(call.name, "it is not available");
+                    notes.push(`The tool ${call.name} is not available and returned nothing.`);
                 }
-            } else {
-                console.warn(`MCP tool '${toolCall.name}' was requested but not available; answering without it.`);
-                followUpNote = `The tool ${toolCall.name} is not available and returned nothing. Answer from the context already provided, without any tool; do not imply what it would have returned.`;
             }
+            if (deferred > 0) {
+                const names = toolCalls.slice(runnable.length).map(c => c.name).join(", ");
+                noticeFailure(names, `this query's limit of ${MAX_TOOL_ITERATIONS} tool calls was reached`);
+                notes.push(`${deferred} further call(s) in that reply were not run (${names}): this query's limit of ${MAX_TOOL_ITERATIONS} tools was reached.`);
+            }
+
+            // "using these results" alone invites the model to round them out with what it expected
+            // the tools to say. This is the one place a fabricated fact arrives wearing the authority
+            // of a tool call, so the bound is stated with the results.
+            const plural = notes.length > 1;
+            const followUpNote = `${notes.join("\n\n")}\n\nAnswer the original question from ${plural ? "these results" : "this result"} and the context already provided. Use only what ${plural ? "they contain" : "it contains"} - do not extrapolate. If ${plural ? "they do" : "it does"} not answer the question, say so.`;
             // Keep the indicator alive through the follow-up completion, whose first-token wait
             // is otherwise a silent gap that makes the reply look finished. The UI clears this
             // label as soon as the answer starts streaming (useChat text-delta handler).
@@ -662,7 +696,7 @@ export class LlmProvider implements QueryProvider {
         const key = [...mcpTools.map(t => `${t.serverIndex}:${t.name}`), ...servers.map(s => s.handle)].join("\u0000");
         if (this.toolPromptCache?.key === key) return this.toolPromptCache.text;
 
-        const text = toolPrompt(mcpTools, (i) => servers[i]?.handle ?? "");
+        const text = toolPrompt(mcpTools, (i) => servers[i]?.handle ?? "", MAX_TOOL_ITERATIONS);
         this.toolPromptCache = { key, text };
         return text;
     }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { argsFitSchema, exampleArgs, extractJsonObject, parseToolCall, ToolSpec } from "./toolCall";
+import { argsFitSchema, exampleArgs, extractJsonObject, parseToolCall, parseToolCalls, ToolSpec } from "./toolCall";
 
 const SEARCH: ToolSpec = {
     name: "docs_search",
@@ -72,6 +72,57 @@ describe("parseToolCall - bare JSON fallback", () => {
     it("returns null for plain prose", () => {
         assert.equal(parseToolCall("Your Deployment is out of sync.", [SEARCH]), null);
         assert.equal(parseToolCall("", [SEARCH]), null);
+    });
+});
+
+describe("parseToolCalls - several calls in one reply", () => {
+    it("returns every block, in order", () => {
+        const text = [
+            "I will run both.",
+            '<tool name="docs_search">{"query":"a"}</tool>',
+            'and then',
+            '<tool name="docs_fetch">{"url":"http://x"}</tool>',
+        ].join("\n");
+        assert.deepEqual(parseToolCalls(text, [SEARCH, FETCH]), [
+            { name: "docs_search", arguments: { query: "a" } },
+            { name: "docs_fetch", arguments: { url: "http://x" } },
+        ]);
+    });
+
+    it("keeps the available tools and drops the rest", () => {
+        const text = '<tool name="nope">{}</tool><tool name="docs_search">{"query":"a"}</tool>';
+        assert.deepEqual(parseToolCalls(text, [SEARCH]), [{ name: "docs_search", arguments: { query: "a" } }]);
+    });
+
+    it("collapses an identical repeated call", () => {
+        const text = '<tool name="docs_search">{"query":"a"}</tool><tool name="docs_search">{"query":"a"}</tool>';
+        assert.equal(parseToolCalls(text, [SEARCH]).length, 1);
+    });
+
+    it("keeps the same tool called with different arguments", () => {
+        const text = '<tool name="docs_search">{"query":"a"}</tool><tool name="docs_search">{"query":"b"}</tool>';
+        assert.deepEqual(parseToolCalls(text, [SEARCH]).map(c => c.arguments.query), ["a", "b"]);
+    });
+
+    it("never falls through to the JSON heuristic once a block is present", () => {
+        // The block named no available tool. Reading the example object after it as a call would
+        // fire a tool the model did not ask for.
+        assert.deepEqual(parseToolCalls('<tool name="nope">{"query":"a"}</tool>', [SEARCH]), []);
+    });
+
+    it("still recovers a single bare-JSON call when there is no block", () => {
+        assert.deepEqual(parseToolCalls('{"query":"argo"}', [SEARCH]), [
+            { name: "docs_search", arguments: { query: "argo" } },
+        ]);
+    });
+
+    it("parseToolCall returns the first of several", () => {
+        const text = '<tool name="docs_search">{"query":"a"}</tool><tool name="docs_fetch">{"url":"u"}</tool>';
+        assert.deepEqual(parseToolCall(text, [SEARCH, FETCH]), { name: "docs_search", arguments: { query: "a" } });
+    });
+
+    it("returns an empty list for prose", () => {
+        assert.deepEqual(parseToolCalls("All healthy.", [SEARCH]), []);
     });
 });
 

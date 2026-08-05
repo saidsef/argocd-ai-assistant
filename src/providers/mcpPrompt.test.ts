@@ -1,8 +1,51 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { McpServerStatus } from "../model/provider";
-import { clean, deriveHandle, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, resolveHandles, serverHandles } from "./mcpPrompt";
+import { clean, deriveHandle, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, resolveHandles, serverHandles, toolFailureNotice, toolPrompt } from "./mcpPrompt";
 import type { McpTool } from "./mcpClient";
+
+describe("toolFailureNotice", () => {
+    it("renders the name as a code span inside a blockquote", () => {
+        assert.equal(toolFailureNotice("docs_search", "HTTP 503"), "> ⚠ `docs_search` could not be run: HTTP 503");
+    });
+
+    it("flattens a multi-line server error so it cannot break out of the blockquote", () => {
+        const notice = toolFailureNotice("docs_search", "HTTP 503\n<html>\n\nBad Gateway");
+        assert.ok(!notice.includes("\n"), "notice must stay on one line");
+    });
+
+    it("strips backticks that would close the code span early", () => {
+        assert.ok(!toolFailureNotice("do`cs", "a`b").includes("`c"));
+        assert.equal((toolFailureNotice("do`cs", "ok").match(/`/g) ?? []).length, 2);
+    });
+
+    it("bounds a server that returns an entire error page", () => {
+        const notice = toolFailureNotice("docs_search", "x".repeat(5000));
+        assert.ok(notice.length < 300, `notice was ${notice.length} chars`);
+    });
+});
+
+describe("toolPrompt", () => {
+    const two: McpTool[] = [
+        { name: "docs_search", serverIndex: 0, inputSchema: { properties: { query: { type: "string" } }, required: ["query"] } },
+        { name: "docs_fetch", serverIndex: 0, inputSchema: { properties: { url: { type: "string" } }, required: ["url"] } },
+    ];
+
+    it("states the budget, so batching is invited with a known ceiling", () => {
+        const text = toolPrompt(two, () => "docs", 3);
+        assert.match(text, /more than one block in a reply/);
+        assert.match(text, /at most 3 tools will run/);
+    });
+
+    it("keeps the exact tool names the parser matches on", () => {
+        const text = toolPrompt(two, () => "docs", 3);
+        for (const t of two) assert.match(text, new RegExp(t.name));
+    });
+
+    it("says 'tool' rather than 'tools' when only one may run", () => {
+        assert.match(toolPrompt(two, () => "docs", 1), /at most 1 tool will run/);
+    });
+});
 
 describe("mcpRoster", () => {
     const servers = (n: number): McpServerStatus[] =>
