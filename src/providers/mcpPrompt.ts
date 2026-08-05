@@ -230,7 +230,9 @@ export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addresse
 // deployments with no MCP at all - describing an attachment that was not there. It belongs with the
 // list it describes, which is emitted only when servers are configured, and it now survives a
 // `systemPrompt` override (which previously discarded it).
-const COMPLETE_SET = `This list is complete: answer in prose which servers exist, their state and which tools they expose, and never say you have no information about MCP.`;
+// The condition on *when* to use the list is as load-bearing as the completeness claim: stated
+// without it, the model opened every reply with the inventory regardless of the question. See #132.
+const COMPLETE_SET = `This list is complete: when the user asks about MCP, answer from it in prose - which servers exist, their state and which tools they expose - and never say you have no information about MCP. When they ask anything else, do not recite it: no preamble, aside or closing note about which servers are attached or how many tools they have.`;
 
 function guidance(anyAddressed: boolean): string {
     if (anyAddressed) {

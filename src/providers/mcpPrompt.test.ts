@@ -31,6 +31,16 @@ describe("mcpRoster", () => {
         }
     });
 
+    it("conditions the complete-set instruction on the user asking about MCP", () => {
+        // Unconditional, it read as a standing instruction and the model prefaced every answer with
+        // the server inventory. Both halves have to be present in both states.
+        for (const addressed of [new Set<number>(), new Set([0])]) {
+            const roster = mcpRoster(servers(2), tools(2), addressed);
+            assert.match(roster, /when the user asks about MCP/);
+            assert.match(roster, /do not recite it/);
+        }
+    });
+
     it("keeps the guidance when a large deployment truncates the list", () => {
         // The cap used to apply to the list and the guidance together, and capText keeps the start -
         // so a deployment big enough to hit it dropped the instructions that stop the model emitting
