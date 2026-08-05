@@ -220,19 +220,31 @@ export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addresse
         ? "\n\nMCP servers configured for this conversation. Each is addressed by the name at the start of its line:\n"
         : "\n\nMCP servers configured for this conversation, each addressed by the name at the start of its line (reference only - no tool can be called in this reply):\n";
 
-    return capText(header + lines.join("\n") + "\n" + guidance(anyAddressed), MAX_MCP_ROSTER_CHARS, "the MCP server list");
+    // The cap bounds the *list* - the part that grows with the deployment. Capping the block as a
+    // whole kept the start, so a large enough deployment silently dropped the guidance off the end,
+    // losing exactly the instructions that stop the model emitting an uncallable tool block.
+    return capText(header + lines.join("\n"), MAX_MCP_ROSTER_CHARS, "the MCP server list") + "\n" + guidance(anyAddressed);
 }
+
+// The "complete set" sentence used to live in DEFAULT_SYSTEM_PROMPT, where it was sent even by
+// deployments with no MCP at all - describing an attachment that was not there. It belongs with the
+// list it describes, which is emitted only when servers are configured, and it now survives a
+// `systemPrompt` override (which previously discarded it).
+const COMPLETE_SET = `This list is complete: answer in prose which servers exist, their state and which tools they expose, and never say you have no information about MCP.`;
 
 function guidance(anyAddressed: boolean): string {
     if (anyAddressed) {
         return `
-Only the tools under "Available tools:" below can be called in this reply; they belong to the server(s) named in the conversation. Every other tool above is listed for reference only - putting one of those names in a tool block will not run it, and the user will see the raw text instead of an answer.`;
+Only the tools under "Available tools:" below can be called in this reply; they belong to the server(s) named in the conversation. Naming any other tool in a tool block will not run it, and the user will see the raw text instead of an answer.
+${COMPLETE_SET}`;
     }
+    // The header already says "reference only - no tool can be called in this reply", so this opens
+    // with the instruction rather than repeating the state.
     return `
-The list above is background information, not a set of callable tools, and there is no way to run one in this reply. Do not output a <tool> block, a tool-call JSON object, or any other invocation syntax: nothing will execute it and the user's question will go unanswered.
-- If the user asks which MCP servers or tools are available, answer from the list above in prose.
+Do not output a <tool> block or any tool-call JSON: nothing will execute it and the user's question will go unanswered.
+- ${COMPLETE_SET}
 - Refer to a tool only by the name shown. Do not state what it does, what arguments it takes, or what it returns - that is not given here.
-- If answering properly needs a tool, say so and ask the user to include that server's name - exactly as written at the start of its line above - in their next message. Then answer as far as you can without it.`;
+- If answering needs a tool, ask the user to include that server's name - exactly as written at the start of its line above - in their next message, then answer as far as you can without it.`;
 }
 
 /**
@@ -270,7 +282,7 @@ export function noToolNote(attempted: string | undefined, hadTools: boolean): st
     const lead = hadTools
         ? `That tool block did not run: ${attempted ? `"${attempted}" is not` : "the name given was not"} one of the tools listed under "Available tools:".`
         : "That tool block did not run, and the user did not see it: no tool is callable in this reply.";
-    return `${lead} Answer the original question directly, in prose, using only the context already provided. Do not output a tool block or any tool-call JSON. If the question genuinely needs an MCP tool, name the server that would provide it and ask the user to include that server's name in their next message.`;
+    return `${lead} No tool ran, so you have no tool output - do not imply what one would have returned. Answer the original question directly, in prose, using only the context already provided. Do not output a tool block or any tool-call JSON. If the question genuinely needs an MCP tool, name the server that would provide it and ask the user to include that server's name in their next message.`;
 }
 
 /** What to say when the model tried to use a tool and there was none, naming a handle that works. */
