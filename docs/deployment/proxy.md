@@ -4,6 +4,15 @@ The Assistant talks to your LLM through the Argo CD **Proxy Extension**, which r
 
 The `extension.config.assistant` block tells the proxy where to forward requests. Where you put it depends on your install method - see [Operator](operator.md), [Helm](helm.md), or [Raw manifests](raw.md) - but the value is the same.
 
+!!! important "The name `assistant` is not yours to choose"
+    The browser asks for `/extensions/assistant`, and that path is compiled into the extension rather than read from settings. Three things have to spell it the same way:
+
+    - `extension.config.assistant`, wherever your install method puts it
+    - `assistant` in `p, role:readonly, extensions, invoke, assistant, allow`
+    - `/extensions/assistant`, the path the browser requests
+
+    Name the proxy extension after your backend instead and everything looks fine until someone asks a question: the UI loads, the tab appears, and the first request comes back 404.
+
 ## Backend examples
 
 ### Local inference server (in-cluster)

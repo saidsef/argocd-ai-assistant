@@ -52,6 +52,14 @@ You should see a streamed `chat.completion.chunk` response from your backend end
 - **If the file exists in the initContainer logs but the tab still does not appear, confirm the `extensions` volume is mounted into the `argocd-server` _container_, not only the initContainer** - this is the most common misconfiguration. Check `/extensions.js` is served: `curl -sk https://<argocd>/extensions.js | grep argocdAssistantSettings`.
 - Ensure the `--enable-proxy-extension` flag (or `server.enable.proxy.extension: "true"`) is set on argocd-server.
 
+### The tab appears but every question returns 404
+
+The proxy extension is registered under some other name. The browser always asks for `/extensions/assistant`, so `extension.config.assistant` and the `invoke` policy have to use `assistant` too - see [the note on the proxy page](proxy.md). Read back the key you actually applied:
+
+```shell
+kubectl -n argocd get cm argocd-cm -o jsonpath='{.data}' | grep -o 'extension\.config\.[a-z0-9-]*'
+```
+
 ### "LLM model is not configured"
 
 - Set the `model` field in `globalThis.argocdAssistantSettings` - it is required (see [Settings Extension](settings.md)).
