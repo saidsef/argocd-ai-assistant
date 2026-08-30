@@ -23,9 +23,6 @@ globalThis.argocdAssistantSettings = {
 };
 ```
 
-!!! note "`provider` is no longer required"
-    Earlier versions required `provider: "LLM"`. It is still accepted so existing ConfigMaps keep working, but it is ignored - a single generic OpenAI-compatible provider is always used.
-
 Vary this for other setups:
 
 - **Route through the Argo CD proxy** (recommended) - omit `data.baseURL` (it defaults to the proxy path) or set it to `/extensions/assistant`. Keeps API keys out of the browser.

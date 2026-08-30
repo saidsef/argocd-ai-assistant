@@ -15,40 +15,22 @@ The `extension.config.assistant` block tells the proxy where to forward requests
 
 ## Backend examples
 
-### Local inference server (in-cluster)
+Only `services[].url` is required. Point it at anything that speaks the OpenAI API:
 
 ```yaml
 extension.config.assistant: |
-  connectionTimeout: 2s
-  keepAlive: 360s
-  idleConnectionTimeout: 360s
-  maxIdleConnections: 30
-  services:
-  - url: http://local.local.svc.cluster.local:11434
-```
-
-### vLLM (in-cluster)
-
-```yaml
-extension.config.assistant: |
-  connectionTimeout: 2s
-  keepAlive: 360s
-  idleConnectionTimeout: 360s
-  maxIdleConnections: 30
   services:
   - url: http://vllm.vllm.svc.cluster.local:8000
 ```
 
-### OpenAI / DeepSeek (external) with proxy headers
+An in-cluster Ollama is `http://local.local.svc.cluster.local:11434` instead. Both take the plain root - the extension appends `/v1/chat/completions` itself.
 
-For an external provider, route through the proxy and inject the `Authorization` header server-side so the API key never reaches the browser:
+### An external provider
+
+For OpenAI, DeepSeek or anything else off-cluster, keep the traffic on the proxy and have it add the `Authorization` header, so the API key never reaches the browser:
 
 ```yaml
 extension.config.assistant: |
-  connectionTimeout: 2s
-  keepAlive: 15s
-  idleConnectionTimeout: 60s
-  maxIdleConnections: 30
   services:
   - url: https://api.deepseek.com
     headers:
@@ -64,6 +46,25 @@ extension.config.assistant: |
     ```
     Bearer <your-api-token>
     ```
+
+### Tuning the connection
+
+The proxy has four timeout settings and every one of them has a default, so leave them out until something makes you want them. A model that takes a while to produce its first token is the usual reason - raise `keepAlive` and `idleConnectionTimeout` and the stream survives the wait:
+
+```yaml
+extension.config.assistant: |
+  keepAlive: 360s
+  idleConnectionTimeout: 360s
+  services:
+  - url: http://vllm.vllm.svc.cluster.local:8000
+```
+
+| Key | Default | What it covers |
+|-----|---------|----------------|
+| `connectionTimeout` | 2s | opening the connection to the backend |
+| `keepAlive` | 15s | how long an open connection is held |
+| `idleConnectionTimeout` | 60s | how long an idle connection is kept in the pool |
+| `maxIdleConnections` | 30 | size of that pool |
 
 If your provider is CORS-enabled and reachable directly you may not strictly need the proxy, but routing through it (or a backend gateway) is recommended so API keys are never exposed to the browser.
 

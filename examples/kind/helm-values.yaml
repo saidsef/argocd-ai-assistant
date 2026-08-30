@@ -29,7 +29,7 @@ server:
         env:
           - name: EXTENSION_URL
             value: "http://ext-host/extension.tar"
-  # Settings extension (Option B).
+  # Settings extension, mounted from the ConfigMap in settings-configmap.yaml.
   volumes:
     - name: ai-assistant-settings
       configMap:

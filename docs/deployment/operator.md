@@ -4,9 +4,6 @@ Install the AI Assistant when Argo CD is managed by the [Argo CD Operator](https
 
 This single resource enables the proxy extension, points it at your LLM backend, grants RBAC, and runs the installer initContainer.
 
-!!! warning "The `argocd-server` container must mount the `extensions` volume"
-    The initContainer extracts the bundle into an `emptyDir`, but `argocd-server` can only serve it if the **same volume is mounted into the server container too** (`spec.server.volumeMounts` below), not just the initContainer. argocd-operator >= v0.18.0 honours `spec.server.volumeMounts`.
-
 ```yaml
 apiVersion: argoproj.io/v1beta1
 kind: ArgoCD
@@ -20,10 +17,6 @@ spec:
       p, role:readonly, extensions, invoke, assistant, allow
   extraConfig:
     extension.config.assistant: |
-      connectionTimeout: 2s
-      keepAlive: 360s
-      idleConnectionTimeout: 360s
-      maxIdleConnections: 30
       services:
       - url: http://local.local.svc.cluster.local:11434
   server:
@@ -40,7 +33,8 @@ spec:
         volumeMounts:
           - name: extensions
             mountPath: /tmp/extensions/
-    # The argocd-server container must ALSO mount the extensions volume.
+    # The argocd-server container must ALSO mount the extensions volume;
+    # argocd-operator >= v0.18.0 honours spec.server.volumeMounts.
     volumeMounts:
       - name: extensions
         mountPath: /tmp/extensions/
