@@ -2,7 +2,7 @@
 
 The Assistant talks to your LLM through the Argo CD **Proxy Extension**, which routes browser traffic through `argocd-server` (avoiding CORS and keeping API keys out of the browser). This page covers where the proxy forwards requests, how to enable it, and the RBAC needed to invoke it.
 
-The `extension.config.assistant` block tells the proxy where to forward requests. Where you put it depends on your install method - [step 2 of the install page](install.md#2-point-the-proxy-at-your-backend) has the three places - but the value is the same.
+The `extension.config.assistant` block tells the proxy where to forward requests. The value is the same whichever way you install, only its home changes: step 2 of [Operator](operator.md#2-point-the-proxy-at-your-backend), [Helm](helm.md#2-point-the-proxy-at-your-backend) or [raw manifests](raw.md#2-point-the-proxy-at-your-backend).
 
 !!! important "The name `assistant` is not yours to choose"
     The browser asks for `/extensions/assistant`, and that path is compiled into the extension rather than read from settings. Three things have to spell it the same way:
@@ -23,7 +23,7 @@ extension.config.assistant: |
   - url: http://vllm.vllm.svc.cluster.local:8000
 ```
 
-An in-cluster Ollama is `http://local.local.svc.cluster.local:11434` instead. Both take the plain root - the extension appends `/v1/chat/completions` itself.
+An in-cluster Ollama is `http://ollama.ollama.svc.cluster.local:11434` instead. Both take the plain root - the extension appends `/v1/chat/completions` itself.
 
 ### An external provider
 
@@ -49,7 +49,7 @@ extension.config.assistant: |
 
 ### Tuning the connection
 
-The proxy has four timeout settings and every one of them has a default, so leave them out until something makes you want them. A model that takes a while to produce its first token is the usual reason - raise `keepAlive` and `idleConnectionTimeout` and the stream survives the wait:
+The proxy has four timeout settings and every one of them has a default, so leave them out until something makes you want them. A model that takes a while to produce its first token is the usual reason - raise `keepAlive` and `idleConnectionTimeout` and the connection survives the wait:
 
 ```yaml
 extension.config.assistant: |
@@ -66,7 +66,8 @@ extension.config.assistant: |
 | `idleConnectionTimeout` | 60s | how long an idle connection is kept in the pool |
 | `maxIdleConnections` | 30 | size of that pool |
 
-If your provider is CORS-enabled and reachable directly you may not strictly need the proxy, but routing through it (or a backend gateway) is recommended so API keys are never exposed to the browser.
+!!! warning "The browser gives up after 45 seconds of silence"
+    Whatever you set here, the extension aborts a stream that delivers no bytes for 45 seconds and reports `The assistant stopped responding (no data for 45s)`. The limit is compiled in, not a setting. Proxy timeouts govern the connection, so raising them fixes a connection dropped mid-answer - they cannot buy a cold model more than 45 seconds to reach its first token. A backend that slow needs to be kept warm, not waited on.
 
 ## Injecting the API token
 
@@ -134,88 +135,24 @@ Once resolved, `argocd-server` injects the token into the `Authorization` header
 
 ## Enabling the proxy extension
 
-The proxy extension must be enabled on `argocd-server`.
-
-**Via Argo CD Operator `extraCommandArgs`:**
-
-```yaml
-spec:
-  server:
-    extraCommandArgs:
-      - "--enable-proxy-extension"
-```
-
-**Via Helm chart `configs.cm` parameters:**
-
-```yaml
-configs:
-  cm:
-    params:
-      server.enable.proxy.extension: 'true'
-```
-
-**Via raw manifests (`argocd-cmd-params-cm`):**
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: argocd-cmd-params-cm
-  namespace: argocd
-data:
-  server.enable.proxy.extension: "true"
-```
+The proxy extension is off by default and has to be enabled on `argocd-server`. Step 1 of your install page has the flag: [Operator](operator.md#1-enable-the-proxy-extension), [Helm](helm.md#1-enable-the-proxy-extension), [raw manifests](raw.md#1-enable-the-proxy-extension).
 
 ## RBAC requirements
 
-Users must be allowed to invoke the `assistant` proxy extension. Add the policy:
+Users must be allowed to invoke the `assistant` proxy extension. The policy is:
 
 ```
 p, role:readonly, extensions, invoke, assistant, allow
 ```
 
-This grants the `readonly` role (and above) access to the Assistant. Apply it through your install method:
+That grants the `readonly` role (and above) access to the Assistant. Step 3 of your install page has where it goes: [Operator](operator.md#3-grant-rbac), [Helm](helm.md#3-grant-rbac), [raw manifests](raw.md#3-grant-rbac).
 
 !!! note "The proxy authorises per Application"
-    Every proxied request carries `Argocd-Application-Name` and `Argocd-Project-Name`, and Argo CD checks the user against that Application - so users also need read access to the Application they are asking about. `role:readonly` already covers this. The system-level `/assistant` page has no Application of its own and borrows the first one the user can read, so a role scoped to *no* Applications can use the resource tab (via the resource's own Application) but not the system-level page.
-
-**Operator:**
-
-```yaml
-spec:
-  rbac:
-    policy: |
-      g, system:cluster-admins, role:admin
-      p, role:readonly, extensions, invoke, assistant, allow
-```
-
-**Helm (`values.yaml`):**
-
-```yaml
-configs:
-  rbac:
-    policy.default: role:readonly
-    policy.csv: |
-      p, role:readonly, extensions, invoke, assistant, allow
-```
-
-**Raw manifests (`argocd-rbac-cm`):**
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: argocd-rbac-cm
-  namespace: argocd
-data:
-  policy.default: role:readonly
-  policy.csv: |
-    p, role:readonly, extensions, invoke, assistant, allow
-```
+    Every proxied request carries `Argocd-Application-Name` and `Argocd-Project-Name`, and Argo CD checks the user against that Application - so users also need read access to the Application they are asking about. `role:readonly` already covers this. The system-level `/assistant` page - registered only when `data.mcpServers` is set - has no Application of its own and borrows the first one the user can read, so a role scoped to *no* Applications can use the resource tab (via the resource's own Application) but not the system-level page.
 
 ## Proxy with TLS
 
-If your LLM backend uses HTTPS with a self-signed certificate, inject the CA certificate into the Argo CD server pod:
+If your LLM backend uses HTTPS with a self-signed certificate, inject the CA certificate into the Argo CD server pod. It mounts in the same place as the settings extension in step 5 of your install page - `spec.server` for the Operator, `server` for Helm, the `argocd-server` Deployment for raw manifests:
 
 ```yaml
 server:

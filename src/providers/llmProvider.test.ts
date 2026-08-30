@@ -273,9 +273,9 @@ describe("model discovery on the wire", () => {
 
     it("does not look anything up when the model is configured", async () => {
         const stub = backend(["ignored"]);
-        const response = await ask({ model: "gpt-4", data: { baseURL: "http://llm.test/v1" } });
+        const response = await ask({ model: "gpt-5", data: { baseURL: "http://llm.test/v1" } });
         assert.equal(response.success, true);
-        assert.equal(stub.model(), "gpt-4");
+        assert.equal(stub.model(), "gpt-5");
         assert.deepEqual(stub.urls, ["http://llm.test/v1/chat/completions"]);
     });
 });

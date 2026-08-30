@@ -7,7 +7,7 @@
 # Two things to edit before you apply it: the release tag in EXTENSION_URL and
 # the backend URL under services. Everything else works as it stands.
 #
-# See docs/deployment/install.md for what each block does, and
+# See docs/deployment/helm.md for what each block does, and
 # docs/deployment/settings.md for the fields the settings extension accepts.
 configs:
   cm:
@@ -32,7 +32,7 @@ server:
       - name: argocd-ai-assistant
         env:
           - name: EXTENSION_URL
-            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v2.10.0/extension-argocd-ai-assistant-v2.10.0.tar"
+            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v15.3.2/extension-argocd-ai-assistant-v15.3.2.tar"
 
   # The settings extension, from the ConfigMap below.
   volumes:
