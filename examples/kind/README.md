@@ -88,7 +88,7 @@ kind delete cluster --name argocd-ai-operator
 | `verify.sh` | the eight end-to-end checks (method-agnostic) |
 | `ext-host.yaml` | nginx serving the locally built tar in-cluster |
 | `mock-llm.yaml` | deterministic OpenAI-compatible mock (SSE streaming) |
-| `settings-configmap.yaml` | the settings extension (Option B, ConfigMap mount) |
+| `settings-configmap.yaml` | the settings extension, mounted into `argocd-server` from a ConfigMap |
 | `llm-api-secret.yaml` | dedicated labelled Secret the proxy reads (`$argocd-ai-assistant-secret:openai-api-key`) |
 | `sample-app.yaml` | minimal Application used by the proxy RBAC check |
 | `raw-cm-patch.yaml`, `raw-server-patch.yaml` | raw-method `argocd-cm` + `argocd-server` patches (cmd-params/rbac are inlined in `setup.sh`) |

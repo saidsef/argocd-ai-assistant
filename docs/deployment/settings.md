@@ -37,11 +37,7 @@ globalThis.argocdAssistantSettings = {
 
 ## Deploy the settings extension
 
-There are two ways to deliver `extension-settings.js` into `/tmp/extensions/resources/argocd-ai-assistant-settings/`.
-
-### Option A: ConfigMap volume mount (recommended)
-
-Create a ConfigMap with the settings file, then mount it into the `argocd-server` pod. This avoids hosting a second tar and is simplest to manage with GitOps.
+`extension-settings.js` has to land in `/tmp/extensions/resources/argocd-ai-assistant-settings/`. Put it in a ConfigMap and mount that into the `argocd-server` pod - nothing to host, and it version-controls like the rest of your manifests.
 
 ```yaml
 apiVersion: v1
@@ -61,40 +57,6 @@ data:
 ```
 
 Mount it at `/tmp/extensions/resources/argocd-ai-assistant-settings` using the `server.volumes` / `server.volumeMounts` (or CR / Deployment) snippet on your deployment method page: [Operator](operator.md#add-the-settings-extension), [Helm](helm.md#add-the-settings-extension), or [Raw manifests](raw.md#5-add-the-settings-extension).
-
-### Option B: Second initContainer (tar archive)
-
-Package the settings as their own tar, host it on a reachable URL, and add a second installer initContainer alongside the main one:
-
-```shell
-mkdir -p resources/argocd-ai-assistant-settings
-cp extension-settings.js resources/argocd-ai-assistant-settings/
-tar -cvf argocd-ai-assistant-settings.tar resources
-```
-
-```yaml
-initContainers:
-  - name: extension-argocd-ai-assistant
-    image: quay.io/argoprojlabs/argocd-extension-installer:v1.0.0
-    securityContext:
-      allowPrivilegeEscalation: false
-    env:
-      - name: EXTENSION_URL
-        value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v2.10.0/extension-argocd-ai-assistant-v2.10.0.tar"
-    volumeMounts:
-      - name: extensions
-        mountPath: /tmp/extensions/
-  - name: extension-argocd-ai-assistant-settings
-    image: quay.io/argoprojlabs/argocd-extension-installer:v1.0.0
-    securityContext:
-      allowPrivilegeEscalation: false
-    env:
-      - name: EXTENSION_URL
-        value: "https://your-host/argocd-ai-assistant-settings.tar"
-    volumeMounts:
-      - name: extensions
-        mountPath: /tmp/extensions/
-```
 
 ## Keep API keys out of the browser
 

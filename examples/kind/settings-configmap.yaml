@@ -1,6 +1,6 @@
-# Settings extension (Option B): sets globalThis.argocdAssistantSettings, mounted
-# at /tmp/extensions/resources/argocd-ai-assistant-settings. baseURL is omitted so
-# the Assistant uses the proxy path (/extensions/assistant).
+# Settings extension: sets globalThis.argocdAssistantSettings. Mounted from this
+# ConfigMap at /tmp/extensions/resources/argocd-ai-assistant-settings. baseURL is
+# omitted so the Assistant uses the proxy path (/extensions/assistant).
 apiVersion: v1
 kind: ConfigMap
 metadata:

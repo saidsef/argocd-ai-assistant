@@ -10,10 +10,6 @@ The chart's `server.extensions` block creates the installer initContainer **and*
 configs:
   cm:
     extension.config.assistant: |
-      connectionTimeout: 2s
-      keepAlive: 360s
-      idleConnectionTimeout: 360s
-      maxIdleConnections: 30
       services:
       - url: http://local.local.svc.cluster.local:11434
   params:

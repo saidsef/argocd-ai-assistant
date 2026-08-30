@@ -2,9 +2,6 @@
 
 Install the AI Assistant when you manage Argo CD with raw manifests, by patching three ConfigMaps and the `argocd-server` Deployment.
 
-!!! warning "The `argocd-server` container must mount the `extensions` volume"
-    The initContainer extracts the bundle into an `emptyDir`, but `argocd-server` can only serve it if the **same volume is mounted into the server container too** (see the Deployment patch below), not just the initContainer.
-
 ## 1. Point the proxy at your backend (`argocd-cm`)
 
 ```yaml
@@ -15,15 +12,11 @@ metadata:
   namespace: argocd
 data:
   extension.config.assistant: |
-    connectionTimeout: 2s
-    keepAlive: 360s
-    idleConnectionTimeout: 360s
-    maxIdleConnections: 30
     services:
     - url: http://local.local.svc.cluster.local:11434
 ```
 
-See [Proxy & Backend Configuration](proxy.md) for other backends (vLLM, OpenAI/DeepSeek, TLS). For an external provider that requires an API key, store it in a labelled Secret (`argocd-ai-assistant-secret`, populated by a secret manager) and reference it from the proxy header - see [Injecting the API token](proxy.md#injecting-the-api-token).
+See [Proxy & Backend Configuration](proxy.md) for other backends (vLLM, OpenAI/DeepSeek, TLS) and for the timeouts you can set when a default does not suit. For an external provider that requires an API key, store it in a labelled Secret (`argocd-ai-assistant-secret`, populated by a secret manager) and reference it from the proxy header - see [Injecting the API token](proxy.md#injecting-the-api-token).
 
 ## 2. Enable the proxy extension (`argocd-cmd-params-cm`)
 

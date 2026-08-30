@@ -69,7 +69,7 @@ kubectl -n argocd get cm argocd-cm -o jsonpath='{.data}' | grep -o 'extension\.c
 ### Streaming does not work / responses are buffered
 
 - Verify your Argo CD version supports proxy extensions with streaming (requires Argo CD >= v2.13).
-- Check that the proxy extension configuration includes a reasonable `connectionTimeout` and that the LLM backend supports streaming.
+- Check the LLM backend streams at all. A model that is slow to its first token can outlast the proxy defaults - see [Tuning the connection](proxy.md#tuning-the-connection).
 
 ### CORS errors in the browser console
 
