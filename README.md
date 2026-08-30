@@ -35,7 +35,11 @@ Releases are automated: on merge to `main` (once CI passes), a workflow classifi
 
 ## Deployment
 
-See the [Deployment Guide](docs/deployment.md) for step-by-step instructions on building, packaging, hosting, and installing the extension into Argo CD via the Extension Installer. It covers the Argo CD Operator, the community Helm chart, and raw manifests.
+See the [Deployment Guide](docs/deployment.md) for building, packaging and hosting the extension. The install itself has a page per method, so you read one and not three:
+
+- [Argo CD Operator](docs/deployment/operator.md)
+- [Helm chart](docs/deployment/helm.md)
+- [Raw manifests](docs/deployment/raw.md)
 
 ### Local testing
 

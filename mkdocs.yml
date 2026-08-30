@@ -25,11 +25,12 @@ markdown_extensions:
 nav:
   - Overview: index.md
   - Architecture: architecture.md
-  - Providers:
-    - LLM: providers/llm.md
   - Deployment:
     - Overview: deployment.md
-    - Install: deployment/install.md
+    - Install:
+      - Argo CD Operator: deployment/operator.md
+      - Helm Chart: deployment/helm.md
+      - Raw Manifests: deployment/raw.md
     - Settings Extension: deployment/settings.md
     - Proxy & Backend: deployment/proxy.md
     - Local Testing (kind): deployment/local-testing.md

@@ -5,7 +5,7 @@ The Argo CD AI Assistant is a UI extension that adds an AI chatbot to the Argo C
 ## Features
 
 - **Per-Resource Chat** - Ask questions about any Kubernetes resource directly from its detail panel.
-- **Context-Aware** - Automatically attaches the resource manifest, events, and optional container logs to every query.
+- **Context-Aware** - Automatically attaches the resource manifest, a distilled Argo CD Application summary, events, and optional container logs to every query.
 - **Generic LLM Backend** - Works with any OpenAI-compatible API (Ollama, vLLM, OpenAI, Azure, DeepSeek, etc.). A backend serving one model needs no settings at all: the name comes from its `/v1/models`.
 - **Streaming Responses** - Real-time streaming replies via Server-Sent Events (SSE).
 - **Proxy Extension** - All backend traffic is routed through the Argo CD server to avoid CORS and keep API keys out of the browser.
@@ -15,8 +15,9 @@ The Argo CD AI Assistant is a UI extension that adds an AI chatbot to the Argo C
 ## Quick Links
 
 - [Architecture](architecture.md) - How the extension is structured and communicates.
-- [Deployment](deployment.md) - Build, package, host, and deploy the extension.
-- [LLM Provider](providers/llm.md) - Configure the generic OpenAI-compatible provider.
+- [Deployment](deployment.md) - Build, package and host the extension.
+- Install - [Argo CD Operator](deployment/operator.md), [Helm chart](deployment/helm.md) or [raw manifests](deployment/raw.md), a page each.
+- [Settings Extension](deployment/settings.md) - Pin a model, change the prompt, add MCP servers.
 
 ## Repository
 

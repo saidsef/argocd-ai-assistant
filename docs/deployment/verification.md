@@ -20,7 +20,13 @@ kubectl exec -n argocd deployment/argocd-server -c argocd-server -- ls -la /tmp/
 
 ```shell
 kubectl -n argocd port-forward deployment/argocd-server 8080:8080 &
-curl -sk https://localhost:8080/extensions.js | grep -c argocdAssistantSettings   # > 0 means the settings + bundle loaded
+curl -sk https://localhost:8080/extensions.js | grep -c 'extension-argocd-ai-assistant-bundle'   # > 0 means the bundle loaded
+```
+
+`argocdAssistantSettings` is the wrong string to grep for: the bundle reads that global itself, so it appears whether or not a settings extension is mounted. Grep for the settings file's own assignment if you deployed one:
+
+```shell
+curl -sk https://localhost:8080/extensions.js | grep -c 'argocdAssistantSettings *='
 ```
 
 4. **Test the proxy path end to end** without a browser. The proxy authenticates with the `argocd.token` cookie and requires the application/project headers, so an Application must exist:
@@ -49,7 +55,7 @@ You should see a streamed `chat.completion.chunk` response from your backend end
 
 - Verify the initContainer ran successfully: `kubectl logs -n argocd deployment/argocd-server -c extension-argocd-ai-assistant`
 - Check that the extension JS file exists in the pod: `kubectl exec ... -- ls /tmp/extensions/resources/extensions-argocd-ai-assistant/`
-- **If the file exists in the initContainer logs but the tab still does not appear, confirm the `extensions` volume is mounted into the `argocd-server` _container_, not only the initContainer** - this is the most common misconfiguration. Check `/extensions.js` is served: `curl -sk https://<argocd>/extensions.js | grep argocdAssistantSettings`.
+- **If the file exists in the initContainer logs but the tab still does not appear, confirm the `extensions` volume is mounted into the `argocd-server` _container_, not only the initContainer** - this is the most common misconfiguration. Check `/extensions.js` is served: `curl -sk https://<argocd>/extensions.js | grep extension-argocd-ai-assistant-bundle`.
 - Ensure the `--enable-proxy-extension` flag (or `server.enable.proxy.extension: "true"`) is set on argocd-server.
 
 ### The tab appears but every question returns 404

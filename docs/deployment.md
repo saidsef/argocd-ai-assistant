@@ -2,9 +2,9 @@
 
 This guide covers how to build, package, host, and install the Argo CD AI Assistant extension into an Argo CD instance.
 
-The install steps are on one page, with a tab per method. The rest is shared reference:
+Each way of running Argo CD has its own install page, so you read one method and not three. The rest is shared reference:
 
-- **Install:** [Operator, Helm chart or raw manifests](deployment/install.md)
+- **Install:** [Argo CD Operator](deployment/operator.md) · [Helm chart](deployment/helm.md) · [Raw manifests](deployment/raw.md)
 - **Configure:** [Settings Extension](deployment/settings.md) · [Proxy & Backend](deployment/proxy.md)
 - **Test:** [Local Testing with kind](deployment/local-testing.md) · [Verification & Troubleshooting](deployment/verification.md)
 
@@ -12,17 +12,7 @@ The install steps are on one page, with a tab per method. The rest is shared ref
 
 ## How It Works
 
-Argo CD supports UI extensions via the [Extension Installer](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/). The extension ships as a compressed tar of JavaScript bundles. On startup, an initContainer on the `argocd-server` pod downloads and extracts it into `/tmp/extensions/`, and the extension registers itself via the global `extensionsAPI`. All LLM traffic then flows through the Argo CD **Proxy Extension**, which routes it through `argocd-server` to avoid CORS:
-
-```
-User Browser -> Argo CD UI -> Extension JS
-                                    |
-                                    v
-                           Argo CD Proxy Extension
-                                    |
-                                    v
-                              LLM Backend (Local Inference Server/vLLM/OpenAI)
-```
+Argo CD supports UI extensions via the [Extension Installer](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/). The extension ships as a compressed tar of JavaScript bundles. On startup, an initContainer on the `argocd-server` pod downloads and extracts it into `/tmp/extensions/`, and the extension registers itself via the global `extensionsAPI`. All LLM traffic then flows through the Argo CD **Proxy Extension**, which routes it through `argocd-server` to avoid CORS. [Architecture](architecture.md) has the full picture, including the Argo CD API reads and the MCP path.
 
 ---
 
@@ -38,18 +28,11 @@ User Browser -> Argo CD UI -> Extension JS
 
 ## Build and Package
 
-### Automated Release (Recommended)
+### Use a release (recommended)
 
-On merge to `main` (once CI passes), a GitHub Actions workflow:
+Releases are automated and a tag is cut on every merge, so take the version for `EXTENSION_URL` from the [Releases page](https://github.com/saidsef/argocd-ai-assistant/releases) rather than from a snippet on these pages, which is only ever current on the day it was written.
 
-1. Analyses the diff since the last tag and classifies the change as **major**, **minor**, or **patch**
-2. Increments the version and creates an annotated Git tag
-3. Builds and packages the extension
-4. Publishes a GitHub Release with the extension tar as an asset and auto-generated release notes
-
-No manual version bumping is required. Use the latest tag from the [Releases page](https://github.com/saidsef/argocd-ai-assistant/releases) in place of the `<version>` placeholder in the examples - currently [v2.10.0](https://github.com/saidsef/argocd-ai-assistant/releases/tag/v2.10.0).
-
-### Manual Build
+### Manual build
 
 If you are building from source locally:
 
@@ -62,7 +45,7 @@ cd argocd-ai-assistant
 yarn install --force
 
 # Production build + package with a specific version
-VERSION=2.10.0 yarn run package
+VERSION=v15.3.2 yarn run package
 ```
 
 This produces a tar archive at:
@@ -83,7 +66,7 @@ The Argo CD Extension Installer downloads the extension tar from a URL during po
 https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/extension-argocd-ai-assistant-v<version>.tar
 ```
 
-Replace `<version>` with the latest release tag (e.g., `v2.10.0`).
+Replace `<version>` with the latest release tag (e.g., `v15.3.2`).
 
 If you cannot use GitHub Releases, host the tar file on an internal artefact server, S3 bucket, or HTTP server accessible from the cluster.
 
@@ -94,18 +77,29 @@ If you cannot use GitHub Releases, host the tar file on an internal artefact ser
 
 ## Choose a deployment method
 
-The [install page](deployment/install.md) walks through five steps, each with a tab per method. Pick your tab at the top and it stays picked all the way down.
+Pick the page that matches how you run Argo CD and read only that one. Each is the whole install for that method, in the order you apply it.
 
-| Method | Use when |
-|--------|----------|
-| **Argo CD Operator** | You manage Argo CD via the `ArgoCD` CR (OpenShift / Kubernetes) |
-| **Helm chart** | You install Argo CD with the community `argo/argo-cd` chart |
-| **Raw manifests** | You apply Argo CD's install manifests directly |
+| Method | Use when | Page |
+|--------|----------|------|
+| **Argo CD Operator** | You manage Argo CD via the `ArgoCD` CR (OpenShift / Kubernetes) | [Install with the Argo CD Operator](deployment/operator.md) |
+| **Helm chart** | You install Argo CD with the community `argo/argo-cd` chart | [Install with the Helm chart](deployment/helm.md) |
+| **Raw manifests** | You apply Argo CD's install manifests directly | [Install with raw manifests](deployment/raw.md) |
 
 The Helm path is also a file you can pass straight to `helm -f`: [`examples/argo-cd-values.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/argo-cd-values.yaml).
 
+### What every install has to achieve
+
+The five steps are the same on all three pages, only the place each value goes changes. Whichever page you follow, the same six things end up true:
+
+- the proxy extension is enabled on `argocd-server`
+- the proxy knows where your LLM is
+- users are allowed to invoke it
+- the installer initContainer downloads and extracts the extension
+- the `argocd-server` container mounts the volume it extracted into
+- the model is either named in the settings extension or discoverable from the backend
+
 !!! warning "The `argocd-server` container must mount the `extensions` volume"
-    The initContainer extracts the bundle into an `emptyDir`, but `argocd-server` can only serve it if the **same volume is mounted into the server container too** - not just the initContainer. The Helm chart's built-in `server.extensions` block does this for you, with the Operator and raw manifests you add the server-side `volumeMounts` entry yourself - [step 4](deployment/install.md#4-install-the-extension) shows where.
+    The initContainer extracts the bundle into an `emptyDir`, but `argocd-server` can only serve it if the **same volume is mounted into the server container too** - not just the initContainer. The Helm chart's built-in `server.extensions` block does this for you, with the Operator and raw manifests you add the server-side `volumeMounts` entry yourself. It is the most common reason the Assistant tab never appears.
 
 > Every snippet in these guides has a tested, runnable counterpart under
 > [`examples/kind/`](https://github.com/saidsef/argocd-ai-assistant/tree/main/examples/kind),

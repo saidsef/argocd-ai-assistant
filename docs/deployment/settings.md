@@ -11,9 +11,9 @@ Create a JavaScript file named `extension-settings.js`:
 
 ```javascript
 globalThis.argocdAssistantSettings = {
-    model: "gpt-4",
+    model: "glm-5.3",
     data: {
-        baseURL: "http://local.local.svc.cluster.local:11434/v1"
+        baseURL: "http://ollama.ollama.svc.cluster.local:11434/v1"
     }
 };
 
@@ -25,7 +25,7 @@ globalThis.argocdAssistantSettings = {
 | Setting | Required | Description |
 |---------|----------|-------------|
 | `provider` | No | Ignored. Accepted for backwards compatibility with existing ConfigMaps; a single generic OpenAI-compatible provider is always used. |
-| `model` | No | Model name (e.g., `gpt-4`). Left out, the Assistant asks the backend for `/v1/models` and uses the answer when there is exactly one. Several, and it asks you to pick, naming them. |
+| `model` | No | Model name (e.g., `glm-5.3`). Left out, the Assistant asks the backend for `/v1/models` and uses the answer when there is exactly one. Several, and it asks you to pick, naming them. |
 | `data.baseURL` | No | OpenAI-compatible API base URL, with or without a trailing `/v1` (both forms resolve to the same `/v1/chat/completions` endpoint). Defaults to the Argo CD proxy path if omitted. |
 | `data.apiKey` | No | API key sent **from the browser** as `Authorization: Bearer …`. It is readable in the browser - **not recommended**, prefer server-side injection via the proxy ([Injecting the API token](proxy.md#injecting-the-api-token)). |
 | `data.mcpServers` | No | MCP servers, each CORS-enabled for the Argo CD origin. An entry is either a URL string or `{url, name}`, where `name` overrides the short handle the assistant would otherwise derive (e.g. `["https://mcp.example.com", {url: "https://cf.example.com/mcp", name: "wiki"}]`). The assistant always knows which servers are configured, but only offers a server's tools when the user names it in their message or the one before it. See [MCP Tool Integration](../architecture.md#mcp-tool-integration). |
@@ -51,7 +51,7 @@ metadata:
 data:
   extension-settings.js: |
     globalThis.argocdAssistantSettings = {
-        model: "deepseek-chat",
+        model: "deepseek-v4-flash",
         data: {
             baseURL: "https://api.deepseek.com/v1"
         }
@@ -59,7 +59,38 @@ data:
     (() => { console.log("Argo CD AI Assistant Settings loaded"); })();
 ```
 
-Mount it at `/tmp/extensions/resources/argocd-ai-assistant-settings` - [step 5 of the install page](install.md#5-add-the-settings-extension) has the snippet for each method.
+Mount it at `/tmp/extensions/resources/argocd-ai-assistant-settings`. Step 5 of your install page has the snippet: [Operator](operator.md#5-add-the-settings-extension), [Helm](helm.md#5-add-the-settings-extension), [raw manifests](raw.md#5-add-the-settings-extension).
+
+## MCP servers
+
+Setting `data.mcpServers` is the whole of the client-side setup - there is no feature flag - and it also registers the system-level `/assistant` page and the `token` flow. In the ConfigMap the value is a JavaScript array, so both entry forms go in as they would in the file:
+
+```yaml
+data:
+  extension-settings.js: |
+    globalThis.argocdAssistantSettings = {
+        data: {
+            mcpServers: [
+                "https://mcp.example.com/mcp",
+                { url: "https://wiki.example.com/mcp", name: "wiki" }
+            ]
+        }
+    };
+```
+
+The rest of the work is on the servers. The browser calls each one directly rather than through the Argo CD proxy, so a server has to accept cross-origin requests from the Argo CD origin:
+
+| Response header | Value it must cover |
+|-----------------|---------------------|
+| `Access-Control-Allow-Origin` | your Argo CD origin |
+| `Access-Control-Allow-Methods` | `POST, OPTIONS` |
+| `Access-Control-Allow-Headers` | `content-type, accept, authorization, mcp-session-id` |
+| `Access-Control-Expose-Headers` | `mcp-session-id` |
+
+!!! warning "`Access-Control-Expose-Headers` is the one that gets missed"
+    A server that issues a session ID returns it in the `Mcp-Session-Id` response header, and the extension replays it on every later request. That header is not CORS-safelisted, so without `Access-Control-Expose-Headers` the browser hides it from the page: `initialize` appears to succeed, the extension never learns the session ID, and every call after it fails on a server that requires one. The console shows the failed calls, not the missing header.
+
+Behaviour once configured - how a server is addressed, how its short name is derived, and what happens when one is unreachable - is on the [MCP Tool Integration](../architecture.md#mcp-tool-integration) page.
 
 ## Keep API keys out of the browser
 
