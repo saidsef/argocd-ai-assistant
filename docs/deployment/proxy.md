@@ -2,7 +2,7 @@
 
 The Assistant talks to your LLM through the Argo CD **Proxy Extension**, which routes browser traffic through `argocd-server` (avoiding CORS and keeping API keys out of the browser). This page covers where the proxy forwards requests, how to enable it, and the RBAC needed to invoke it.
 
-The `extension.config.assistant` block tells the proxy where to forward requests. Where you put it depends on your install method - see [Operator](operator.md), [Helm](helm.md), or [Raw manifests](raw.md) - but the value is the same.
+The `extension.config.assistant` block tells the proxy where to forward requests. Where you put it depends on your install method - [step 2 of the install page](install.md#2-point-the-proxy-at-your-backend) has the three places - but the value is the same.
 
 !!! important "The name `assistant` is not yours to choose"
     The browser asks for `/extensions/assistant`, and that path is compiled into the extension rather than read from settings. Three things have to spell it the same way:

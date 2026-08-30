@@ -7,6 +7,7 @@ theme:
     primary: teal
   features:
   - content.code.copy
+  - content.tabs.link
 markdown_extensions:
 - codehilite
 - admonition
@@ -14,6 +15,8 @@ markdown_extensions:
 - toc:
     permalink: true
     toc_depth: 3
+- pymdownx.tabbed:
+    alternate_style: true
 - pymdownx.superfences:
     custom_fences:
     - name: mermaid
@@ -26,9 +29,7 @@ nav:
     - LLM: providers/llm.md
   - Deployment:
     - Overview: deployment.md
-    - Argo CD Operator: deployment/operator.md
-    - Helm Chart: deployment/helm.md
-    - Raw Manifests: deployment/raw.md
+    - Install: deployment/install.md
     - Settings Extension: deployment/settings.md
     - Proxy & Backend: deployment/proxy.md
     - Local Testing (kind): deployment/local-testing.md
