@@ -40,15 +40,39 @@ function sameUrls(a: string[] | undefined, b: McpServerConfig[]): boolean {
     return !!a && a.length === b.length && a.every((u, i) => u === b[i].url);
 }
 
-// Resolve the chat-completions endpoint from a configured base URL.
+// Resolve an OpenAI-compatible endpoint from a configured base URL.
 //
 // Every documented example sets `baseURL` to the provider's OpenAI-compatible root *including* the
 // version segment ("https://api.openai.com/v1", "http://ollama:11434/v1"), so appending
 // "/v1/chat/completions" produced ".../v1/v1/chat/completions" and a 404. Accept either form: drop
 // trailing slashes and one trailing "/v1", then append the full path.
+const apiRoot = (baseURL: string): string => baseURL.replace(/\/+$/, "").replace(/\/v1$/i, "");
+
 export function chatCompletionsUrl(baseURL: string): string {
-    const root = baseURL.replace(/\/+$/, "").replace(/\/v1$/i, "");
-    return `${root}/v1/chat/completions`;
+    return `${apiRoot(baseURL)}/v1/chat/completions`;
+}
+
+export function modelsUrl(baseURL: string): string {
+    return `${apiRoot(baseURL)}/v1/models`;
+}
+
+// Model names out of a GET /v1/models body. The wire format is `{data: [{id}]}` for OpenAI, vLLM
+// and Ollama alike, but this runs against whatever a deployment points at, so anything that is not
+// a non-empty string id is dropped rather than trusted into an error message or a completion.
+export function parseModelList(body: any): string[] {
+    if (!Array.isArray(body?.data)) return [];
+    return body.data
+        .map((m: any) => (typeof m === "string" ? m : m?.id))
+        .filter((id: any): id is string => typeof id === "string" && id.trim().length > 0);
+}
+
+// What to say when the model is unset and /v1/models did not settle it. Both cases point at the
+// same fix - put `model` in the settings - but a backend serving several models can name them, and
+// copying one out of the message beats going and looking it up.
+export function modelChoiceMessage(found: string[]): string {
+    return found.length
+        ? `The LLM backend serves ${found.length} models, so one has to be chosen: set \`model\` in argocdAssistantSettings to one of ${found.join(", ")}.`
+        : "LLM model is not configured, and the backend did not report one to fall back on. Set the model field in argocdAssistantSettings.";
 }
 
 // Default persona/instructions prepended to every request. Grounds answers in the
@@ -116,6 +140,9 @@ export class LlmProvider implements QueryProvider {
     // The rendered "Available tools:" prompt block, keyed by the tool names it was built from.
     // Re-serialising every tool's JSON schema on every request is pure waste.
     private toolPromptCache?: { key: string; text: string };
+    // What GET /v1/models last reported, keyed by the base URL it was asked. Discovery only runs
+    // when `model` is unset, and the answer does not change mid-session, so one request covers it.
+    private modelCache?: { baseURL: string; models: string[] };
 
     // Live status of the configured MCP servers. Before the first query the client has not
     // connected, so this reports the URL hostname / not-connected / 0 tools; after a query it
@@ -291,16 +318,10 @@ export class LlmProvider implements QueryProvider {
         // `kubectl port-forward` to http://localhost:8080, which https:// silently breaks.
         const usingProxy = !settings.data?.baseURL;
         const baseURL = settings.data?.baseURL || `${location.origin}/extensions/assistant`;
-        const model = settings.model;
-        if (!model) {
-            return {
-                success: false,
-                error: { status: 400, message: 'LLM model is not configured. Check extension settings (model field in argocdAssistantSettings).' },
-            };
-        }
         // The Argo CD proxy authorises per-Application and rejects a request without a resolvable
         // one ("400 Invalid headers: invalid value for namespace"). Catch that here so the user gets
-        // an explanation instead of the proxy's raw error, and so Retry means something.
+        // an explanation instead of the proxy's raw error, and so Retry means something. Checked
+        // before model discovery below, which goes through the same proxy and would 400 the same way.
         if (usingProxy && !canRouteToProxy(context.application)) {
             return {
                 success: false,
@@ -311,6 +332,19 @@ export class LlmProvider implements QueryProvider {
             };
         }
         const apiKey = settings.data?.apiKey;
+
+        // A deployment that serves one model does not have to name it. Asking the backend is what
+        // lets the settings extension be optional: `model` was the only setting without a default,
+        // and delivering that one string cost a ConfigMap, a volume and a volumeMount.
+        let model = settings.model;
+        if (!model) {
+            onStatus?.("Finding the model…");
+            const found = await this.discoverModels(baseURL, apiKey, context, signal);
+            if (found.length !== 1) {
+                return { success: false, error: { status: 400, message: modelChoiceMessage(found) } };
+            }
+            model = found[0];
+        }
         const mcpServers = parseMcpServers(settings.data?.mcpServers);
 
         let mcpTools: McpTool[] | undefined;
@@ -481,6 +515,31 @@ export class LlmProvider implements QueryProvider {
         }
         // Unreachable: the forced tool-free final iteration always returns above.
         return { success: true };
+    }
+
+    // GET /v1/models, cached per base URL for the session. Never throws: a backend that does not
+    // serve the endpoint, or serves something unexpected, gets the same "set model yourself"
+    // message as one that reports nothing, and the reason goes to the console.
+    private async discoverModels(
+        baseURL: string,
+        apiKey: string | undefined,
+        context: QueryContext,
+        signal?: AbortSignal
+    ): Promise<string[]> {
+        if (this.modelCache?.baseURL === baseURL) return this.modelCache.models;
+        const headers = argocdHeaders(context.application, { Accept: "application/json" });
+        if (apiKey) headers["Authorization"] = bearer(apiKey);
+        let models: string[] = [];
+        try {
+            const response = await fetch(modelsUrl(baseURL), { method: "GET", headers, signal });
+            if (response.ok) models = parseModelList(await response.json());
+            else console.warn(`Model discovery failed: GET /v1/models returned ${response.status}.`);
+        } catch (err) {
+            if (err instanceof Error && err.name === "AbortError") throw err;
+            console.warn(`Model discovery failed: ${errorMessage(err)}`);
+        }
+        this.modelCache = { baseURL, models };
+        return models;
     }
 
     private async sendChatCompletion(

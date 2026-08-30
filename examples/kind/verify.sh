@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Verify the AI Assistant extension is installed and working: install, serving,
-# proxy round-trip, and API-token injection from argocd-secret.
+# proxy round-trip, API-token injection from argocd-secret, and model discovery.
 # Usage: verify.sh [namespace] [kube-context]   (env: PORT)
 #
 # No `pipefail`: several checks pipe a long producer into `grep -q`, whose early
@@ -117,6 +117,21 @@ if grep -q "received-authorization: $EXPECT_AUTH" "$RESPF"; then
   ok "proxy injected the token (\$argocd-ai-assistant-secret:openai-api-key)"
 else
   bad "API token not injected (mock saw: $(grep -o 'received-authorization: [^]]*' "$RESPF" | head -1))"
+fi
+
+# 9. model discovery: the settings extension names no model, so the Assistant
+#    asks the backend. Same proxy path, same headers.
+MODELSF="/tmp/proxy-models-$NS.out"
+curl -sk "https://localhost:$PORT/extensions/assistant/v1/models" \
+  --cookie "argocd.token=$TOKEN" \
+  -H "Argocd-Application-Name: $NS:sample-app" \
+  -H "Argocd-Project-Name: default" \
+  -o "$MODELSF" 2>/dev/null
+COUNT="$(python3 -c 'import sys,json;print(len(json.load(open(sys.argv[1])).get("data",[])))' "$MODELSF" 2>/dev/null)"
+if [ "$COUNT" = "1" ]; then
+  ok "model discovery: /v1/models returned one model through the proxy"
+else
+  bad "model discovery returned ${COUNT:-no} models: $(head -c 160 "$MODELSF")"
 fi
 
 echo "== $pass passed, $fail failed =="

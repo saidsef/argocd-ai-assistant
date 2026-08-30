@@ -44,6 +44,9 @@ server:
       mountPath: /tmp/extensions/resources/argocd-ai-assistant-settings
       readOnly: true
 
+# The settings extension. Optional: drop this block and the server volume/mount
+# above, and the model name is read from the backend's /v1/models instead - which
+# works as long as it serves exactly one.
 extraObjects:
   - apiVersion: v1
     kind: ConfigMap

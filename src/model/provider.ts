@@ -1,4 +1,5 @@
 export type AssistantSettings = {
+    /** Model name. When unset, the backend's GET /v1/models is asked and its single model used. */
     model?: string;
     /** Accepted for backwards compatibility with existing settings ConfigMaps; ignored. */
     provider?: string;

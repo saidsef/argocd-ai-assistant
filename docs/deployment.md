@@ -30,7 +30,7 @@ User Browser -> Argo CD UI -> Extension JS
 
 - Argo CD >= v2.13
 - Argo CD server deployed with the `--enable-proxy-extension` flag (see [Proxy & Backend](deployment/proxy.md#enabling-the-proxy-extension))
-- A running LLM backend with an OpenAI-compatible API
+- A running LLM backend with an OpenAI-compatible API. Serving one model, it needs no further configuration - the name is read from its `/v1/models`
 - A browser supporting CSS nesting and `AbortSignal.any`: Chrome/Edge 116+, Safari 17.4+, Firefox 124+
 - (Optional) `oc` or `kubectl` CLI access to the cluster
 

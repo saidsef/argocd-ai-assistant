@@ -9,7 +9,7 @@ Whichever you pick, the same six things end up true:
 - users are allowed to invoke it
 - the installer initContainer downloads and extracts the extension
 - the `argocd-server` container mounts the volume it extracted into
-- the settings extension supplies the model name
+- the model is either named in the settings extension or discoverable from the backend
 
 Replace `v2.10.0` with the [latest release tag](../deployment.md#build-and-package) and `services[].url` with your own backend. [Proxy & Backend Configuration](proxy.md) covers the other backend shapes and the timeouts you can set.
 
@@ -213,7 +213,9 @@ The initContainer extracts the bundle into an `emptyDir`. `argocd-server` can on
 
 ## 5. Add the settings extension
 
-The Assistant reads its model and endpoint from a second extension, delivered as a ConfigMap mounted into `argocd-server`. [Settings Extension](settings.md) has the ConfigMap and every field it accepts; this is where you mount it.
+Optional. Every setting has a default, and a backend serving a single model is fully configured by steps 1 to 4 - the Assistant reads the model name off `/v1/models`. Add this when you want to pin a model, override the system prompt, or configure MCP servers.
+
+The settings arrive as a second extension, a ConfigMap mounted into `argocd-server`. [Settings Extension](settings.md) has the ConfigMap and every field it accepts; this is where you mount it.
 
 === "Operator"
 

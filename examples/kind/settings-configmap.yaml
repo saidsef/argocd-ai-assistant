@@ -1,6 +1,7 @@
 # Settings extension: sets globalThis.argocdAssistantSettings. Mounted from this
 # ConfigMap at /tmp/extensions/resources/argocd-ai-assistant-settings. baseURL is
-# omitted so the Assistant uses the proxy path (/extensions/assistant).
+# omitted so the Assistant uses the proxy path (/extensions/assistant), and model
+# is omitted so it discovers the one the mock LLM serves.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,7 +9,6 @@ metadata:
 data:
   extension-settings.js: |
     globalThis.argocdAssistantSettings = {
-        model: "mock-model",
         data: {}
     };
     (() => { console.log("Argo CD AI Assistant settings loaded (kind example)"); })();
