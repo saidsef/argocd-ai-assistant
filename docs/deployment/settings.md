@@ -2,6 +2,9 @@
 
 The Assistant needs to know which LLM backend to use. Since Argo CD extensions have no native configuration mechanism, settings are deployed as a **second extension** that sets `globalThis.argocdAssistantSettings`.
 
+!!! tip "You may not need this page"
+    Every setting has a default. `baseURL` falls back to the Argo CD proxy path, and an unset `model` is looked up from the backend's `/v1/models`, which an in-cluster vLLM or Ollama usually answers with exactly one. A deployment serving one model works with no settings extension at all - come back here when you want a second model, a custom prompt, or MCP servers.
+
 ## Create the settings file
 
 Create a JavaScript file named `extension-settings.js`:
@@ -22,7 +25,7 @@ globalThis.argocdAssistantSettings = {
 | Setting | Required | Description |
 |---------|----------|-------------|
 | `provider` | No | Ignored. Accepted for backwards compatibility with existing ConfigMaps; a single generic OpenAI-compatible provider is always used. |
-| `model` | Recommended | Model name (e.g., `gpt-4`). If omitted, queries fail with `LLM model is not configured`. |
+| `model` | No | Model name (e.g., `gpt-4`). Left out, the Assistant asks the backend for `/v1/models` and uses the answer when there is exactly one. Several, and it asks you to pick, naming them. |
 | `data.baseURL` | No | OpenAI-compatible API base URL, with or without a trailing `/v1` (both forms resolve to the same `/v1/chat/completions` endpoint). Defaults to the Argo CD proxy path if omitted. |
 | `data.apiKey` | No | API key sent **from the browser** as `Authorization: Bearer …`. It is readable in the browser - **not recommended**, prefer server-side injection via the proxy ([Injecting the API token](proxy.md#injecting-the-api-token)). |
 | `data.mcpServers` | No | MCP servers, each CORS-enabled for the Argo CD origin. An entry is either a URL string or `{url, name}`, where `name` overrides the short handle the assistant would otherwise derive (e.g. `["https://mcp.example.com", {url: "https://cf.example.com/mcp", name: "wiki"}]`). The assistant always knows which servers are configured, but only offers a server's tools when the user names it in their message or the one before it. See [MCP Tool Integration](../architecture.md#mcp-tool-integration). |

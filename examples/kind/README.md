@@ -11,7 +11,7 @@ release, without needing a GPU, a real LLM, or any external hosting.
 
 ## What gets verified
 
-`verify.sh` runs eight checks against a live `argocd-server`:
+`verify.sh` runs nine checks against a live `argocd-server`:
 
 1. the installer initContainer downloaded and extracted the extension tar
 2. the extension bundle is present at `/tmp/extensions/resources/extensions-argocd-ai-assistant/`
@@ -21,6 +21,7 @@ release, without needing a GPU, a real LLM, or any external hosting.
 6. `POST /extensions/assistant/v1/chat/completions` returns a streamed completion, proving the proxy extension + RBAC + service routing all work
 7. the dedicated labelled Secret `argocd-ai-assistant-secret` reads back with `openai-api-key` at the expected value (read directly from the cluster)
 8. the proxy injected that token as the `Authorization` header via `$argocd-ai-assistant-secret:openai-api-key` - the mock LLM echoes what it received, proving the documented [token-injection path](../../docs/deployment/proxy.md)
+9. `GET /extensions/assistant/v1/models` reports exactly one model, which is what the Assistant falls back on when the settings extension names none
 
 ## Prerequisites
 
@@ -38,7 +39,7 @@ release, without needing a GPU, a real LLM, or any external hosting.
 ```
 
 Each run is fully isolated in its own cluster (`argocd-ai-<method>`). Successful
-output ends with `== 8 passed, 0 failed ==`.
+output ends with `== 9 passed, 0 failed ==`.
 
 Useful overrides:
 
@@ -85,10 +86,10 @@ kind delete cluster --name argocd-ai-operator
 | Path | Purpose |
 |------|---------|
 | `setup.sh` | create cluster, build + host tar, deploy mock LLM, install Argo CD via a method, verify |
-| `verify.sh` | the eight end-to-end checks (method-agnostic) |
+| `verify.sh` | the nine end-to-end checks (method-agnostic) |
 | `ext-host.yaml` | nginx serving the locally built tar in-cluster |
 | `mock-llm.yaml` | deterministic OpenAI-compatible mock (SSE streaming) |
-| `settings-configmap.yaml` | the settings extension, mounted into `argocd-server` from a ConfigMap |
+| `settings-configmap.yaml` | the settings extension, mounted into `argocd-server` from a ConfigMap (names no model, so discovery is exercised) |
 | `llm-api-secret.yaml` | dedicated labelled Secret the proxy reads (`$argocd-ai-assistant-secret:openai-api-key`) |
 | `sample-app.yaml` | minimal Application used by the proxy RBAC check |
 | `raw-cm-patch.yaml`, `raw-server-patch.yaml` | raw-method `argocd-cm` + `argocd-server` patches (cmd-params/rbac are inlined in `setup.sh`) |
@@ -97,4 +98,4 @@ kind delete cluster --name argocd-ai-operator
 
 > The deployment artefacts here are the same ones referenced from
 > [`docs/deployment.md`](../../docs/deployment.md), they have each been verified to
-> pass all eight checks on Argo CD v3.3+/v3.4.
+> pass all nine checks on Argo CD v3.3+/v3.4.

@@ -13,7 +13,7 @@ A single generic provider speaks the **OpenAI-compatible chat completions API**,
 ## Prerequisites
 
 - [Argo CD](https://argo-cd.readthedocs.io/en/stable/) >= v2.13
-- A running LLM backend with an OpenAI-compatible API accessible from the Argo CD server
+- A running LLM backend with an OpenAI-compatible API accessible from the Argo CD server. If it serves a single model, that is all the configuration there is - the extension reads the name off `/v1/models`
 - A browser supporting CSS nesting and `AbortSignal.any`: Chrome/Edge 116+, Safari 17.4+, Firefox 124+
 
 ## Development
@@ -45,7 +45,7 @@ To try the extension end to end on a throwaway [kind](https://kind.sigs.k8s.io/)
 ./examples/kind/setup.sh raw    # or: helm | operator
 ```
 
-A successful run installs Argo CD, installs this extension built from source, and verifies the full path (including a streamed proxy request) with `== 8 passed, 0 failed ==`. See [`examples/kind/README.md`](./examples/kind/README.md).
+A successful run installs Argo CD, installs this extension built from source, and verifies the full path (including a streamed proxy request) with `== 9 passed, 0 failed ==`. See [`examples/kind/README.md`](./examples/kind/README.md).
 
 ## MCP tool servers
 

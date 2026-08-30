@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { AssistantSettings, AttachmentType, ChatTurn, QueryContext } from "../model/provider";
 import { MAX_HISTORY_CHARS, MAX_HISTORY_TURN_CHARS } from "../util/context";
-import { chatCompletionsUrl, DEFAULT_SYSTEM_PROMPT, emptyReplyMessage, LlmProvider } from "./llmProvider";
+import { chatCompletionsUrl, DEFAULT_SYSTEM_PROMPT, emptyReplyMessage, LlmProvider, modelChoiceMessage, modelsUrl, parseModelList } from "./llmProvider";
 
 // Stub the chat-completions endpoint and hand back the request body the provider actually sent, so
 // prompt assembly is asserted on the wire rather than through a private method.
@@ -33,6 +33,44 @@ describe("chatCompletionsUrl", () => {
 
     it("only strips a trailing /v1, not one in the middle of a path", () => {
         assert.equal(chatCompletionsUrl("https://gw.example.com/v1/openai"), "https://gw.example.com/v1/openai/v1/chat/completions");
+    });
+});
+
+describe("modelsUrl", () => {
+    it("resolves the same roots chatCompletionsUrl does", () => {
+        assert.equal(modelsUrl("https://api.openai.com/v1"), "https://api.openai.com/v1/models");
+        assert.equal(modelsUrl("http://ollama:11434"), "http://ollama:11434/v1/models");
+        assert.equal(modelsUrl("http://host//"), "http://host/v1/models");
+    });
+});
+
+describe("parseModelList", () => {
+    it("reads the ids out of an OpenAI-shaped body", () => {
+        assert.deepEqual(parseModelList({ object: "list", data: [{ id: "a" }, { id: "b" }] }), ["a", "b"]);
+    });
+
+    it("drops anything that is not a usable name", () => {
+        // This runs against whatever a deployment points at, so a junk entry must not reach a
+        // completion request or an error message as a model name.
+        assert.deepEqual(parseModelList({ data: [{ id: "a" }, { id: "" }, { id: 7 }, null, "b"] }), ["a", "b"]);
+    });
+
+    it("returns nothing for a body that is not a model list", () => {
+        assert.deepEqual(parseModelList({}), []);
+        assert.deepEqual(parseModelList({ data: "nope" }), []);
+        assert.deepEqual(parseModelList(undefined), []);
+    });
+});
+
+describe("modelChoiceMessage", () => {
+    it("names what the backend offered so a name can be copied out of it", () => {
+        const message = modelChoiceMessage(["llama3", "mistral"]);
+        assert.match(message, /llama3, mistral/);
+        assert.match(message, /argocdAssistantSettings/);
+    });
+
+    it("asks for the setting when the backend reported nothing", () => {
+        assert.match(modelChoiceMessage([]), /not configured/);
     });
 });
 
@@ -173,5 +211,71 @@ describe("system prompt assembly", () => {
     it("omits the context block when nothing is attached", async () => {
         const system = await systemMessage(base, []);
         assert.equal(system, DEFAULT_SYSTEM_PROMPT);
+    });
+});
+
+describe("model discovery on the wire", () => {
+    const realFetch = globalThis.fetch;
+    afterEach(() => { globalThis.fetch = realFetch; });
+
+    // Serve /v1/models from `models` and stream a one-token completion for anything else, recording
+    // every URL asked for so the "already configured" case can be shown to skip the lookup.
+    function backend(models: string[] | null): { urls: string[]; model: () => string | undefined } {
+        const urls: string[] = [];
+        let sent: string | undefined;
+        globalThis.fetch = (async (url: string, init: RequestInit) => {
+            urls.push(String(url));
+            if (String(url).endsWith("/v1/models")) {
+                if (models === null) return new Response("no such endpoint", { status: 404 });
+                return new Response(JSON.stringify({ object: "list", data: models.map(id => ({ id })) }), {
+                    headers: { "content-type": "application/json" },
+                });
+            }
+            sent = JSON.parse(String(init.body)).model;
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode(
+                        `data: ${JSON.stringify({ choices: [{ delta: { content: "ok" } }] })}\n\n`));
+                    controller.close();
+                },
+            });
+            return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+        }) as unknown as typeof fetch;
+        return { urls, model: () => sent };
+    }
+
+    const ask = (settings: AssistantSettings) =>
+        new LlmProvider().query({ attachments: [], settings } as QueryContext, "hi", () => { });
+
+    it("uses the only model a backend reports when none is configured", async () => {
+        const stub = backend(["mistral-small"]);
+        const response = await ask({ data: { baseURL: "http://llm.test/v1" } });
+        assert.equal(response.success, true);
+        assert.equal(stub.model(), "mistral-small");
+    });
+
+    it("names the candidates rather than picking one", async () => {
+        const stub = backend(["llama3", "mistral"]);
+        const response = await ask({ data: { baseURL: "http://llm.test/v1" } });
+        assert.equal(response.success, false);
+        assert.equal(response.error?.status, 400);
+        assert.match(response.error!.message, /llama3, mistral/);
+        assert.equal(stub.model(), undefined, "no completion is sent without a model");
+    });
+
+    it("still asks for the setting when the backend has no models endpoint", async () => {
+        const stub = backend(null);
+        const response = await ask({ data: { baseURL: "http://llm.test/v1" } });
+        assert.equal(response.success, false);
+        assert.match(response.error!.message, /not configured/);
+        assert.equal(stub.model(), undefined);
+    });
+
+    it("does not look anything up when the model is configured", async () => {
+        const stub = backend(["ignored"]);
+        const response = await ask({ model: "gpt-4", data: { baseURL: "http://llm.test/v1" } });
+        assert.equal(response.success, true);
+        assert.equal(stub.model(), "gpt-4");
+        assert.deepEqual(stub.urls, ["http://llm.test/v1/chat/completions"]);
     });
 });

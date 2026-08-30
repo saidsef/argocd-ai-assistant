@@ -60,11 +60,12 @@ The proxy extension is registered under some other name. The browser always asks
 kubectl -n argocd get cm argocd-cm -o jsonpath='{.data}' | grep -o 'extension\.config\.[a-z0-9-]*'
 ```
 
-### "LLM model is not configured"
+### The Assistant asks you to set a model
 
-- Set the `model` field in `globalThis.argocdAssistantSettings` - it is required (see [Settings Extension](settings.md)).
-- Verify the settings extension is loaded (`globalThis.argocdAssistantSettings` is defined). Check the browser console for JS errors.
-- Ensure the `baseURL` in settings is correct and reachable from the Argo CD server pod.
+With `model` unset the Assistant reads `/v1/models` from the backend and uses the answer when there is exactly one. Two things produce this message:
+
+- The backend serves several models. The message names them - copy one into the `model` field (see [Settings Extension](settings.md)).
+- The lookup got nothing. Check `baseURL` is reachable from the Argo CD server pod, and that the backend serves `/v1/models` at all - the browser console carries the status it returned.
 
 ### Streaming does not work / responses are buffered
 
