@@ -1,0 +1,57 @@
+# Argo CD AI Assistant, as a values file for the community argo/argo-cd chart.
+#
+#   helm upgrade --install argocd argo/argo-cd \
+#     --namespace argocd --create-namespace \
+#     -f examples/argo-cd-values.yaml
+#
+# Two things to edit before you apply it: the release tag in EXTENSION_URL and
+# the backend URL under services. Everything else works as it stands.
+#
+# See docs/deployment/install.md for what each block does, and
+# docs/deployment/settings.md for the fields the settings extension accepts.
+configs:
+  cm:
+    # The key has to be extension.config.assistant. The extension asks for
+    # /extensions/assistant and that path is compiled into it.
+    extension.config.assistant: |
+      services:
+      - url: http://vllm.vllm.svc.cluster.local:8000
+  params:
+    server.enable.proxy.extension: "true"
+  rbac:
+    policy.default: role:readonly
+    policy.csv: |
+      p, role:readonly, extensions, invoke, assistant, allow
+
+server:
+  # Creates the installer initContainer and mounts /tmp/extensions into both it
+  # and the argocd-server container.
+  extensions:
+    enabled: true
+    extensionList:
+      - name: argocd-ai-assistant
+        env:
+          - name: EXTENSION_URL
+            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v2.10.0/extension-argocd-ai-assistant-v2.10.0.tar"
+
+  # The settings extension, from the ConfigMap below.
+  volumes:
+    - name: ai-assistant-settings
+      configMap:
+        name: argocd-ai-assistant-settings
+  volumeMounts:
+    - name: ai-assistant-settings
+      mountPath: /tmp/extensions/resources/argocd-ai-assistant-settings
+      readOnly: true
+
+extraObjects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: argocd-ai-assistant-settings
+    data:
+      extension-settings.js: |
+        globalThis.argocdAssistantSettings = {
+            model: "your-model"
+        };
+        (() => { console.log("Argo CD AI Assistant settings loaded"); })();

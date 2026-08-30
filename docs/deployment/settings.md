@@ -56,7 +56,7 @@ data:
     (() => { console.log("Argo CD AI Assistant Settings loaded"); })();
 ```
 
-Mount it at `/tmp/extensions/resources/argocd-ai-assistant-settings` using the `server.volumes` / `server.volumeMounts` (or CR / Deployment) snippet on your deployment method page: [Operator](operator.md#add-the-settings-extension), [Helm](helm.md#add-the-settings-extension), or [Raw manifests](raw.md#5-add-the-settings-extension).
+Mount it at `/tmp/extensions/resources/argocd-ai-assistant-settings` - [step 5 of the install page](install.md#5-add-the-settings-extension) has the snippet for each method.
 
 ## Keep API keys out of the browser
 

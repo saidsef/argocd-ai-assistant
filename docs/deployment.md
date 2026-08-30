@@ -2,9 +2,9 @@
 
 This guide covers how to build, package, host, and install the Argo CD AI Assistant extension into an Argo CD instance.
 
-It is split into a per-method install page (pick the one that matches how you run Argo CD) plus shared reference pages for the backend, settings, local testing, and verification:
+The install steps are on one page, with a tab per method. The rest is shared reference:
 
-- **Install:** [Argo CD Operator](deployment/operator.md) · [Helm Chart](deployment/helm.md) · [Raw Manifests](deployment/raw.md)
+- **Install:** [Operator, Helm chart or raw manifests](deployment/install.md)
 - **Configure:** [Settings Extension](deployment/settings.md) · [Proxy & Backend](deployment/proxy.md)
 - **Test:** [Local Testing with kind](deployment/local-testing.md) · [Verification & Troubleshooting](deployment/verification.md)
 
@@ -94,16 +94,18 @@ If you cannot use GitHub Releases, host the tar file on an internal artefact ser
 
 ## Choose a deployment method
 
-Pick the page that matches how you run Argo CD. Each is a complete, self-contained walkthrough that enables the proxy extension, runs the installer initContainer, grants RBAC, and wires in the settings extension.
+The [install page](deployment/install.md) walks through five steps, each with a tab per method. Pick your tab at the top and it stays picked all the way down.
 
-| Method | Use when | Guide |
-|--------|----------|-------|
-| **Argo CD Operator** | You manage Argo CD via the `ArgoCD` CR (OpenShift / Kubernetes) | [Operator](deployment/operator.md) |
-| **Helm chart** | You install Argo CD with the community `argo/argo-cd` chart | [Helm](deployment/helm.md) |
-| **Raw manifests** | You apply Argo CD's install manifests directly | [Raw Manifests](deployment/raw.md) |
+| Method | Use when |
+|--------|----------|
+| **Argo CD Operator** | You manage Argo CD via the `ArgoCD` CR (OpenShift / Kubernetes) |
+| **Helm chart** | You install Argo CD with the community `argo/argo-cd` chart |
+| **Raw manifests** | You apply Argo CD's install manifests directly |
+
+The Helm path is also a file you can pass straight to `helm -f`: [`examples/argo-cd-values.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/argo-cd-values.yaml).
 
 !!! warning "The `argocd-server` container must mount the `extensions` volume"
-    The initContainer extracts the bundle into an `emptyDir`, but `argocd-server` can only serve it if the **same volume is mounted into the server container too** - not just the initContainer. The Helm chart's built-in `server.extensions` block does this for you, with the Operator and raw manifests you must add the server-side `volumeMounts` entry shown on those pages.
+    The initContainer extracts the bundle into an `emptyDir`, but `argocd-server` can only serve it if the **same volume is mounted into the server container too** - not just the initContainer. The Helm chart's built-in `server.extensions` block does this for you, with the Operator and raw manifests you add the server-side `volumeMounts` entry yourself - [step 4](deployment/install.md#4-install-the-extension) shows where.
 
 > Every snippet in these guides has a tested, runnable counterpart under
 > [`examples/kind/`](https://github.com/saidsef/argocd-ai-assistant/tree/main/examples/kind),
