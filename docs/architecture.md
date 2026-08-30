@@ -12,23 +12,7 @@ The Assistant uses a single generic LLM provider that speaks the standard OpenAI
 
 The extension is composed of two main parts: the UI extension bundle (JavaScript/React) loaded by the Argo CD server, and the backend LLM service accessed through the Argo CD Proxy Extension.
 
-```
- +-------------------+        +------------------------+        +------------------+
- |   User Browser    |        |   Argo CD Server Pod   |        |   LLM Backend    |
- |                   |        |                        |        |                  |
- |  Argo CD UI  +----------> |  Extension JS Bundle   |        |  (OpenAI-compat) |
- |                   |   |    |  (/tmp/extensions/...) |        |                  |
- |  Assistant Tab    |   |    |                        |        |  Local/Ollama    |
- |  (React chat UI)  |   |    |  Proxy Extension       +------> |  vLLM            |
- |                   |   |    |  (/extensions/assistant)       |  OpenAI          |
- |  Attach Logs      |   |    |                        |        |  DeepSeek        |
- |  (guided flow)    |   |    |  Settings ConfigMap    |        |  Azure           |
- +-------------------+   |    |  (argocd-ai-assistant-  |        +------------------+
-                         |    |   settings)            |
-                         |    +------------------------+
-                         |
-                         +--> Argo CD API (events, logs, manifests)
-```
+![Architecture of the Assistant for Argo CD: the Assistant tab in the user's browser reads manifests, events, pod logs and the Application summary from the Argo CD API on the same origin, sends chat requests to an OpenAI-compatible LLM backend through the proxy extension at /extensions/assistant which authorises each one against an Application, and calls MCP servers directly rather than through the proxy](architecture.svg)
 
 **Communication flow:**
 
