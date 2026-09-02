@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 concurrency:
   group: tag-release-${{ github.ref }}
@@ -29,6 +30,7 @@ jobs:
         with:
           node-version: '22'
           cache: 'yarn'
+          registry-url: 'https://npm.pkg.github.com'
 
       - name: Configure Git
         run: |
@@ -41,6 +43,12 @@ jobs:
       - name: Determine version bump and create release notes
         id: release
         run: node .github/scripts/release.js
+
+      - name: Set package version
+        if: steps.release.outputs.should_release == 'true'
+        run: yarn set-version "${NEW_TAG#v}"
+        env:
+          NEW_TAG: ${{ steps.release.outputs.new_tag }}
 
       - name: Build and package
         if: steps.release.outputs.should_release == 'true'
@@ -67,3 +75,9 @@ jobs:
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to GitHub Packages
+        if: steps.release.outputs.should_release == 'true'
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

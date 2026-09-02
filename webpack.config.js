@@ -3,7 +3,7 @@ const path = require("path");
 const PACKAGE = require('./package.json');
 // VERSION env var overrides package.json version for CI builds
 const version = process.env.VERSION || PACKAGE.version;
-const extName = PACKAGE.name;
+const extName = PACKAGE.name.replace(/^@[^/]+\//, '');
 
 /** @type {import('webpack').Configuration} */
 const config = {
