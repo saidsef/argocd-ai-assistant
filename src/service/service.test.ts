@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { summariseApplication } from "./application";
-import { summariseEvents } from "./events";
+import { MAX_EVENTS, summariseEvents } from "./events";
+import { MAX_EVENTS_CHARS } from "../util/context";
 import { getGroup, hasLogs, summariseLogs } from "./logs";
 
 describe("getGroup", () => {
@@ -80,6 +81,99 @@ describe("summariseEvents", () => {
     it("tolerates a non-array and missing fields", () => {
         assert.deepEqual(summariseEvents(undefined as any), { total: 0, items: [] });
         assert.equal(summariseEvents([{}]).items[0].reason, undefined);
+    });
+
+    it("names the container an event concerns, from involvedObject.fieldPath", () => {
+        const out = summariseEvents([
+            { reason: "Created", lastTimestamp: "T3", involvedObject: { kind: "Pod", name: "web", fieldPath: "spec.containers{app}" } },
+            { reason: "Pulled", lastTimestamp: "T2", involvedObject: { kind: "Pod", name: "web", fieldPath: "spec.initContainers{migrate}" } },
+            { reason: "Scheduled", lastTimestamp: "T1", involvedObject: { kind: "Pod", name: "web" } },
+        ], 3);
+        assert.equal(out.items.find((i) => i.reason === "Created")?.container, "app");
+        assert.equal(out.items.find((i) => i.reason === "Pulled")?.container, "migrate");
+        // A pod-scoped event has no fieldPath; an absent container must not become a "" or null field.
+        assert.equal(out.items.find((i) => i.reason === "Scheduled")?.container, undefined);
+    });
+
+    it("ignores a fieldPath that names no container", () => {
+        assert.equal(summariseEvents([{ involvedObject: { fieldPath: "spec.containers" } }]).items[0].container, undefined);
+        assert.equal(summariseEvents([{ involvedObject: { fieldPath: 42 } }]).items[0].container, undefined);
+        assert.equal(summariseEvents([{ involvedObject: { fieldPath: "spec.containers{}" } }]).items[0].container, undefined);
+    });
+
+    it("carries firstTimestamp only for a repeated event, so count reads as a rate", () => {
+        const out = summariseEvents([
+            { reason: "BackOff", count: 47, firstTimestamp: "2026-01-01T00:00:00Z", lastTimestamp: "2026-01-01T00:03:00Z" },
+            { reason: "Pulled", count: 1, firstTimestamp: "2026-01-01T00:00:00Z", lastTimestamp: "2026-01-01T00:00:00Z" },
+        ], 2);
+        assert.equal(out.items.find((i) => i.reason === "BackOff")?.first, "2026-01-01T00:00:00Z");
+        // Equal to `last` on a single occurrence, where repeating it would cost bytes and say nothing.
+        assert.equal(out.items.find((i) => i.reason === "Pulled")?.first, undefined);
+    });
+
+    it("reports the source component and host, falling back to the reporting pair", () => {
+        const out = summariseEvents([
+            { reason: "Pulled", lastTimestamp: "T2", source: { component: "kubelet", host: "spot" }, reportingComponent: "ignored", reportingInstance: "ignored" },
+            { reason: "Sync", lastTimestamp: "T1", source: {}, reportingComponent: "argocd-application-controller", reportingInstance: "controller-0" },
+        ], 2);
+        const pulled = out.items.find((i) => i.reason === "Pulled");
+        assert.equal(pulled?.component, "kubelet");
+        assert.equal(pulled?.host, "spot");
+        const sync = out.items.find((i) => i.reason === "Sync");
+        assert.equal(sync?.component, "argocd-application-controller");
+        assert.equal(sync?.host, "controller-0");
+        assert.equal(summariseEvents([{}]).items[0].component, undefined);
+    });
+
+    it("distils a real kubelet pod event without dropping the fields an answer cites", () => {
+        // Captured from the Argo CD events API for a running pod. Pins the whole shape, so a change
+        // to the summary that silently drops a field fails here rather than in a wrong answer.
+        const out = summariseEvents([{
+            metadata: { name: "web.18d19625bdf17870", namespace: "web", creationTimestamp: "2026-09-02T19:00:15Z", managedFields: [{ manager: "kubelet" }] },
+            involvedObject: { kind: "Pod", namespace: "web", name: "web-7676f6dc8f-p6r2m", uid: "445af99b", apiVersion: "v1", resourceVersion: "1061817", fieldPath: "spec.containers{drawio}" },
+            reason: "Pulled",
+            message: 'Container image "registry/saidsef:tag" already present on machine and can be accessed by the pod',
+            source: { component: "kubelet", host: "spot" },
+            firstTimestamp: "2026-09-02T19:00:15Z",
+            lastTimestamp: "2026-09-02T19:00:15Z",
+            count: 1,
+            type: "Normal",
+            eventTime: null,
+            reportingComponent: "kubelet",
+            reportingInstance: "spot",
+        }], 1);
+        assert.deepEqual(out, {
+            total: 1,
+            items: [{
+                type: "Normal",
+                reason: "Pulled",
+                message: 'Container image "registry/saidsef:tag" already present on machine and can be accessed by the pod',
+                count: 1,
+                first: undefined,
+                last: "2026-09-02T19:00:15Z",
+                object: "Pod/web-7676f6dc8f-p6r2m",
+                container: "drawio",
+                component: "kubelet",
+                host: "spot",
+            }],
+        });
+    });
+
+    it("keeps a full page of events inside the events character cap", () => {
+        // The added fields grow every entry, and MAX_EVENTS of them share MAX_EVENTS_CHARS with
+        // nothing else. A worst-case page must still serialise whole rather than arrive truncated.
+        const busy = Array.from({ length: MAX_EVENTS }, (_, i) => ({
+            type: "Warning",
+            reason: "FailedScheduling",
+            message: "0/12 nodes are available: 12 Insufficient cpu. preemption: 0/12 nodes are available.",
+            count: 47,
+            firstTimestamp: `2026-01-01T00:${String(i).padStart(2, "0")}:00Z`,
+            lastTimestamp: `2026-01-02T00:${String(i).padStart(2, "0")}:00Z`,
+            involvedObject: { kind: "Pod", name: `workload-with-a-long-name-7676f6dc8f-p6r${i}`, fieldPath: "spec.containers{application}" },
+            source: { component: "default-scheduler", host: "ip-10-0-128-200.eu-west-1.compute.internal" },
+        }));
+        const serialised = JSON.stringify(summariseEvents(busy, MAX_EVENTS));
+        assert.ok(serialised.length < MAX_EVENTS_CHARS, `events summary was ${serialised.length} chars`);
     });
 });
 
