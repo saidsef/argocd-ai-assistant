@@ -91,7 +91,6 @@ describe("summariseEvents", () => {
         ], 3);
         assert.equal(out.items.find((i) => i.reason === "Created")?.container, "app");
         assert.equal(out.items.find((i) => i.reason === "Pulled")?.container, "migrate");
-        // A pod-scoped event has no fieldPath; an absent container must not become a "" or null field.
         assert.equal(out.items.find((i) => i.reason === "Scheduled")?.container, undefined);
     });
 
@@ -107,7 +106,6 @@ describe("summariseEvents", () => {
             { reason: "Pulled", count: 1, firstTimestamp: "2026-01-01T00:00:00Z", lastTimestamp: "2026-01-01T00:00:00Z" },
         ], 2);
         assert.equal(out.items.find((i) => i.reason === "BackOff")?.first, "2026-01-01T00:00:00Z");
-        // Equal to `last` on a single occurrence, where repeating it would cost bytes and say nothing.
         assert.equal(out.items.find((i) => i.reason === "Pulled")?.first, undefined);
     });
 
@@ -126,8 +124,8 @@ describe("summariseEvents", () => {
     });
 
     it("distils a real kubelet pod event without dropping the fields an answer cites", () => {
-        // Captured from the Argo CD events API for a running pod. Pins the whole shape, so a change
-        // to the summary that silently drops a field fails here rather than in a wrong answer.
+        // Captured from the Argo CD events API, so a field dropped from the summary fails here
+        // rather than in a wrong answer.
         const out = summariseEvents([{
             metadata: { name: "web.18d19625bdf17870", namespace: "web", creationTimestamp: "2026-09-02T19:00:15Z", managedFields: [{ manager: "kubelet" }] },
             involvedObject: { kind: "Pod", namespace: "web", name: "web-7676f6dc8f-p6r2m", uid: "445af99b", apiVersion: "v1", resourceVersion: "1061817", fieldPath: "spec.containers{drawio}" },
@@ -160,8 +158,6 @@ describe("summariseEvents", () => {
     });
 
     it("keeps a full page of events inside the events character cap", () => {
-        // The added fields grow every entry, and MAX_EVENTS of them share MAX_EVENTS_CHARS with
-        // nothing else. A worst-case page must still serialise whole rather than arrive truncated.
         const busy = Array.from({ length: MAX_EVENTS }, (_, i) => ({
             type: "Warning",
             reason: "FailedScheduling",

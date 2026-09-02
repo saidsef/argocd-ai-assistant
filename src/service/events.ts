@@ -1,10 +1,8 @@
 // Curated, token-efficient view of a resource's Kubernetes events - the essence of
-// `kubectl get events`. A raw core/v1 Event carries managedFields, a full involvedObject ref and
-// several overlapping timestamps; dumping the whole list wastes tokens and buries the signal a
-// reviewer wants (what happened, how often, over what window, to which container, reported by
-// what). This distils each event to that signal and caps the list to the most recent `max`,
-// mirroring the resource caps in service/application.ts so events are no longer the one unbounded
-// context source.
+// `kubectl get events`. Dumping raw core/v1 Events wastes tokens on managedFields, a full
+// involvedObject ref and several overlapping timestamps, and buries the signal a reviewer wants:
+// what happened, how often, over what window, to which container, reported by what. This distils
+// each event to that signal and caps the list to the most recent `max`.
 
 import { capText } from "../util/context";
 
@@ -39,9 +37,7 @@ function recencyKey(e: any): string {
     return e?.lastTimestamp || e?.eventTime || e?.metadata?.creationTimestamp || e?.firstTimestamp || "";
 }
 
-// The container an event concerns, from involvedObject.fieldPath ("spec.containers{web}",
-// "spec.initContainers{migrate}"). Without it a multi-container pod yields several
-// indistinguishable "Container created" events.
+// Without this a multi-container pod yields several indistinguishable "Container created" events.
 function containerOf(obj: any): string | undefined {
     const match = /\{([^}]+)\}/.exec(typeof obj?.fieldPath === "string" ? obj.fieldPath : "");
     return match?.[1] || undefined;
@@ -66,14 +62,12 @@ export function summariseEvents(items: any[], max: number = MAX_EVENTS): EventsS
             reason: e?.reason,
             message: capText(e?.message ?? "", MAX_MESSAGE_CHARS, "event message") || undefined,
             count: typeof e?.count === "number" ? e.count : undefined,
-            // Carried only when it differs from `last`, which is every repeated event and no single
-            // one: the pair is what turns `count: 47` into a rate rather than a bare number.
+            // Differs from `last` only on a repeated event, where the pair turns `count` into a rate.
             first: first && first !== last ? first : undefined,
             last,
             object,
             container: containerOf(obj),
-            // `source` is the core/v1 field; events.k8s.io-originated events leave it empty and
-            // carry the reporting* pair instead.
+            // events.k8s.io-originated events leave `source` empty and carry the reporting* pair.
             component: e?.source?.component || e?.reportingComponent || undefined,
             host: e?.source?.host || e?.reportingInstance || undefined,
         };
