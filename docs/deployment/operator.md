@@ -7,7 +7,7 @@ Installing another way? [Helm chart](helm.md) · [Raw manifests](raw.md)
 !!! note "argocd-operator >= v0.18.0"
     That is the first release to honour `spec.server.volumeMounts`, which is where the server-side mount in [step 4](#4-install-the-extension) goes. On an earlier operator the extension extracts and never loads.
 
-Replace `v15.3.2` with the [latest release tag](../deployment.md#build-and-package) and `services[].url` with your own backend. [Proxy & Backend Configuration](proxy.md) covers the other backend shapes, API token injection, and the timeouts you can set.
+Replace `<version>` with the [latest release tag](../deployment.md#build-and-package) and `services[].url` with your own backend. [Proxy & Backend Configuration](proxy.md) covers the other backend shapes, API token injection, and the timeouts you can set.
 
 ## 1. Enable the proxy extension
 
@@ -58,7 +58,7 @@ spec:
           allowPrivilegeEscalation: false
         env:
           - name: EXTENSION_URL
-            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v15.3.2/extension-argocd-ai-assistant-v15.3.2.tar"
+            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/extension-argocd-ai-assistant.tar"
         volumeMounts:
           - name: extensions
             mountPath: /tmp/extensions/
@@ -111,7 +111,7 @@ spec:
           allowPrivilegeEscalation: false
         env:
           - name: EXTENSION_URL
-            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v15.3.2/extension-argocd-ai-assistant-v15.3.2.tar"
+            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/extension-argocd-ai-assistant.tar"
         volumeMounts:
           - name: extensions
             mountPath: /tmp/extensions/

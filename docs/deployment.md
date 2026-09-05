@@ -44,17 +44,17 @@ cd argocd-ai-assistant
 # Install dependencies (requires --force due to React peer dependency quirks)
 yarn install --force
 
-# Production build + package with a specific version
-VERSION=v15.3.2 yarn run package
+# Production build + package
+yarn run package
 ```
 
 This produces a tar archive at:
 
 ```
-dist/extension-argocd-ai-assistant-<version>.tar
+dist/extension-argocd-ai-assistant.tar
 ```
 
-The `VERSION` environment variable overrides the placeholder version in `package.json`. If omitted, the build falls back to `package.json` version.
+The tar name carries no version, because a release puts the version in the URL path instead. The `VERSION` environment variable still stamps the bundle filename inside the tar, and falls back to the `package.json` version when it is unset.
 
 ---
 
@@ -63,10 +63,20 @@ The `VERSION` environment variable overrides the placeholder version in `package
 The Argo CD Extension Installer downloads the extension tar from a URL during pod initialisation. Use the GitHub Release asset URL:
 
 ```
-https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/extension-argocd-ai-assistant-v<version>.tar
+https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/extension-argocd-ai-assistant.tar
 ```
 
-Replace `<version>` with the latest release tag (e.g., `v15.3.2`).
+Replace `<version>` with a tag from the [Releases page](https://github.com/saidsef/argocd-ai-assistant/releases). This is the recommended form, because a pinned URL is the only one a checksum can be set against.
+
+To track the newest release instead, drop the version and use the `latest` alias:
+
+```
+https://github.com/saidsef/argocd-ai-assistant/releases/latest/download/extension-argocd-ai-assistant.tar
+```
+
+The artefact behind that URL changes with every release, so `EXTENSION_CHECKSUM` cannot be pinned against it and an `argocd-server` restart can pick up a build you have not reviewed.
+
+The 50 newest releases are kept and older ones are deleted nightly, which is about eight weeks of history. The git tag survives the deletion, so a pruned revision can still be checked out and rebuilt, but its tarball URL stops resolving. Move a pin forward before it ages out, or host the tar yourself.
 
 If you cannot use GitHub Releases, host the tar file on an internal artefact server, S3 bucket, or HTTP server accessible from the cluster.
 

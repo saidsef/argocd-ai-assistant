@@ -4,8 +4,10 @@
 #     --namespace argocd --create-namespace \
 #     -f examples/argo-cd-values.yaml
 #
-# Two things to edit before you apply it: the release tag in EXTENSION_URL and
-# the backend URL under services. Everything else works as it stands.
+# One thing to edit before you apply it: the backend URL under services.
+# EXTENSION_URL tracks the newest release. Swap it for
+# releases/download/v<version>/extension-argocd-ai-assistant.tar to pin one,
+# which is what docs/deployment.md recommends and what a checksum needs.
 #
 # See docs/deployment/helm.md for what each block does, and
 # docs/deployment/settings.md for the fields the settings extension accepts.
@@ -32,7 +34,7 @@ server:
       - name: argocd-ai-assistant
         env:
           - name: EXTENSION_URL
-            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v15.3.2/extension-argocd-ai-assistant-v15.3.2.tar"
+            value: "https://github.com/saidsef/argocd-ai-assistant/releases/latest/download/extension-argocd-ai-assistant.tar"
 
   # The settings extension, from the ConfigMap below.
   volumes:

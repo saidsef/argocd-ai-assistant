@@ -37,3 +37,35 @@ jobs:
               done
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  prune-stable-releases:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      # No --cleanup-tag, so the tag of a pruned release survives and the
+      # revision can still be checked out. See #176.
+      - name: Keep the newest 50 stable releases
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 500 \
+            --json tagName,createdAt,isPrerelease \
+            | jq -r '[.[] | select(.isPrerelease | not)]
+                     | sort_by(.createdAt) | reverse | .[50:] | .[].tagName' \
+            | while read -r tag; do
+                echo "Deleting release outside the retention window: $tag"
+                gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes
+              done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  prune-package-versions:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Keep the newest 50 package versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: argocd-ai-assistant
+          package-type: npm
+          min-versions-to-keep: 50

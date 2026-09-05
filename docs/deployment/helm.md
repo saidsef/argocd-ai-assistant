@@ -5,7 +5,7 @@ Use this page when Argo CD comes from the community [`argo/argo-cd`](https://git
 Installing another way? [Argo CD Operator](operator.md) · [Raw manifests](raw.md)
 
 !!! tip "One file rather than five blocks"
-    The fragments on this page are already assembled at [`examples/argo-cd-values.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/argo-cd-values.yaml). Edit the release tag and the backend URL, then pass it:
+    The fragments on this page are already assembled at [`examples/argo-cd-values.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/argo-cd-values.yaml). That file tracks the newest release, so only the backend URL needs editing before you pass it:
 
     ```shell
     helm upgrade --install argocd argo/argo-cd \
@@ -13,7 +13,7 @@ Installing another way? [Argo CD Operator](operator.md) · [Raw manifests](raw.m
       -f examples/argo-cd-values.yaml
     ```
 
-Replace `v15.3.2` with the [latest release tag](../deployment.md#build-and-package) and `services[].url` with your own backend. [Proxy & Backend Configuration](proxy.md) covers the other backend shapes, API token injection, and the timeouts you can set.
+Replace `<version>` with the [latest release tag](../deployment.md#build-and-package) and `services[].url` with your own backend. [Proxy & Backend Configuration](proxy.md) covers the other backend shapes, API token injection, and the timeouts you can set.
 
 ## 1. Enable the proxy extension
 
@@ -61,7 +61,7 @@ server:
       - name: argocd-ai-assistant
         env:
           - name: EXTENSION_URL
-            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v15.3.2/extension-argocd-ai-assistant-v15.3.2.tar"
+            value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/extension-argocd-ai-assistant.tar"
 ```
 
 Defining the initContainer yourself under `server.initContainers` works too, but then the server-side `server.volumeMounts` entry is yours to add - the block above is doing it for you, and a missing server-side mount is the most common reason the tab never appears.
