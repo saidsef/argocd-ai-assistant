@@ -10,7 +10,7 @@ CLUSTER="${CLUSTER:-argocd-ai-$METHOD}"
 ARGOCD_VERSION="${ARGOCD_VERSION:-stable}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
-TAR="$ROOT/dist/extension-argocd-ai-assistant-kind-test.tar"
+TAR="$ROOT/dist/extension-argocd-ai-assistant.tar"
 CTX="kind-$CLUSTER"
 K="kubectl --context $CTX"
 
