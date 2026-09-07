@@ -4,7 +4,7 @@ import { readLines, sseData } from "../util/stream";
 import { argocdHeaders, bearer, canRouteToProxy, containsWord, errorMessage, mcpConfigured, parseMcpServers } from "../util/util";
 import { McpClient, McpTool } from "./mcpClient";
 import { clean, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, noToolFallback, noToolNote, resolveHandles, serverHandles, toolFailureNotice, toolPrompt } from "./mcpPrompt";
-import { parseToolCalls } from "./toolCall";
+import { parseToolCalls, TOOL_OPEN } from "./toolCall";
 import { createToolMarkerFilter } from "./toolMarker";
 
 // Explain a completion that produced no answer text. `finish_reason` is the only signal the wire
@@ -438,7 +438,7 @@ export class LlmProvider implements QueryProvider {
                 // emitted - a blank bubble. The final pass always takes the path below.
                 if (suppressed && !retriedToolFree && iter < MAX_TOOL_ITERATIONS) {
                     retriedToolFree = true;
-                    const attempted = fullText.match(/<tool\s+name="([^"]+)"/)?.[1];
+                    const attempted = fullText.match(new RegExp(`${TOOL_OPEN}\\s+name="([^"]+)"`))?.[1];
                     onStatus?.("Rethinking…");
                     stepMessages = [
                         ...stepMessages,
