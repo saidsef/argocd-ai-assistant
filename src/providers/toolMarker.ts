@@ -4,9 +4,10 @@
 // block would corrupt the cumulative deltas the UI derives (see ChatInterface's transport). So the
 // filter forwards any preamble once and then withholds everything from the first marker onward.
 //
-// The marker is `<tool` followed by whitespace or ">" (the prompt's `<tool name="...">` shape),
-// never a bare word boundary: the latter transiently matches "...<tool" mid-stream, so <toolbar> /
-// <toolkit> in prose would get their tail wrongly hidden.
+// The marker is the opening tag of ./toolCall's wire format - `<tool`, or the same name behind a
+// model's own sentinel tokens - followed by whitespace or ">". Never a bare word boundary: the
+// latter transiently matches "...<tool" mid-stream, so <toolbar> / <toolkit> in prose would get
+// their tail wrongly hidden.
 //
 // Scanning is incremental. The caller feeds cumulative text, so re-running a regex (and a
 // lastIndexOf) over the whole reply on every SSE delta is O(n^2) in the answer length - and the
@@ -14,7 +15,7 @@
 // `scanFrom`, the index below which no complete *or partial* marker can begin, and only ever look
 // forward from there.
 
-const MARKER = "<tool";
+import { MAX_TOOL_OPEN, TOOL_OPEN } from "./toolCall";
 
 export interface ToolMarkerFilter {
     /**
@@ -30,7 +31,7 @@ export interface ToolMarkerFilter {
 export function createToolMarkerFilter(): ToolMarkerFilter {
     // Per instance, not module-level: `lastIndex` is mutable state on the RegExp, so a shared one
     // would let a stale index from another stream skip past a marker and leak raw XML into the UI.
-    const marker = /<tool[\s>]/g;
+    const marker = new RegExp(`${TOOL_OPEN}[\\s>]`, "g");
     let scanFrom = 0;
     let suppressed = false;
 
@@ -49,19 +50,18 @@ export function createToolMarkerFilter(): ToolMarkerFilter {
                 return text.slice(0, m.index).trimEnd() || null;
             }
 
-            // A trailing "<", "<t", "<to", "<too" or "<tool" may begin a marker whose delimiter has
-            // not streamed yet. Withhold it - downstream deltas are append-only, so a "<" shown now
-            // could never be retracted once we learn it began a (suppressed) block - and resume the
-            // next scan from it. A full match is 6 characters, so its longest proper prefix is
-            // MARKER itself: 5 characters is the exact bound on what can be pending.
-            let hold = 0;
-            for (let k = Math.min(MARKER.length, text.length); k >= 1; k--) {
-                if (MARKER.startsWith(text.slice(text.length - k))) {
-                    hold = k;
-                    break;
-                }
-            }
-            scanFrom = text.length - hold;
+            // A trailing "<" with no whitespace or ">" after it may begin a marker whose delimiter
+            // has not streamed yet. Withhold it - downstream deltas are append-only, so a "<" shown
+            // now could never be retracted once we learn it began a (suppressed) block - and resume
+            // the next scan from it.
+            //
+            // Only the last MAX_TOOL_OPEN characters are examined, which keeps the work per delta
+            // constant. A "<" further back than that is already followed by every character a marker
+            // could contain, so the scan above would have matched it had it been one.
+            const from = Math.max(scanFrom, text.length - MAX_TOOL_OPEN);
+            const tail = text.slice(from);
+            const open = tail.lastIndexOf("<");
+            scanFrom = open >= 0 && !/[\s>]/.test(tail.slice(open)) ? from + open : text.length;
             return text.slice(0, scanFrom) || null;
         },
     };

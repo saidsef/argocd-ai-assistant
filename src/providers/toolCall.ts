@@ -4,6 +4,24 @@
 // Kept beside the provider that writes that prompt, and pure, so the parser and the template it
 // mirrors stay in one place. Models frequently deviate from the template, hence the fallbacks below.
 
+// A model whose chat template has its own tool-call channel reproduces the block inside that
+// channel's sentinel tokens, so the tag arrives as `<｜｜DSML｜｜tool name="x">...</｜｜DSML｜｜tool>`
+// rather than `<tool name="x">`. Matching only the bare form left the tool unrun and the raw text in
+// the user's reply, so the tag name may carry one of these prefixes. A vertical bar cannot appear in
+// an HTML tag name, so the allowance cannot swallow ordinary markup or prose.
+const BAR = "[|｜]";
+const SENTINEL_BODY_MAX = 32;
+const SENTINEL = `(?:${BAR}{1,2}[^\\s<>"|｜]{0,${SENTINEL_BODY_MAX}}${BAR}{1,2})?`;
+
+/** Regex source for the opening tag, sentinel and all, up to but not including `name="..."`. */
+export const TOOL_OPEN = `<${SENTINEL}tool`;
+
+/** Regex source for the closing tag. Its sentinel need not match the opening tag's. */
+export const TOOL_CLOSE = `</${SENTINEL}tool>`;
+
+/** Longest text TOOL_OPEN can match, which bounds how much of a stream can be a partial tag. */
+export const MAX_TOOL_OPEN = "<".length + 2 + SENTINEL_BODY_MAX + 2 + "tool".length;
+
 /** The structural subset of McpTool this module needs; McpTool is assignable to it. */
 export interface ToolSpec {
     name: string;
@@ -23,7 +41,7 @@ export interface ToolCall {
  * rest dropped with no result and no error, which reads to the user as the tool never running.
  */
 export function parseToolCalls(text: string, tools?: ToolSpec[]): ToolCall[] {
-    const block = /<tool\s+name="([^"]+)">\s*([\s\S]*?)\s*<\/tool>/g;
+    const block = new RegExp(`${TOOL_OPEN}\\s+name="([^"]+)">\\s*([\\s\\S]*?)\\s*${TOOL_CLOSE}`, "g");
     const calls: ToolCall[] = [];
     const seen = new Set<string>();
     let sawBlock = false;

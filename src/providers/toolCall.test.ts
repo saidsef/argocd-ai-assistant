@@ -25,6 +25,17 @@ describe("parseToolCall - XML form", () => {
         assert.equal(parseToolCall('<tool name="docs_search">{}</tool>', undefined), null);
     });
 
+    it("parses a block wrapped in a model's own tool-call sentinel", () => {
+        // A chat template with a native tool-call channel emits the block inside its sentinel
+        // tokens. Without this the tool never ran and the raw tag reached the user.
+        const call = parseToolCall('<｜｜DSML｜｜tool name="docs_search">\n{"query":"argo"}\n</｜｜DSML｜｜tool>', [SEARCH]);
+        assert.deepEqual(call, { name: "docs_search", arguments: { query: "argo" } });
+    });
+
+    it("does not treat an ordinary element as the tool tag", () => {
+        assert.equal(parseToolCall('<mytool name="docs_search">{"query":"a"}</mytool>', [SEARCH]), null);
+    });
+
     it("falls back to empty arguments when the body is not valid JSON", () => {
         const call = parseToolCall('<tool name="docs_search">not json</tool>', [SEARCH]);
         assert.deepEqual(call, { name: "docs_search", arguments: {} });
