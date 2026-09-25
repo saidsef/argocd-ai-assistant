@@ -266,7 +266,6 @@ export class LlmProvider implements QueryProvider {
         }
     }
 
-    // Forget the client and everything derived from it, so the next ensureMcp starts a clean probe.
     private dropMcp(): void {
         this.mcpClient = undefined;
         this.mcpTools = undefined;
@@ -508,9 +507,7 @@ export class LlmProvider implements QueryProvider {
         return { success: true };
     }
 
-    // GET /v1/models. A served list is cached per base URL for the session; a failed lookup is not,
-    // so a backend that was down for the first question is asked again on Retry instead of the
-    // session demanding a `model` setting once it is back. Never throws: a backend that does not
+    // GET /v1/models, cached per base URL for the session. Never throws: a backend that does not
     // serve the endpoint, or serves something unexpected, gets the same "set model yourself"
     // message as one that reports nothing, and the reason goes to the console.
     private async discoverModels(

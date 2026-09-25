@@ -80,8 +80,6 @@ describe("McpClient abort handling", () => {
     });
 
     it("does not ask a server that failed to initialise for its tools", async () => {
-        // Every request to the down server is retried through the 502/503 policy, so a tools/list it
-        // could never answer costs three more attempts and two re-handshakes before the first reply.
         const methods: string[] = [];
         globalThis.fetch = (async (url: string, init: RequestInit) => {
             if (!url.startsWith(MCP_URL)) return json({});

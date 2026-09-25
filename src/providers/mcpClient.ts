@@ -129,9 +129,6 @@ export class McpClient {
         const perServer = Array.from({ length: this.urls.length }, () => [] as McpTool[]);
         const errs = new Array<string | undefined>(this.urls.length).fill(undefined);
         await Promise.all(this.urls.map(async (_url, i) => {
-            // A server that never completed `initialize` (see connectErrors) cannot answer this, and
-            // asking anyway paid the 502/503 retry policy a second time: three more attempts and two
-            // re-handshakes per down server before the first reply.
             if (this.serverInfos[i] === null) return;
             try {
                 const response = await this.request(i, {
@@ -231,7 +228,6 @@ export class McpClient {
         }
     }
 
-    // The `initialize` handshake, sent once per server on connect and again after a retried 502/503.
     private initializeRequest(): JsonRpcRequest {
         return {
             jsonrpc: "2.0",

@@ -272,8 +272,6 @@ describe("model discovery on the wire", () => {
     });
 
     it("asks again after a failed lookup instead of caching the failure for the session", async () => {
-        // A backend that is down for the first question must not leave the assistant demanding a
-        // `model` setting for the rest of the session once it is back.
         let lookups = 0;
         globalThis.fetch = (async (url: string) => {
             if (String(url).endsWith("/v1/models")) {
