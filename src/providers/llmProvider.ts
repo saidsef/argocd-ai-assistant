@@ -206,13 +206,7 @@ export class LlmProvider implements QueryProvider {
         // stale client would route a call to the wrong server). Rebuilt from scratch rather than
         // re-handshaked: a server holding a live session may reject a second `initialize`, which
         // would flap a healthy server into "unavailable".
-        if (this.mcpNeedsReprobe || !sameUrls(this.mcpUrls, servers)) {
-            this.mcpClient = undefined;
-            this.mcpTools = undefined;
-            this.mcpUrls = undefined;
-            this.mcpNeedsReprobe = false;
-            this.mcpReady = undefined;
-        }
+        if (this.mcpNeedsReprobe || !sameUrls(this.mcpUrls, servers)) this.dropMcp();
         // Whether or not a probe is needed, adopt the newest token: it may have been entered through
         // the token flow since this client connected.
         this.mcpClient?.setAuthToken(mcpToken);
@@ -239,17 +233,13 @@ export class LlmProvider implements QueryProvider {
             const failed = this.mcpErrors.filter(Boolean);
             if (failed.length > 0) {
                 console.warn("MCP issues (answering without those servers/tools):", this.mcpErrors);
+                // A broken/unreachable server must not break the assistant: fall back to LLM-only.
+                // If nothing at all was discovered, drop the client so the retry starts clean.
+                if (!this.mcpTools?.length) this.dropMcp();
                 // Re-probe next time so a recovered server comes back, and so new tools on a healthy
                 // server are eventually discovered.
                 this.mcpNeedsReprobe = true;
                 this.mcpReady = undefined;
-                // A broken/unreachable server must not break the assistant: fall back to LLM-only.
-                // If nothing at all was discovered, drop the client so the retry starts clean.
-                if (!this.mcpTools?.length) {
-                    this.mcpClient = undefined;
-                    this.mcpTools = undefined;
-                    this.mcpUrls = undefined;
-                }
             }
         } catch (err) {
             // A user Stop during connect/discovery is not an MCP failure; let it unwind - but reset
@@ -266,22 +256,22 @@ export class LlmProvider implements QueryProvider {
             // tools/list against the ones that never connected. `mcpErrors` is deliberately left
             // alone: a cancellation should neither erase nor invent a per-server diagnosis.
             if (err instanceof Error && err.name === "AbortError") {
-                this.mcpClient = undefined;
-                this.mcpTools = undefined;
-                this.mcpUrls = undefined;
-                this.mcpNeedsReprobe = false;
-                this.mcpReady = undefined;
+                this.dropMcp();
                 throw err;
             }
             const errMsg = errorMessage(err);
             console.warn(`MCP initialization failed, answering without tools: ${errMsg}`);
             this.mcpErrors = servers.map(() => errMsg);
-            this.mcpClient = undefined;
-            this.mcpTools = undefined;
-            this.mcpUrls = undefined;
-            this.mcpNeedsReprobe = false;
-            this.mcpReady = undefined;
+            this.dropMcp();
         }
+    }
+
+    private dropMcp(): void {
+        this.mcpClient = undefined;
+        this.mcpTools = undefined;
+        this.mcpUrls = undefined;
+        this.mcpNeedsReprobe = false;
+        this.mcpReady = undefined;
     }
 
     /**
@@ -529,17 +519,20 @@ export class LlmProvider implements QueryProvider {
         if (this.modelCache?.baseURL === baseURL) return this.modelCache.models;
         const headers = argocdHeaders(context.application, { Accept: "application/json" });
         if (apiKey) headers["Authorization"] = bearer(apiKey);
-        let models: string[] = [];
         try {
             const response = await fetch(modelsUrl(baseURL), { method: "GET", headers, signal });
-            if (response.ok) models = parseModelList(await response.json());
-            else console.warn(`Model discovery failed: GET /v1/models returned ${response.status}.`);
+            if (!response.ok) {
+                console.warn(`Model discovery failed: GET /v1/models returned ${response.status}.`);
+                return [];
+            }
+            const models = parseModelList(await response.json());
+            this.modelCache = { baseURL, models };
+            return models;
         } catch (err) {
             if (err instanceof Error && err.name === "AbortError") throw err;
             console.warn(`Model discovery failed: ${errorMessage(err)}`);
+            return [];
         }
-        this.modelCache = { baseURL, models };
-        return models;
     }
 
     private async sendChatCompletion(

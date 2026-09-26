@@ -78,6 +78,23 @@ describe("McpClient abort handling", () => {
         await client.connect();
         assert.match(client.getErrors()[0]!, /unreachable: .*503/);
     });
+
+    it("does not ask a server that failed to initialise for its tools", async () => {
+        const methods: string[] = [];
+        globalThis.fetch = (async (url: string, init: RequestInit) => {
+            if (!url.startsWith(MCP_URL)) return json({});
+            methods.push(JSON.parse(String(init.body)).method);
+            return new Response("nope", { status: 503 });
+        }) as unknown as typeof fetch;
+
+        const client = new McpClient([MCP_URL]);
+        await client.connect();
+        const afterConnect = methods.length;
+
+        assert.deepEqual(await client.listAllTools(), []);
+        assert.equal(methods.length, afterConnect, `unexpected requests: ${methods.slice(afterConnect).join(", ")}`);
+        assert.match(client.getErrors()[0]!, /unreachable: .*503/);
+    });
 });
 
 describe("LlmProvider probe cache after a cancelled MCP setup", () => {

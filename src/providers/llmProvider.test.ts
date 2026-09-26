@@ -271,6 +271,36 @@ describe("model discovery on the wire", () => {
         assert.equal(stub.model(), undefined);
     });
 
+    it("asks again after a failed lookup instead of caching the failure for the session", async () => {
+        let lookups = 0;
+        globalThis.fetch = (async (url: string) => {
+            if (String(url).endsWith("/v1/models")) {
+                lookups++;
+                return lookups === 1
+                    ? new Response("down", { status: 503 })
+                    : new Response(JSON.stringify({ data: [{ id: "only-model" }] }), { headers: { "content-type": "application/json" } });
+            }
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(new TextEncoder().encode(
+                        `data: ${JSON.stringify({ choices: [{ delta: { content: "ok" } }] })}\n\n`));
+                    controller.close();
+                },
+            });
+            return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+        }) as unknown as typeof fetch;
+        const provider = new LlmProvider();
+        const context = { attachments: [], settings: { data: { baseURL: "http://llm.test/v1" } } } as QueryContext;
+
+        const first = await provider.query(context, "hi", () => { });
+        assert.equal(first.success, false);
+        assert.match(first.error!.message, /not configured/);
+
+        const second = await provider.query(context, "hi again", () => { });
+        assert.equal(second.success, true, JSON.stringify(second.error));
+        assert.equal(lookups, 2, "the failed lookup is retried on the next query");
+    });
+
     it("does not look anything up when the model is configured", async () => {
         const stub = backend(["ignored"]);
         const response = await ask({ model: "gpt-5", data: { baseURL: "http://llm.test/v1" } });

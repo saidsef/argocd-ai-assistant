@@ -99,19 +99,7 @@ export class McpClient {
         const errs = new Array<string | undefined>(this.urls.length).fill(undefined);
         await Promise.all(this.urls.map(async (_url, i) => {
             try {
-                const response = await this.request(i, {
-                    jsonrpc: "2.0",
-                    id: this.nextId++,
-                    method: "initialize",
-                    params: {
-                        protocolVersion: "2024-11-05",
-                        capabilities: {},
-                        clientInfo: {
-                            name: "argocd-ai-assistant",
-                            version: "1.0.0"
-                        }
-                    }
-                }, signal);
+                const response = await this.request(i, this.initializeRequest(), signal);
 
                 if (response.error) {
                     errs[i] = `initialization failed: ${response.error.message}`;
@@ -141,6 +129,7 @@ export class McpClient {
         const perServer = Array.from({ length: this.urls.length }, () => [] as McpTool[]);
         const errs = new Array<string | undefined>(this.urls.length).fill(undefined);
         await Promise.all(this.urls.map(async (_url, i) => {
+            if (this.serverInfos[i] === null) return;
             try {
                 const response = await this.request(i, {
                     jsonrpc: "2.0",
@@ -232,20 +221,24 @@ export class McpClient {
     private async reinitialise(serverIndex: number, signal?: AbortSignal): Promise<void> {
         this.sessionIds[serverIndex] = null;
         try {
-            const response = await this.sendOnce(serverIndex, {
-                jsonrpc: "2.0",
-                id: this.nextId++,
-                method: "initialize",
-                params: {
-                    protocolVersion: "2024-11-05",
-                    capabilities: {},
-                    clientInfo: { name: "argocd-ai-assistant", version: "1.0.0" }
-                }
-            }, signal);
+            const response = await this.sendOnce(serverIndex, this.initializeRequest(), signal);
             if (!response.error) this.serverInfos[serverIndex] = response.result?.serverInfo ?? {};
         } catch (err) {
             if (isAbort(err)) throw err;
         }
+    }
+
+    private initializeRequest(): JsonRpcRequest {
+        return {
+            jsonrpc: "2.0",
+            id: this.nextId++,
+            method: "initialize",
+            params: {
+                protocolVersion: "2024-11-05",
+                capabilities: {},
+                clientInfo: { name: "argocd-ai-assistant", version: "1.0.0" }
+            }
+        };
     }
 
     private async sendOnce(serverIndex: number, body: JsonRpcRequest, signal?: AbortSignal): Promise<JsonRpcResponse> {
