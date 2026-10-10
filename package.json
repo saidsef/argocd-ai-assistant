@@ -44,6 +44,6 @@
     },
     "dependencies": {
         "dompurify": "^3.4.16",
-        "marked": "^18.0.14"
+        "marked": "^18.1.0"
     }
 }
