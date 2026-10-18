@@ -64,7 +64,32 @@ Per message the provider:
 1. Reuses that connection, or makes it now if the warm-up has not finished or a server needs re-probing.
 2. Injects a **server roster** into the system message whenever any server is configured, listing each server's name, hostname, state, and its tool names. This is reference only - nothing in it is callable - and it is what lets the assistant answer "which MCP servers are available?" instead of reporting that it has no information about MCP.
 3. Injects an "Available tools" section (descriptions and JSON schemas, grouped by server) **only for the server(s) the user has named** - see [Addressing a server](#addressing-a-server) below. A conversation naming no server gets no tools, so a normal question never triggers a call.
-4. Scans the response for a `<tool>` tag (only for advertised tools) and, if found, routes it via `tools/call`, appending the result as a follow-up query. If a tool block is emitted when nothing is callable, the assistant retries once tool-free rather than showing the raw block.
+4. Scans the response for a tool call in one of the [accepted formats](#tool-call-formats) and, if it names an advertised tool, routes it via `tools/call`, appending the result as a follow-up query. If a tool block is emitted when nothing is callable, the assistant retries once tool-free rather than showing the raw block.
+
+#### Tool-call formats
+
+The system message asks the model to call a tool with a `<tool name="...">` block that holds JSON arguments. Models often answer in another shape, and `src/providers/toolCall.ts` accepts each of these:
+
+| Format | Example | Arguments |
+|---|---|---|
+| Prompted tag | `<tool name="docs_search">{"query":"argo"}</tool>` | JSON body |
+| Prompted tag in the model's sentinel tokens | `<｜｜DSML｜｜tool name="docs_search">{"query":"argo"}</｜｜DSML｜｜tool>` | JSON body |
+| DeepSeek DSML | `<｜DSML｜invoke name="docs_search">`, inside a `function_calls` or `calls` tag | One `parameter` element per argument. `string="true"` marks a raw string, and any other value is read as JSON. |
+| Bare JSON | `{"name":"docs_search","arguments":{"query":"argo"}}` | The `arguments`, `args`, `input` or `parameters` object |
+
+A sentinel is one or two vertical bars, ASCII or full-width, then up to 32 characters without whitespace, one or two more bars and an optional space. An HTML tag name cannot contain a vertical bar, so the sentinel never matches ordinary markup. A closing tag must name the same tag as its opening tag, and its sentinel may differ.
+
+Only a block that names an advertised tool runs. The prompt's own `EXACT_TOOL_NAME` template and any tool syntax quoted in an answer never match one. A block that names no advertised tool still counts as an attempt, and the parser does not fall back to bare JSON after one.
+
+The parser returns every call in the reply, in order, and drops an identical repeat. A body that is not valid JSON gives the tool empty arguments. DeepSeek sometimes mixes its two forms and closes a JSON body with a `parameter` tag it never opened, and the parser drops that tag before reading the JSON.
+
+Bare JSON counts as a call only when nothing but a code fence follows it, since prose after the object marks it as an example. An object without a tool name runs only when its keys fit exactly one tool's schema.
+
+#### Tool blocks in the stream
+
+The model's tool block never reaches the chat, and the answer arrives in a later completion. `src/providers/toolMarker.ts` forwards the text before the first marker and withholds everything from the marker onward. A marker is an opening `tool` or `invoke` tag, or a `function_calls` or `calls` tag, with or without a sentinel, followed by whitespace or `>`. A bare word boundary would match `<toolbar>` in prose while it streams, and hide the rest of it.
+
+The chat derives its deltas from the cumulative reply, so the filter never shows a character it might later have to take back. It holds back a trailing `<` until the text after it either completes a marker or can no longer become one. Each update examines only as many characters as the longest marker, so the cost per update stays constant however long the reply grows.
 
 #### Addressing a server
 
