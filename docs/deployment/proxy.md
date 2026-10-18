@@ -38,6 +38,16 @@ extension.config.assistant: |
       value: '$argocd-ai-assistant-secret:openai-api-key'
 ```
 
+Each of these providers takes the same header, and serves tool calls on its OpenAI-compatible endpoint:
+
+| Provider | `services[].url` |
+|---|---|
+| OpenAI | `https://api.openai.com` |
+| Anthropic | `https://api.anthropic.com` |
+| DeepSeek | `https://api.deepseek.com` |
+
+Anthropic's compatible endpoint covers chat completions only, so set `model` in the [settings](settings.md) rather than relying on `/v1/models`.
+
 !!! important "Secret value must include the `Bearer` prefix"
     The `$` prefix is required for Argo CD template injection - without it the value is treated as a literal string. `$argocd-ai-assistant-secret:openai-api-key` is resolved from the `openai-api-key` key of a Secret named `argocd-ai-assistant-secret` - see [Injecting the API token](#injecting-the-api-token) below for how to create it.
 

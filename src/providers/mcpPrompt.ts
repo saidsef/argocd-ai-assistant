@@ -11,7 +11,7 @@
 // Kept pure and separate from LlmProvider so the wording - which is the entire mechanism here - can
 // be exercised directly.
 
-import { McpServerStatus, mcpState } from "../model/provider";
+import { McpServerStatus, mcpState, ToolCallingMode } from "../model/provider";
 import { capText, MAX_MCP_ROSTER_CHARS } from "../util/context";
 import { McpTool } from "./mcpClient";
 import { exampleArgs } from "./toolCall";
@@ -174,7 +174,7 @@ export function serverHandles(status: Pick<McpServerStatus, "handle" | "name" | 
  * omitted here because the tool block below repeats them in full with schemas, and two lists of the
  * same names invites the model to treat the wrong one as authoritative.
  */
-export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addressed: Set<number>): string {
+export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addressed: Set<number>, mode: ToolCallingMode = "text"): string {
     if (servers.length === 0) return "";
 
     const lines = servers.map((s, i) => {
@@ -199,7 +199,7 @@ export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addresse
         const names = tools.filter(t => t.serverIndex === i).map(t => clean(t.name, MAX_SERVER_NAME_CHARS));
         let toolPart: string;
         if (addressed.has(i)) {
-            toolPart = "tools listed in full below";
+            toolPart = mode === "native" ? "tools attached to this request" : "tools listed in full below";
         } else if (names.length === 0) {
             // Never "this server has no tools": a failed discovery wipes the cached tool list, so a
             // server that exposed 14 tools a moment ago would be reported as having none.
@@ -223,7 +223,7 @@ export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addresse
     // The cap bounds the *list* - the part that grows with the deployment. Capping the block as a
     // whole kept the start, so a large enough deployment silently dropped the guidance off the end,
     // losing exactly the instructions that stop the model emitting an uncallable tool block.
-    return capText(header + lines.join("\n"), MAX_MCP_ROSTER_CHARS, "the MCP server list") + "\n" + guidance(anyAddressed);
+    return capText(header + lines.join("\n"), MAX_MCP_ROSTER_CHARS, "the MCP server list") + "\n" + guidance(anyAddressed, mode);
 }
 
 // The "complete set" sentence used to live in DEFAULT_SYSTEM_PROMPT, where it was sent even by
@@ -234,7 +234,12 @@ export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addresse
 // without it, the model opened every reply with the inventory regardless of the question. See #132.
 const COMPLETE_SET = `This list is complete: when the user asks about MCP, answer from it in prose - which servers exist, their state and which tools they expose - and never say you have no information about MCP. When they ask anything else, do not recite it: no preamble, aside or closing note about which servers are attached or how many tools they have.`;
 
-function guidance(anyAddressed: boolean): string {
+function guidance(anyAddressed: boolean, mode: ToolCallingMode): string {
+    if (anyAddressed && mode === "native") {
+        return `
+Only the functions attached to this request can be called in this reply. They belong to the server(s) named in the conversation.
+${COMPLETE_SET}`;
+    }
     if (anyAddressed) {
         return `
 Only the tools under "Available tools:" below can be called in this reply; they belong to the server(s) named in the conversation. Naming any other tool in a tool block will not run it, and the user will see the raw text instead of an answer.
@@ -249,12 +254,19 @@ Do not output a <tool> block or any tool-call JSON: nothing will execute it and 
 - If answering needs a tool, ask the user to include that server's name - exactly as written at the start of its line above - in their next message, then answer as far as you can without it.`;
 }
 
+// Stated with the results, since this is where a fabricated fact can arrive with a tool's authority.
+const RESULTS_RULE = "Answer from tool results and the context already provided. Use only what the results contain - do not extrapolate. If they do not answer the question, say so.";
+
 /**
  * The callable tool block, for the server(s) named in the conversation. Grouped by server so the
  * model can attribute a result to one; tool names are reproduced exactly, because that is what
  * parseToolCall matches on.
  */
-export function toolPrompt(tools: McpTool[], serverName: (index: number) => string, maxCalls: number): string {
+export function toolPrompt(tools: McpTool[], serverName: (index: number) => string, maxCalls: number, mode: ToolCallingMode = "text"): string {
+    // The request's `tools` carries each name, description and schema, so only the rules remain.
+    if (mode === "native") {
+        return `\n\nCall a function when the question needs one, and answer directly when it does not. Several calls in one reply are fine for independent lookups. At most ${maxCalls} tool${maxCalls === 1 ? "" : "s"} will run for this question, and calls beyond that are not executed. ${RESULTS_RULE}`;
+    }
     let text = "\n\nAvailable tools:\n";
     for (const index of [...new Set(tools.map(t => t.serverIndex))]) {
         const group = tools.filter(t => t.serverIndex === index);
@@ -275,6 +287,12 @@ export function toolPrompt(tools: McpTool[], serverName: (index: number) => stri
     // becomes one round trip instead of three, and the model knows where the ceiling is.
     text += `You may emit more than one block in a reply when a question needs several independent lookups; at most ${maxCalls} tool${maxCalls === 1 ? "" : "s"} will run for this question, and blocks beyond that are not executed.`;
     return text;
+}
+
+/** The user message that hands text-protocol tool results back to the model. */
+export function resultsNote(notes: string[]): string {
+    const plural = notes.length > 1;
+    return `${notes.join("\n\n")}\n\nAnswer the original question from ${plural ? "these results" : "this result"} and the context already provided. Use only what ${plural ? "they contain" : "it contains"} - do not extrapolate. If ${plural ? "they do" : "it does"} not answer the question, say so.`;
 }
 
 // Bound on the server-supplied error text in a failure notice. Enough for "HTTP 503" or a short

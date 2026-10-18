@@ -35,8 +35,16 @@ Each query is sent to the backend with additional context:
 
 Every context item is bounded twice: by item count (events, resource lists, log lines) and by size in characters. When an item exceeds its ceiling it is truncated with a visible `[truncated: showing N of M characters ...]` marker, so the model knows it is reading a fragment.
 
+Earlier messages in the conversation go with each query as history. Each message is capped, and so is the total, which drops the oldest messages first. History carries the visible text of earlier answers, never their tool exchanges.
+
 !!! note
     Most inference providers cap tokens, so large context items can exhaust the query limit.
+
+### System prompt
+
+The default system prompt states each accuracy rule as a checkable prohibition. A model can satisfy "be accurate" while padding an answer with plausible defaults, but "an absent field is unknown, not default" is a rule it either followed or did not. The prompt holds one line per rule and repeats none of them, because it goes with every request and each line is paid for every time.
+
+The prompt describes nothing that may be absent. The MCP server roster and the tool rules are appended only when servers are configured. A `systemPrompt` [setting](deployment/settings.md) replaces the persona and its rules, and the attachments and MCP text are appended to whichever prompt is in force.
 
 ### Chatbot Interface
 
@@ -63,12 +71,25 @@ Per message the provider:
 
 1. Reuses that connection, or makes it now if the warm-up has not finished or a server needs re-probing.
 2. Injects a **server roster** into the system message whenever any server is configured, listing each server's name, hostname, state, and its tool names. This is reference only - nothing in it is callable - and it is what lets the assistant answer "which MCP servers are available?" instead of reporting that it has no information about MCP.
-3. Injects an "Available tools" section (descriptions and JSON schemas, grouped by server) **only for the server(s) the user has named** - see [Addressing a server](#addressing-a-server) below. A conversation naming no server gets no tools, so a normal question never triggers a call.
-4. Scans the response for a tool call in one of the [accepted formats](#tool-call-formats) and, if it names an advertised tool, routes it via `tools/call`, appending the result as a follow-up query. If a tool block is emitted when nothing is callable, the assistant retries once tool-free rather than showing the raw block.
+3. Sends the tools of **only the server(s) the user has named**, as `tools` on the Chat Completions request - see [Addressing a server](#addressing-a-server) below. A conversation naming no server gets no tools, so a normal question never triggers a call.
+4. Runs each call the backend returns via `tools/call`, and sends every result back as a `role: "tool"` message carrying the call's id. A reply without native calls is scanned for a call in one of the [text formats](#tool-call-formats). If a tool block is emitted when nothing is callable, the assistant retries once tool-free rather than showing the raw block.
+
+#### Tool-calling modes
+
+The provider sends tools natively by default. A backend that answers a request carrying `tools` with 400 or 422 gets the same step again in the text protocol: the system message describes each tool with its schema and asks for a `<tool>` block, and any native exchange so far is rewritten as tool blocks and a results note. When that retry succeeds, the provider uses the text protocol for that base URL and model for the rest of the session. A 400 that the retry also gets is returned as it is, and nothing is recorded.
+
+In native mode:
+
+- Every call id gets a tool message, since the next request is rejected while any id is unanswered. That includes a call to an unknown tool, a call whose arguments are not a JSON object, a repeat, which gets the first call's result, and a call past the budget.
+- Tool names are rewritten to letters, digits, `_` and `-`, at most 64 characters, and mapped back to the MCP tool. Two servers exposing the same name get distinct names.
+- Each call goes back to the backend as it arrived, including fields the extension does not read.
+- The final pass sends `tool_choice: "none"`, and any call that still arrives is dropped.
+
+The `data.toolCalling` [setting](deployment/settings.md) fixes the mode. `native` never falls back, and `text` never sends `tools`, which suits a gateway that drops the field without an error.
 
 #### Tool-call formats
 
-The system message asks the model to call a tool with a `<tool name="...">` block that holds JSON arguments. Models often answer in another shape, and `src/providers/toolCall.ts` accepts each of these:
+In the text protocol, the system message asks the model to call a tool with a `<tool name="...">` block that holds JSON arguments. Models often answer in another shape, and `src/providers/toolCall.ts` accepts each of these. A native-mode reply that carries no native calls goes through the same parser.
 
 | Format | Example | Arguments |
 |---|---|---|
@@ -87,7 +108,7 @@ Bare JSON counts as a call only when nothing but a code fence follows it, since 
 
 #### Tool blocks in the stream
 
-The model's tool block never reaches the chat, and the answer arrives in a later completion. `src/providers/toolMarker.ts` forwards the text before the first marker and withholds everything from the marker onward. A marker is an opening `tool` or `invoke` tag, or a `function_calls` or `calls` tag, with or without a sentinel, followed by whitespace or `>`. A bare word boundary would match `<toolbar>` in prose while it streams, and hide the rest of it.
+The model's tool block never reaches the chat, and the answer arrives in a later completion. Native calls arrive outside the reply text, and the filter runs in both modes for text calls. `src/providers/toolMarker.ts` forwards the text before the first marker and withholds everything from the marker onward. A marker is an opening `tool` or `invoke` tag, or a `function_calls` or `calls` tag, with or without a sentinel, followed by whitespace or `>`. A bare word boundary would match `<toolbar>` in prose while it streams, and hide the rest of it.
 
 The chat derives its deltas from the cumulative reply, so the filter never shows a character it might later have to take back. It holds back a trailing `<` until the text after it either completes a marker or can no longer become one. Each update examines only as many characters as the longest marker, so the cost per update stays constant however long the reply grows.
 
@@ -121,6 +142,8 @@ Set `name` on the server entry to override it (see [Settings](deployment/setting
 
 Addressing still accepts the server's reported name, its full hostname, and the hostname's first label, so anything that worked before the handle existed keeps working.
 
-Tool calls chain a bounded few times per query (the final turn forced tool-free) to keep multi-step lookups fast. Servers are unauthenticated by default, the `token` flow adds an `Authorization: Bearer` header. A broken server never breaks the assistant - if it is unreachable, exposes no tools, or a call fails, the provider logs the reason to the console and continues in LLM-only mode.
+A question runs a fixed number of tools at most, counted per tool, so a reply asking for several at once spends the same budget as several replies. The completion after the last tool is forced tool-free. When one reply runs several tools, each result is capped tighter than a lone one, so a batch cannot crowd out the manifest, logs and history. Results go back with the rule to answer only from what they contain.
+
+Servers are unauthenticated by default, the `token` flow adds an `Authorization: Bearer` header. A broken server never breaks the assistant - if it is unreachable, exposes no tools, or a call fails, the provider logs the reason to the console and continues in LLM-only mode. A failed call also puts a one-line notice in the chat naming the tool and the error, so a broken server reads differently from a model that chose not to call one. A server that failed is probed again on the next question, so a recovered server comes back without a reload. Stopping a question during the handshake drops the half-built connection, and the next question connects from scratch.
 
 The conversation state, streaming transport, and LLM-provider calls are all bespoke (`useChat` + `LlmProvider`), because the Assistant needs features beyond an off-the-shelf chatbot, such as attaching context and the bounded MCP tool loop.
