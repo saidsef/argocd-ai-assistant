@@ -35,8 +35,16 @@ Each query is sent to the backend with additional context:
 
 Every context item is bounded twice: by item count (events, resource lists, log lines) and by size in characters. When an item exceeds its ceiling it is truncated with a visible `[truncated: showing N of M characters ...]` marker, so the model knows it is reading a fragment.
 
+Earlier messages in the conversation go with each query as history. Each message is capped, and so is the total, which drops the oldest messages first. History carries the visible text of earlier answers, never their tool exchanges.
+
 !!! note
     Most inference providers cap tokens, so large context items can exhaust the query limit.
+
+### System prompt
+
+The default system prompt states each accuracy rule as a checkable prohibition. A model can satisfy "be accurate" while padding an answer with plausible defaults, but "an absent field is unknown, not default" is a rule it either followed or did not. The prompt holds one line per rule and repeats none of them, because it goes with every request and each line is paid for every time.
+
+The prompt describes nothing that may be absent. The MCP server roster and the tool rules are appended only when servers are configured. A `systemPrompt` [setting](deployment/settings.md) replaces the persona and its rules, and the attachments and MCP text are appended to whichever prompt is in force.
 
 ### Chatbot Interface
 
@@ -134,6 +142,8 @@ Set `name` on the server entry to override it (see [Settings](deployment/setting
 
 Addressing still accepts the server's reported name, its full hostname, and the hostname's first label, so anything that worked before the handle existed keeps working.
 
-Tool calls chain a bounded few times per query (the final turn forced tool-free) to keep multi-step lookups fast. Servers are unauthenticated by default, the `token` flow adds an `Authorization: Bearer` header. A broken server never breaks the assistant - if it is unreachable, exposes no tools, or a call fails, the provider logs the reason to the console and continues in LLM-only mode.
+A question runs a fixed number of tools at most, counted per tool, so a reply asking for several at once spends the same budget as several replies. The completion after the last tool is forced tool-free. When one reply runs several tools, each result is capped tighter than a lone one, so a batch cannot crowd out the manifest, logs and history. Results go back with the rule to answer only from what they contain.
+
+Servers are unauthenticated by default, the `token` flow adds an `Authorization: Bearer` header. A broken server never breaks the assistant - if it is unreachable, exposes no tools, or a call fails, the provider logs the reason to the console and continues in LLM-only mode. A failed call also puts a one-line notice in the chat naming the tool and the error, so a broken server reads differently from a model that chose not to call one. A server that failed is probed again on the next question, so a recovered server comes back without a reload. Stopping a question during the handshake drops the half-built connection, and the next question connects from scratch.
 
 The conversation state, streaming transport, and LLM-provider calls are all bespoke (`useChat` + `LlmProvider`), because the Assistant needs features beyond an off-the-shelf chatbot, such as attaching context and the bounded MCP tool loop.

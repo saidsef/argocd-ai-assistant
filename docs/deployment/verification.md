@@ -73,6 +73,18 @@ With `model` unset the Assistant reads `/v1/models` from the backend and uses th
 - The backend serves several models. The message names them - copy one into the `model` field (see [Settings Extension](settings.md)).
 - The lookup got nothing. Check `baseURL` is reachable from the Argo CD server pod, and that the backend serves `/v1/models` at all - the browser console carries the status it returned.
 
+### A reply comes back empty
+
+The Assistant names the cause from the stream's `finish_reason`:
+
+| Message names | Fix |
+|---|---|
+| A content filter | Rephrase the question, or check the backend's content-filter configuration |
+| The output token limit | Attach less context, or raise the limit on the backend |
+| No usable data | Check that the backend sends an OpenAI-compatible SSE stream from `/v1/chat/completions` |
+
+For any failed request other than a 401, 403, 404 or 429, the message carries the backend's own error text when it sent one.
+
 ### Streaming does not work / responses are buffered
 
 - Verify your Argo CD version supports proxy extensions with streaming (requires Argo CD >= v2.13).
