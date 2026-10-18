@@ -8,7 +8,7 @@ An Argo CD UI extension that adds an **Assistant** tab to the resource view. Ope
 
 ## Supported Backends
 
-A single generic provider speaks the **OpenAI-compatible chat completions API**, so it works with any backend that does: a local inference server (e.g. Ollama), [vLLM](https://github.com/vllm-project/vllm), [OpenAI](https://openai.com/), [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service/), or any other OpenAI-compatible endpoint. Traffic is routed through the Argo CD [Proxy Extension](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/) to avoid CORS.
+A single generic provider speaks the **OpenAI-compatible chat completions API**, so it works with any backend that does: a local inference server (e.g. Ollama), [vLLM](https://github.com/vllm-project/vllm), [OpenAI](https://openai.com/), [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service/), [Anthropic](https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk) through its OpenAI-compatible endpoint, or any other OpenAI-compatible endpoint. MCP tools go to the backend as `tools` on that API, with a text protocol for a backend that rejects them. Traffic is routed through the Argo CD [Proxy Extension](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/) to avoid CORS.
 
 ## Prerequisites
 

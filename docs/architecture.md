@@ -63,12 +63,25 @@ Per message the provider:
 
 1. Reuses that connection, or makes it now if the warm-up has not finished or a server needs re-probing.
 2. Injects a **server roster** into the system message whenever any server is configured, listing each server's name, hostname, state, and its tool names. This is reference only - nothing in it is callable - and it is what lets the assistant answer "which MCP servers are available?" instead of reporting that it has no information about MCP.
-3. Injects an "Available tools" section (descriptions and JSON schemas, grouped by server) **only for the server(s) the user has named** - see [Addressing a server](#addressing-a-server) below. A conversation naming no server gets no tools, so a normal question never triggers a call.
-4. Scans the response for a tool call in one of the [accepted formats](#tool-call-formats) and, if it names an advertised tool, routes it via `tools/call`, appending the result as a follow-up query. If a tool block is emitted when nothing is callable, the assistant retries once tool-free rather than showing the raw block.
+3. Sends the tools of **only the server(s) the user has named**, as `tools` on the Chat Completions request - see [Addressing a server](#addressing-a-server) below. A conversation naming no server gets no tools, so a normal question never triggers a call.
+4. Runs each call the backend returns via `tools/call`, and sends every result back as a `role: "tool"` message carrying the call's id. A reply without native calls is scanned for a call in one of the [text formats](#tool-call-formats). If a tool block is emitted when nothing is callable, the assistant retries once tool-free rather than showing the raw block.
+
+#### Tool-calling modes
+
+The provider sends tools natively by default. A backend that answers a request carrying `tools` with 400 or 422 gets the same step again in the text protocol: the system message describes each tool with its schema and asks for a `<tool>` block, and any native exchange so far is rewritten as tool blocks and a results note. When that retry succeeds, the provider uses the text protocol for that base URL and model for the rest of the session. A 400 that the retry also gets is returned as it is, and nothing is recorded.
+
+In native mode:
+
+- Every call id gets a tool message, since the next request is rejected while any id is unanswered. That includes a call to an unknown tool, a call whose arguments are not a JSON object, a repeat, which gets the first call's result, and a call past the budget.
+- Tool names are rewritten to letters, digits, `_` and `-`, at most 64 characters, and mapped back to the MCP tool. Two servers exposing the same name get distinct names.
+- Each call goes back to the backend as it arrived, including fields the extension does not read.
+- The final pass sends `tool_choice: "none"`, and any call that still arrives is dropped.
+
+The `data.toolCalling` [setting](deployment/settings.md) fixes the mode. `native` never falls back, and `text` never sends `tools`, which suits a gateway that drops the field without an error.
 
 #### Tool-call formats
 
-The system message asks the model to call a tool with a `<tool name="...">` block that holds JSON arguments. Models often answer in another shape, and `src/providers/toolCall.ts` accepts each of these:
+In the text protocol, the system message asks the model to call a tool with a `<tool name="...">` block that holds JSON arguments. Models often answer in another shape, and `src/providers/toolCall.ts` accepts each of these. A native-mode reply that carries no native calls goes through the same parser.
 
 | Format | Example | Arguments |
 |---|---|---|
@@ -87,7 +100,7 @@ Bare JSON counts as a call only when nothing but a code fence follows it, since 
 
 #### Tool blocks in the stream
 
-The model's tool block never reaches the chat, and the answer arrives in a later completion. `src/providers/toolMarker.ts` forwards the text before the first marker and withholds everything from the marker onward. A marker is an opening `tool` or `invoke` tag, or a `function_calls` or `calls` tag, with or without a sentinel, followed by whitespace or `>`. A bare word boundary would match `<toolbar>` in prose while it streams, and hide the rest of it.
+The model's tool block never reaches the chat, and the answer arrives in a later completion. Native calls arrive outside the reply text, and the filter runs in both modes for text calls. `src/providers/toolMarker.ts` forwards the text before the first marker and withholds everything from the marker onward. A marker is an opening `tool` or `invoke` tag, or a `function_calls` or `calls` tag, with or without a sentinel, followed by whitespace or `>`. A bare word boundary would match `<toolbar>` in prose while it streams, and hide the rest of it.
 
 The chat derives its deltas from the cumulative reply, so the filter never shows a character it might later have to take back. It holds back a trailing `<` until the text after it either completes a marker or can no longer become one. Each update examines only as many characters as the longest marker, so the cost per update stays constant however long the reply grows.
 

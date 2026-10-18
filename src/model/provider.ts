@@ -3,6 +3,7 @@ export type AssistantSettings = {
     model?: string;
     /** Accepted for backwards compatibility with existing settings ConfigMaps; ignored. */
     provider?: string;
+    /** Backend settings: `baseURL`, `apiKey`, `mcpServers`, and `toolCalling` ("auto" | "native" | "text"). */
     data?: any;
     maximumLogLines?: number;
     /** Overrides the built-in assistant persona/instructions. Falls back to the default when unset or blank. */
@@ -27,6 +28,23 @@ export type ChatTurn = {
     content: string;
 }
 
+/** How tools reach the model: as `tools` on the request, or described in the system prompt. */
+export type ToolCallingMode = "native" | "text";
+
+/** One tool call as the backend streamed it. Extra fields are kept so the call can be sent back unchanged. */
+export type ChatToolCall = {
+    id: string;
+    type: string;
+    function: { name: string; arguments: string };
+    [extra: string]: any;
+}
+
+/** A Chat Completions message. Assistant and tool messages carry native tool calls and their results. */
+export type ChatMessage =
+    | { role: "system" | "user"; content: string }
+    | { role: "assistant"; content: string | null; tool_calls?: ChatToolCall[] }
+    | { role: "tool"; tool_call_id: string; content: string };
+
 export type QueryContext = {
     /** Argo CD Application used to authorise the proxied LLM request; undefined until resolved. */
     application?: any;
@@ -45,6 +63,8 @@ export type QueryResponse = {
     success: boolean;
     data?: string
     error?: QueryError;
+    /** Native tool calls from a completion, as received. */
+    toolCalls?: ChatToolCall[];
 }
 
 /**

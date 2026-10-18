@@ -1,9 +1,10 @@
-import { AttachmentType, ChatTurn, McpServerConfig, McpServerStatus, QueryContext, QueryProvider, QueryResponse } from "../model/provider";
+import { AttachmentType, ChatMessage, ChatToolCall, ChatTurn, McpServerConfig, McpServerStatus, QueryContext, QueryProvider, QueryResponse, ToolCallingMode } from "../model/provider";
 import { budgetHistory, capText, MAX_HISTORY_TURN_CHARS, MAX_TOOL_RESULT_CHARS } from "../util/context";
 import { readLines, sseData } from "../util/stream";
 import { argocdHeaders, bearer, canRouteToProxy, containsWord, errorMessage, mcpConfigured, parseMcpServers } from "../util/util";
 import { McpClient, McpTool } from "./mcpClient";
-import { clean, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, noToolFallback, noToolNote, resolveHandles, serverHandles, toolFailureNotice, toolPrompt } from "./mcpPrompt";
+import { clean, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, noToolFallback, noToolNote, resolveHandles, resultsNote, serverHandles, toolFailureNotice, toolPrompt } from "./mcpPrompt";
+import { ChatTools, createToolCallAccumulator, parseArguments, toChatTools, toolCallingSetting, toolsRejected, toTextMessages } from "./nativeTools";
 import { parseToolCalls, TOOL_OPEN } from "./toolCall";
 import { createToolMarkerFilter } from "./toolMarker";
 
@@ -120,6 +121,12 @@ const MAX_BATCH_RESULT_CHARS = Math.floor(MAX_TOOL_RESULT_CHARS / 2);
 // or dropped backend surfaces a clear error instead of spinning the typing indicator forever. Kept
 // generous to tolerate slow first tokens / cold model starts.
 const STREAM_INACTIVITY_MS = 45000;
+
+// What a completion request adds to `{model, messages, stream}`.
+type CompletionOptions = { tools?: any[]; toolChoice?: string };
+
+// Backends that rejected `tools`, keyed by base URL and model. Module level, so it outlives a remount.
+const textOnlyBackends = new Set<string>();
 
 export class LlmProvider implements QueryProvider {
 
@@ -362,11 +369,17 @@ export class LlmProvider implements QueryProvider {
         // "which MCP servers are available?" has an answer. Without this the prompt was byte-for-byte
         // identical to a deployment with no MCP at all, and the model correctly said it had no
         // information - see mcpPrompt.mcpRoster.
-        const roster = serverStatus.length
-            ? mcpRoster(serverStatus, this.mcpTools ?? [], toolsForModel ? addressedSet : new Set<number>())
-            : "";
+        const systemFor = (mode: ToolCallingMode) => this.systemText(context, toolsForModel, serverStatus.length
+            ? mcpRoster(serverStatus, this.mcpTools ?? [], toolsForModel ? addressedSet : new Set<number>(), mode)
+            : "", serverStatus, mode);
 
-        const messages = this.buildMessages(context, prompt, toolsForModel, history, roster, serverStatus);
+        // Native calls by default. A backend that rejected `tools` this session goes straight to text.
+        const toolSetting = toolCallingSetting(settings.data?.toolCalling);
+        const backendKey = `${baseURL}\u0000${model}`;
+        let mode: ToolCallingMode = toolSetting !== "auto" ? toolSetting : textOnlyBackends.has(backendKey) ? "text" : "native";
+        let chatTools: ChatTools | undefined = toolsForModel && mode === "native" ? toChatTools(toolsForModel) : undefined;
+
+        const messages = this.buildMessages(context, prompt, history, systemFor(mode));
 
         // The UI derives its deltas from one cumulative string across the whole query, so every
         // completion in the tool loop below must continue from this exact text. It is the last
@@ -376,7 +389,8 @@ export class LlmProvider implements QueryProvider {
         // Stream one completion, keeping raw <tool ...> XML out of the UI (see ./toolMarker). Returns
         // the raw text (for tool-call parsing) and whether a tool block was hidden.
         const streamStep = async (
-            stepMessages: Array<{ role: string; content: string }>
+            stepMessages: ChatMessage[],
+            options: CompletionOptions = {}
         ): Promise<{ response: QueryResponse; suppressed: boolean }> => {
             const prefixAtStart = emittedPrefix;
             const filter = createToolMarkerFilter();
@@ -386,7 +400,7 @@ export class LlmProvider implements QueryProvider {
                 emittedPrefix = prefixAtStart ? `${prefixAtStart}\n\n${emit}` : emit;
                 onStreamUpdate(emittedPrefix);
             };
-            const response = await this.sendChatCompletion(baseURL, model, apiKey, context, stepMessages, signal, onUpdate, onStatus);
+            const response = await this.sendChatCompletion(baseURL, model, apiKey, context, stepMessages, options, signal, onUpdate, onStatus);
             return { response, suppressed: filter.suppressed };
         };
 
@@ -402,19 +416,91 @@ export class LlmProvider implements QueryProvider {
         // Bounded tool loop: stream a completion; if the model calls an available tool, run it and
         // feed the result back, up to MAX_TOOL_ITERATIONS executions. The final iteration is forced
         // tool-free so a broken/looping tool never leaves the reply blank or hanging.
-        let stepMessages = messages;
+        let stepMessages: ChatMessage[] = messages;
         // At most one extra completion, on top of the tool loop's own bound.
         let retriedToolFree = false;
         // Tools executed so far. The bound is on tools, not iterations, so a reply asking for three
         // at once spends the same budget as three replies asking for one.
         let toolsRun = 0;
+
+        // One native call, answered with the text its tool message carries.
+        const runNativeCall = async (name: string, tool: McpTool | undefined, args: ReturnType<typeof parseArguments>, resultCap: number): Promise<string> => {
+            if (!tool || !this.mcpClient) {
+                console.warn(`MCP tool '${name}' was requested but not available; answering without it.`);
+                noticeFailure(name, "it is not available");
+                return `The tool ${name} is not available and returned nothing.`;
+            }
+            if (args.error) return `The tool ${name} was not run: ${args.error}.`;
+            onStatus?.(`Running ${name}…`);
+            try {
+                return capText(await this.mcpClient.callTool(tool.serverIndex, tool.name, args.value, signal), resultCap, `the ${name} result`);
+            } catch (err) {
+                if (err instanceof Error && err.name === "AbortError") throw err;
+                const errMsg = errorMessage(err);
+                console.warn(`MCP tool '${name}' failed, answering without it: ${errMsg}`);
+                noticeFailure(name, errMsg);
+                return `The tool ${name} could not be run (error: ${errMsg}) and returned nothing.`;
+            }
+        };
+
+        // Runs a reply's native calls. Every call id gets a tool message, since the next request is
+        // rejected while any id in the assistant message is unanswered.
+        const runNativeCalls = async (text: string, calls: ChatToolCall[], tools: ChatTools): Promise<ChatMessage[]> => {
+            const resultCap = Math.min(calls.length, MAX_TOOL_ITERATIONS - toolsRun) > 1 ? MAX_BATCH_RESULT_CHARS : MAX_TOOL_RESULT_CHARS;
+            const results = new Map<string, string>();
+            const overBudget: string[] = [];
+            const replies: ChatMessage[] = [];
+            for (const call of calls) {
+                const tool = tools.byName.get(call.function.name);
+                const name = tool?.name ?? call.function.name;
+                const args = parseArguments(call.function.arguments);
+                // A repeated call gets the first one's result, without spending a round trip on it.
+                const key = JSON.stringify([call.function.name, args.value ?? call.function.arguments]);
+                let content = results.get(key);
+                if (content === undefined) {
+                    if (toolsRun >= MAX_TOOL_ITERATIONS) {
+                        overBudget.push(name);
+                        content = `Not run: this query's limit of ${MAX_TOOL_ITERATIONS} tools was reached.`;
+                    } else {
+                        toolsRun++;
+                        content = await runNativeCall(name, tool, args, resultCap);
+                    }
+                    results.set(key, content);
+                }
+                replies.push({ role: "tool", tool_call_id: call.id, content: content || "The tool returned no output." });
+            }
+            if (overBudget.length) {
+                noticeFailure(overBudget.join(", "), `this query's limit of ${MAX_TOOL_ITERATIONS} tool calls was reached`);
+            }
+            onStatus?.("Analysing results…");
+            return [{ role: "assistant", content: text || null, tool_calls: calls }, ...replies];
+        };
+
         for (let iter = 0; iter <= MAX_TOOL_ITERATIONS; iter++) {
             const forceNoTool = iter === MAX_TOOL_ITERATIONS || toolsRun >= MAX_TOOL_ITERATIONS;
-            const { response, suppressed } = await streamStep(stepMessages);
+            const sentTools = chatTools;
+            let { response, suppressed } = await streamStep(stepMessages,
+                sentTools ? { tools: sentTools.tools, toolChoice: forceNoTool ? "none" : undefined } : {});
+            // A backend that cannot take `tools` gets the same step again in the text protocol. Only a
+            // retry that succeeds marks it text-only, so an unrelated 400 is not blamed on the tools.
+            if (!response.success && sentTools && toolSetting === "auto" && toolsRejected(response.error?.status)) {
+                mode = "text";
+                chatTools = undefined;
+                stepMessages = [{ role: "system", content: systemFor(mode) }, ...toTextMessages(stepMessages.slice(1), sentTools.byName)];
+                ({ response, suppressed } = await streamStep(stepMessages));
+                if (response.success) textOnlyBackends.add(backendKey);
+            }
             if (!response.success) {
                 return response;
             }
             const fullText = response.data || "";
+
+            const nativeCalls = forceNoTool || !chatTools ? [] : (response.toolCalls ?? []);
+            if (nativeCalls.length > 0) {
+                stepMessages = [...stepMessages, ...await runNativeCalls(fullText, nativeCalls, chatTools!)];
+                continue;
+            }
+
             const toolCalls = forceNoTool ? [] : parseToolCalls(fullText, toolsForModel);
 
             if (toolCalls.length === 0) {
@@ -491,8 +577,7 @@ export class LlmProvider implements QueryProvider {
             // "using these results" alone invites the model to round them out with what it expected
             // the tools to say. This is the one place a fabricated fact arrives wearing the authority
             // of a tool call, so the bound is stated with the results.
-            const plural = notes.length > 1;
-            const followUpNote = `${notes.join("\n\n")}\n\nAnswer the original question from ${plural ? "these results" : "this result"} and the context already provided. Use only what ${plural ? "they contain" : "it contains"} - do not extrapolate. If ${plural ? "they do" : "it does"} not answer the question, say so.`;
+            const followUpNote = resultsNote(notes);
             // Keep the indicator alive through the follow-up completion, whose first-token wait
             // is otherwise a silent gap that makes the reply look finished. The UI clears this
             // label as soon as the answer starts streaming (useChat text-delta handler).
@@ -540,7 +625,8 @@ export class LlmProvider implements QueryProvider {
         model: string,
         apiKey: string | undefined,
         context: QueryContext,
-        messages: Array<{ role: string; content: string }>,
+        messages: ChatMessage[],
+        options: CompletionOptions,
         signal: AbortSignal | undefined,
         onStreamUpdate: (text: string) => void,
         onStatus?: (label: string | null) => void
@@ -557,6 +643,8 @@ export class LlmProvider implements QueryProvider {
             model,
             messages,
             stream: true,
+            ...(options.tools ? { tools: options.tools } : {}),
+            ...(options.toolChoice ? { tool_choice: options.toolChoice } : {}),
         });
 
         // Inactivity watchdog: abort if no bytes arrive within STREAM_INACTIVITY_MS, so a stalled or
@@ -636,6 +724,7 @@ export class LlmProvider implements QueryProvider {
             // Why the model stopped, from the last chunk that reported it. Turns an empty reply from
             // an unexplained blank bubble into a named cause.
             let finishReason: string | undefined;
+            const toolCalls = createToolCallAccumulator();
 
             for await (const line of readLines(response.body, resetTimer)) {
                 const data = sseData(line);
@@ -658,6 +747,7 @@ export class LlmProvider implements QueryProvider {
                 const choice = parsed.choices?.[0];
                 if (choice?.finish_reason) finishReason = choice.finish_reason;
                 const delta = choice?.delta;
+                toolCalls.push(delta?.tool_calls);
                 const content = delta?.content;
                 if (content) {
                     text += content;
@@ -668,19 +758,20 @@ export class LlmProvider implements QueryProvider {
                 }
             }
 
-            // No answer text is a failure, not an empty success - otherwise the reply is a silent
-            // blank bubble with no way to diagnose it. This must not be gated on "did any chunk
-            // arrive": every OpenAI-compatible backend opens with a role-only delta, so that test
-            // passed for exactly the cases it was meant to catch (a content filter, a truncated
-            // upstream, or a reasoning model that emitted only reasoning_content).
-            if (!text) {
+            // A reply with neither text nor a tool call is a failure, not an empty success - otherwise
+            // the reply is a silent blank bubble with no way to diagnose it. This must not be gated on
+            // "did any chunk arrive": every OpenAI-compatible backend opens with a role-only delta, so
+            // that test passed for exactly the cases it was meant to catch (a content filter, a
+            // truncated upstream, or a reasoning model that emitted only reasoning_content).
+            const calls = toolCalls.calls();
+            if (!text && calls.length === 0) {
                 return {
                     success: false,
                     error: { status: 502, message: emptyReplyMessage(finishReason) },
                 };
             }
 
-            return { success: true, data: text };
+            return { success: true, data: text, ...(calls.length ? { toolCalls: calls } : {}) };
         } catch (err) {
             // An inactivity abort becomes a friendly error; a user abort (Stop) or genuine network
             // error propagates unchanged so existing handling (silent AbortError) still applies.
@@ -700,9 +791,8 @@ export class LlmProvider implements QueryProvider {
         }
     }
 
-    private buildMessages(context: QueryContext, prompt: string, mcpTools: McpTool[] | undefined, history: ChatTurn[] | undefined, roster: string, servers: McpServerStatus[]): Array<{ role: string; content: string }> {
-        const messages: Array<{ role: string; content: string }> = [];
-
+    // The system message: persona, attachments, the MCP roster and, when tools are offered, their rules.
+    private systemText(context: QueryContext, mcpTools: McpTool[] | undefined, roster: string, servers: McpServerStatus[], mode: ToolCallingMode): string {
         const override = context.settings.systemPrompt;
         let systemText = override && override.trim() ? override : DEFAULT_SYSTEM_PROMPT;
 
@@ -717,10 +807,13 @@ export class LlmProvider implements QueryProvider {
         systemText += roster;
 
         if (mcpTools && mcpTools.length > 0) {
-            systemText += this.toolPrompt(mcpTools, servers);
+            systemText += this.toolPrompt(mcpTools, servers, mode);
         }
+        return systemText;
+    }
 
-        messages.push({ role: 'system', content: systemText });
+    private buildMessages(context: QueryContext, prompt: string, history: ChatTurn[] | undefined, systemText: string): ChatMessage[] {
+        const messages: ChatMessage[] = [{ role: "system", content: systemText }];
 
         if (history && history.length > 0) {
             // Two bounds, both needed. Per turn: one pasted manifest in an earlier message would
@@ -744,11 +837,11 @@ export class LlmProvider implements QueryProvider {
 
     // Memo around mcpPrompt.toolPrompt: the JSON schemas are re-serialised identically on every
     // request otherwise. Keyed by tool names *and* the server names it groups them under.
-    private toolPrompt(mcpTools: McpTool[], servers: McpServerStatus[]): string {
-        const key = [...mcpTools.map(t => `${t.serverIndex}:${t.name}`), ...servers.map(s => s.handle)].join("\u0000");
+    private toolPrompt(mcpTools: McpTool[], servers: McpServerStatus[], mode: ToolCallingMode): string {
+        const key = [mode, ...mcpTools.map(t => `${t.serverIndex}:${t.name}`), ...servers.map(s => s.handle)].join("\u0000");
         if (this.toolPromptCache?.key === key) return this.toolPromptCache.text;
 
-        const text = toolPrompt(mcpTools, (i) => servers[i]?.handle ?? "", MAX_TOOL_ITERATIONS);
+        const text = toolPrompt(mcpTools, (i) => servers[i]?.handle ?? "", MAX_TOOL_ITERATIONS, mode);
         this.toolPromptCache = { key, text };
         return text;
     }

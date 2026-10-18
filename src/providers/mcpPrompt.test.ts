@@ -45,6 +45,13 @@ describe("toolPrompt", () => {
     it("says 'tool' rather than 'tools' when only one may run", () => {
         assert.match(toolPrompt(two, () => "docs", 1), /at most 1 tool will run/);
     });
+
+    it("leaves names and schemas to the request in native mode, and keeps the rules", () => {
+        const text = toolPrompt(two, () => "docs", 3, "native");
+        assert.doesNotMatch(text, /Available tools:|Arguments schema|<tool/);
+        assert.match(text, /At most 3 tools will run/);
+        assert.match(text, /do not extrapolate/);
+    });
 });
 
 describe("mcpRoster", () => {
@@ -92,6 +99,13 @@ describe("mcpRoster", () => {
         assert.match(roster, /\[truncated: /, "the list is still capped");
         assert.match(roster, /never say you have no information about MCP/);
         assert.match(roster, /no tool can be called in this reply/);
+    });
+
+    it("points at the attached functions in native mode", () => {
+        const roster = mcpRoster(servers(2), tools(2), new Set([0]), "native");
+        assert.match(roster, /- srv0 .* - connected - tools attached to this request/);
+        assert.match(roster, /Only the functions attached to this request can be called/);
+        assert.doesNotMatch(roster, /Available tools:|tool block/);
     });
 
     it("is empty when nothing is configured", () => {
