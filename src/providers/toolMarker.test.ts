@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createToolMarkerFilter } from "./toolMarker";
 
-// Feed `text` one character at a time, the worst case for the incremental scan, and report the last
-// non-null emission. Real deltas are larger, so a filter that is correct here is correct for them.
+// One character per push, the worst case for the incremental scan, returning the last emission.
 function stream(text: string): { emitted: string | null; suppressed: boolean } {
     const filter = createToolMarkerFilter();
     let emitted: string | null = null;
@@ -27,6 +26,19 @@ describe("createToolMarkerFilter", () => {
         assert.equal(suppressed, true);
     });
 
+    it("hides a native DSML call from its wrapper onward", () => {
+        const reply = 'Checking.\n<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="docs_get_current_date_time">\n{}</｜｜DSML｜｜ parameter>';
+        const { emitted, suppressed } = stream(reply);
+        assert.equal(emitted, "Checking.");
+        assert.equal(suppressed, true);
+    });
+
+    it("hides the unspaced function_calls wrapper too", () => {
+        const { emitted, suppressed } = stream('<｜DSML｜function_calls>\n<｜DSML｜invoke name="x">');
+        assert.equal(emitted, null);
+        assert.equal(suppressed, true);
+    });
+
     it("emits prose unchanged and stays unsuppressed", () => {
         const text = "The Deployment is out of sync; compare 2 < 3 and <toolbar> in the UI.";
         const { emitted, suppressed } = stream(text);
@@ -35,7 +47,7 @@ describe("createToolMarkerFilter", () => {
     });
 
     it("never emits a character it has not seen, and only ever appends", () => {
-        const text = 'Checking <toolkit> now.\n<tool name="x">{}</tool>';
+        const text = 'Checking <toolkit>, <｜x｜ y> and <a href> now.\n<｜｜DSML｜｜ calls>\n<tool name="x">{}</tool>';
         const filter = createToolMarkerFilter();
         let previous = "";
         for (let i = 1; i <= text.length; i++) {
@@ -55,8 +67,7 @@ describe("createToolMarkerFilter", () => {
     });
 
     it("keeps a long unbroken fragment out of the reply only while it could still be a marker", () => {
-        // A "<" further back than the longest possible tag cannot be one, so it must be released
-        // rather than withheld for the rest of the stream.
+        // A "<" further back than the longest possible tag cannot start one.
         const text = `<${"｜".repeat(80)}not-a-tool and then prose`;
         const { emitted, suppressed } = stream(text);
         assert.equal(emitted, text);

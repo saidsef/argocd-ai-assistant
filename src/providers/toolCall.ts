@@ -1,26 +1,28 @@
-// Parsing for the tool-call wire format this extension prompts the model to emit:
-// `<tool name="EXACT_TOOL_NAME">{ JSON arguments }</tool>` (authored in LlmProvider.buildMessages).
-//
-// Kept beside the provider that writes that prompt, and pure, so the parser and the template it
-// mirrors stay in one place. Models frequently deviate from the template, hence the fallbacks below.
-
-// A model whose chat template has its own tool-call channel reproduces the block inside that
-// channel's sentinel tokens, so the tag arrives as `<｜｜DSML｜｜tool name="x">...</｜｜DSML｜｜tool>`
-// rather than `<tool name="x">`. Matching only the bare form left the tool unrun and the raw text in
-// the user's reply, so the tag name may carry one of these prefixes. A vertical bar cannot appear in
-// an HTML tag name, so the allowance cannot swallow ordinary markup or prose.
+// Accepted tool-call shapes: see docs/architecture.md#tool-call-formats.
 const BAR = "[|｜]";
 const SENTINEL_BODY_MAX = 32;
-const SENTINEL = `(?:${BAR}{1,2}[^\\s<>"|｜]{0,${SENTINEL_BODY_MAX}}${BAR}{1,2})?`;
+// DeepSeek puts a space after the sentinel: `<｜｜DSML｜｜ invoke name="x">`.
+const SENTINEL = `(?:${BAR}{1,2}[^\\s<>"|｜]{0,${SENTINEL_BODY_MAX}}${BAR}{1,2} ?)?`;
 
-/** Regex source for the opening tag, sentinel and all, up to but not including `name="..."`. */
-export const TOOL_OPEN = `<${SENTINEL}tool`;
+// `tool` is the prompted tag. DeepSeek's native `invoke` sits in a `function_calls` or `calls` tag.
+const CALL_TAG = "(?:tool|invoke)";
+const WRAPPER_TAG = "(?:function_calls|calls)";
 
-/** Regex source for the closing tag. Its sentinel need not match the opening tag's. */
-export const TOOL_CLOSE = `</${SENTINEL}tool>`;
+/** Regex source for an opening call tag, sentinel and all, up to but not including `name="..."`. */
+export const TOOL_OPEN = `<${SENTINEL}${CALL_TAG}`;
 
-/** Longest text TOOL_OPEN can match, which bounds how much of a stream can be a partial tag. */
-export const MAX_TOOL_OPEN = "<".length + 2 + SENTINEL_BODY_MAX + 2 + "tool".length;
+/** Regex source for the tag a tool block starts with: a call tag or the wrapper around several. */
+export const TOOL_MARKER = `<${SENTINEL}(?:${CALL_TAG}|${WRAPPER_TAG})`;
+
+/** Longest text TOOL_MARKER can match, which bounds how much of a stream can be a partial tag. */
+export const MAX_TOOL_MARKER = "<".length + 2 + SENTINEL_BODY_MAX + 2 + " ".length + "function_calls".length;
+
+/** Regex source for a string that may still grow into a TOOL_MARKER as more text streams in. */
+export const PARTIAL_TOOL_MARKER = `^<(?:${BAR}{1,2}[^\\s<>"|｜]{0,${SENTINEL_BODY_MAX}}(?:${BAR}{1,2} ?)?)?[a-z_]*$`;
+
+// One element per argument, where `string="true"` marks a raw string and anything else is JSON.
+const PARAM = new RegExp(`<${SENTINEL}parameter\\s+name="([^"]+)"([^>]*)>([\\s\\S]*?)</${SENTINEL}parameter>`, "g");
+const STRAY_PARAM = new RegExp(`</?${SENTINEL}parameter\\b[^>]*>`, "g");
 
 /** The structural subset of McpTool this module needs; McpTool is assignable to it. */
 export interface ToolSpec {
@@ -34,43 +36,57 @@ export interface ToolCall {
     arguments: any;
 }
 
-/**
- * Every tool call in a reply, in the order the model wrote them.
- *
- * All blocks, not just the first: a model that batches several searches into one reply had the
- * rest dropped with no result and no error, which reads to the user as the tool never running.
- */
+/** Every tool call in a reply, in order, since a model may batch several into one reply. */
 export function parseToolCalls(text: string, tools?: ToolSpec[]): ToolCall[] {
-    const block = new RegExp(`${TOOL_OPEN}\\s+name="([^"]+)">\\s*([\\s\\S]*?)\\s*${TOOL_CLOSE}`, "g");
+    // The closing tag must name the opening tag, though its sentinel may differ.
+    const block = new RegExp(`<${SENTINEL}(tool|invoke)\\s+name="([^"]+)">\\s*([\\s\\S]*?)\\s*</${SENTINEL}\\1>`, "g");
     const calls: ToolCall[] = [];
     const seen = new Set<string>();
     let sawBlock = false;
 
     for (let xml = block.exec(text); xml; xml = block.exec(text)) {
         sawBlock = true;
-        const name = xml[1];
-        // Only a real tool name is a call; this ignores the prompt's own name="EXACT_TOOL_NAME"
-        // template and any <tool> syntax the model quotes inside a normal answer.
+        const name = xml[2];
+        // Skips the prompt's own EXACT_TOOL_NAME template and tool syntax quoted in an answer.
         if (!tools || !tools.some(t => t.name === name)) continue;
-        let args: any;
-        try {
-            args = JSON.parse(xml[2].trim());
-        } catch (_e) {
-            args = {};
-        }
-        // A repeated identical call spends a round trip to return what the first one already did.
+        const args = parseArguments(xml[3]);
+        // An identical repeat would spend a round trip on the result the first call returns.
         const key = JSON.stringify([name, args]);
         if (seen.has(key)) continue;
         seen.add(key);
         calls.push({ name, arguments: args });
     }
 
-    // A block naming no available tool is still a tool attempt, not prose. Falling through to the
-    // JSON heuristic here would parse the example object out of an ordinary answer.
+    // A block naming no available tool is still an attempt, so the JSON heuristic must not run.
     if (sawBlock) return calls;
 
     const bare = parseBareJsonCall(text, tools);
     return bare ? [bare] : [];
+}
+
+// The body of a call block: JSON, or the native form's `parameter` elements.
+function parseArguments(body: string): any {
+    const args: Record<string, any> = {};
+    let named = false;
+    for (const [, key, attrs, value] of body.matchAll(PARAM)) {
+        named = true;
+        if (/\bstring="true"/.test(attrs)) {
+            args[key] = value;
+            continue;
+        }
+        try {
+            args[key] = JSON.parse(value);
+        } catch (_e) {
+            args[key] = value;
+        }
+    }
+    if (named) return args;
+    // A model mixing the two forms closes its JSON body with an unopened parameter tag.
+    try {
+        return JSON.parse(body.replace(STRAY_PARAM, "").trim());
+    } catch (_e) {
+        return {};
+    }
 }
 
 /** The first tool call in `text`, or null when there is none. */
@@ -82,8 +98,7 @@ export function parseToolCall(text: string, tools?: ToolSpec[]): ToolCall | null
 function parseBareJsonCall(text: string, tools?: ToolSpec[]): ToolCall | null {
     const json = extractJsonObject(text);
     if (!json || typeof json.value !== "object") return null;
-    // A real bare-JSON call ends the model's turn; if prose follows the object it is incidental
-    // JSON inside an answer, not a call, so ignore it (tolerate only a trailing ``` fence).
+    // A real call ends the reply, so prose after the object marks it as an example.
     if (text.slice(json.end).replace(/```/g, "").trim()) return null;
     const obj = json.value;
 
@@ -95,8 +110,7 @@ function parseBareJsonCall(text: string, tools?: ToolSpec[]): ToolCall | null {
         return { name: named, arguments: namedArgs };
     }
 
-    // Otherwise infer the tool from the argument shape - only when exactly one tool fits, to
-    // avoid guessing wrong (this recovers a nameless args object like {query, max_results}).
+    // Otherwise infer the tool from the argument shape, and only when exactly one tool fits.
     if (tools && tools.length > 0) {
         const keys = Object.keys(obj);
         if (keys.length === 0) return null;
@@ -108,9 +122,7 @@ function parseBareJsonCall(text: string, tools?: ToolSpec[]): ToolCall | null {
     return null;
 }
 
-// Extract the first brace-balanced JSON object from arbitrary text (handles a ```json fence or
-// a bare object amid prose), skipping braces inside strings. Returns the parsed value and the
-// index just past its closing brace (so the caller can inspect what follows), or null.
+// The first brace-balanced JSON object in `text` and the index just past it, or null.
 export function extractJsonObject(text: string): { value: any; end: number } | null {
     const start = text.indexOf("{");
     if (start < 0) return null;

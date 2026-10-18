@@ -18,18 +18,46 @@ describe("parseToolCall - XML form", () => {
     });
 
     it("ignores a block naming a tool that is not available", () => {
-        // This is what stops the prompt's own name="EXACT_TOOL_NAME" template being run, and what
-        // stops <tool> syntax quoted inside a normal answer from firing.
+        // Covers the prompt's own EXACT_TOOL_NAME template and tool syntax quoted in an answer.
         assert.equal(parseToolCall('<tool name="EXACT_TOOL_NAME">{}</tool>', [SEARCH]), null);
         assert.equal(parseToolCall('<tool name="other">{}</tool>', [SEARCH]), null);
         assert.equal(parseToolCall('<tool name="docs_search">{}</tool>', undefined), null);
     });
 
     it("parses a block wrapped in a model's own tool-call sentinel", () => {
-        // A chat template with a native tool-call channel emits the block inside its sentinel
-        // tokens. Without this the tool never ran and the raw tag reached the user.
+        // A chat template with a native tool-call channel wraps the tag in its sentinel tokens.
         const call = parseToolCall('<｜｜DSML｜｜tool name="docs_search">\n{"query":"argo"}\n</｜｜DSML｜｜tool>', [SEARCH]);
         assert.deepEqual(call, { name: "docs_search", arguments: { query: "argo" } });
+    });
+
+    it("parses the native DSML call, empty arguments closed by a stray parameter tag", () => {
+        // Verbatim from a DeepSeek reply that reached the user as raw text with no tool run.
+        const DATE: ToolSpec = { name: "docs_get_current_date_time", inputSchema: { properties: {} } };
+        const reply = [
+            "<｜｜DSML｜｜ calls>",
+            '<｜｜DSML｜｜ invoke name="docs_get_current_date_time">',
+            "{}</｜｜DSML｜｜ parameter>",
+            "</｜｜DSML｜｜ invoke>",
+            "</｜｜DSML｜｜ calls>",
+        ].join("\n");
+        assert.deepEqual(parseToolCall(reply, [DATE]), { name: "docs_get_current_date_time", arguments: {} });
+    });
+
+    it("reads the native form's parameter elements as arguments", () => {
+        const reply = [
+            "<｜DSML｜function_calls>",
+            '<｜DSML｜invoke name="docs_search">',
+            '<｜DSML｜parameter name="query" string="true">42</｜DSML｜parameter>',
+            '<｜DSML｜parameter name="limit" string="false">5</｜DSML｜parameter>',
+            "</｜DSML｜invoke>",
+            "</｜DSML｜function_calls>",
+        ].join("\n");
+        assert.deepEqual(parseToolCall(reply, [SEARCH]), { name: "docs_search", arguments: { query: "42", limit: 5 } });
+    });
+
+    it("keeps JSON arguments that a stray parameter tag closes", () => {
+        const reply = '<｜｜DSML｜｜ invoke name="docs_search">\n{"query":"argo"}</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>';
+        assert.deepEqual(parseToolCall(reply, [SEARCH]), { name: "docs_search", arguments: { query: "argo" } });
     });
 
     it("does not treat an ordinary element as the tool tag", () => {
@@ -116,8 +144,7 @@ describe("parseToolCalls - several calls in one reply", () => {
     });
 
     it("never falls through to the JSON heuristic once a block is present", () => {
-        // The block named no available tool. Reading the example object after it as a call would
-        // fire a tool the model did not ask for.
+        // Reading the object inside the block as a call would fire a tool the model never asked for.
         assert.deepEqual(parseToolCalls('<tool name="nope">{"query":"a"}</tool>', [SEARCH]), []);
     });
 
