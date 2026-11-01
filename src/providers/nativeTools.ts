@@ -135,22 +135,21 @@ export function parseArguments(raw: string | undefined): { value?: Record<string
  */
 export function toTextMessages(messages: ChatMessage[], byName: Map<string, McpTool>): ChatMessage[] {
     const out: ChatMessage[] = [];
-    const names = new Map<string, string>();
     let notes: string[] = [];
     const flush = () => {
         if (notes.length) out.push({ role: "user", content: resultsNote(notes) });
         notes = [];
     };
     for (const message of messages) {
+        // A result already names its tool inside its <tool_result> block.
         if (message.role === "tool") {
-            notes.push(`Tool result for ${names.get(message.tool_call_id) ?? "a tool"}:\n${message.content}`);
+            notes.push(message.content);
             continue;
         }
         flush();
         if (message.role === "assistant" && message.tool_calls?.length) {
             const blocks = message.tool_calls.map(call => {
                 const name = byName.get(call.function?.name)?.name ?? call.function?.name ?? "";
-                names.set(call.id, name);
                 return `<tool name="${name}">${call.function?.arguments || "{}"}</tool>`;
             });
             out.push({ role: "assistant", content: [message.content, ...blocks].filter(Boolean).join("\n") });

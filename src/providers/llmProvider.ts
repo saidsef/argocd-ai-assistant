@@ -1,9 +1,9 @@
 import { AttachmentType, ChatMessage, ChatToolCall, ChatTurn, McpServerConfig, McpServerStatus, QueryContext, QueryProvider, QueryResponse, ToolCallingMode } from "../model/provider";
-import { budgetHistory, capText, MAX_HISTORY_TURN_CHARS, MAX_TOOL_RESULT_CHARS } from "../util/context";
+import { budgetHistory, capText, DATA_RULE, dataBlock, MAX_HISTORY_TURN_CHARS, MAX_TOOL_RESULT_CHARS } from "../util/context";
 import { readLines, sseData } from "../util/stream";
 import { argocdHeaders, bearer, canRouteToProxy, containsWord, errorMessage, mcpConfigured, parseMcpServers } from "../util/util";
 import { McpClient, McpTool } from "./mcpClient";
-import { clean, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, noToolFallback, noToolNote, resolveHandles, resultsNote, serverHandles, toolFailureNotice, toolPrompt } from "./mcpPrompt";
+import { clean, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, noToolFallback, noToolNote, resolveHandles, resultsNote, serverHandles, toolErrorNote, toolFailureNotice, toolPrompt, toolResult } from "./mcpPrompt";
 import { ChatTools, createToolCallAccumulator, parseArguments, toChatTools, toolCallingSetting, toolsRejected, toTextMessages } from "./nativeTools";
 import { parseToolCalls, TOOL_OPEN } from "./toolCall";
 import { createToolMarkerFilter } from "./toolMarker";
@@ -320,13 +320,14 @@ export class LlmProvider implements QueryProvider {
             if (args.error) return `The tool ${name} was not run: ${args.error}.`;
             onStatus?.(`Running ${name}…`);
             try {
-                return capText(await this.mcpClient.callTool(tool.serverIndex, tool.name, args.value, signal), resultCap, `the ${name} result`);
+                const output = capText(await this.mcpClient.callTool(tool.serverIndex, tool.name, args.value, signal), resultCap, `the ${name} result`);
+                return output ? toolResult(name, output) : "";
             } catch (err) {
                 if (err instanceof Error && err.name === "AbortError") throw err;
                 const errMsg = errorMessage(err);
                 console.warn(`MCP tool '${name}' failed, answering without it: ${errMsg}`);
                 noticeFailure(name, errMsg);
-                return `The tool ${name} could not be run (error: ${errMsg}) and returned nothing.`;
+                return toolErrorNote(name, errMsg);
             }
         };
 
@@ -424,15 +425,15 @@ export class LlmProvider implements QueryProvider {
                 if (tool && this.mcpClient) {
                     onStatus?.(`Running ${call.name}…`);
                     try {
-                        const toolResult = await this.mcpClient.callTool(tool.serverIndex, call.name, call.arguments, signal);
-                        notes.push(`Tool result for ${call.name}:\n${capText(toolResult, resultCap, `the ${call.name} result`)}`);
+                        const output = await this.mcpClient.callTool(tool.serverIndex, call.name, call.arguments, signal);
+                        notes.push(toolResult(call.name, capText(output, resultCap, `the ${call.name} result`)));
                     } catch (err) {
                         // Stop mid-tool is a cancellation, not a tool failure, so let it unwind.
                         if (err instanceof Error && err.name === "AbortError") throw err;
                         const errMsg = errorMessage(err);
                         console.warn(`MCP tool '${call.name}' failed, answering without it: ${errMsg}`);
                         noticeFailure(call.name, errMsg);
-                        notes.push(`The tool ${call.name} could not be run (error: ${errMsg}) and returned nothing.`);
+                        notes.push(toolErrorNote(call.name, errMsg));
                     }
                 } else {
                     console.warn(`MCP tool '${call.name}' was requested but not available; answering without it.`);
@@ -649,11 +650,16 @@ export class LlmProvider implements QueryProvider {
         const override = context.settings.systemPrompt;
         let systemText = override && override.trim() ? override : DEFAULT_SYSTEM_PROMPT;
 
+        // Appended here rather than in the persona, so a `systemPrompt` override keeps it.
+        if (context.attachments.length > 0 || mcpTools?.length) {
+            systemText += `\n\n${DATA_RULE}`;
+        }
+
         if (context.attachments.length > 0) {
             systemText += "\n\nContext:\n";
             for (const attachment of context.attachments) {
-                const label = this.attachmentLabel(attachment.type);
-                systemText += `\n[${label} - ${attachment.mimeType}]:\n${attachment.content}\n`;
+                const attributes = { type: this.attachmentLabel(attachment.type), format: attachment.mimeType };
+                systemText += `\n${dataBlock("attachment", attributes, attachment.content)}\n`;
             }
         }
 

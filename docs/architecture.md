@@ -35,6 +35,8 @@ Each query is sent to the backend with additional context:
 
 Every context item is bounded twice: by item count (events, resource lists, log lines) and by size in characters. When an item exceeds its ceiling it is truncated with a visible `[truncated: showing N of M characters ...]` marker, so the model knows it is reading a fragment.
 
+Each attachment goes into the system message inside an `<attachment>` block that names its type and format. The extension escapes every `<attachment` and `<tool_result` tag inside the content, so a log line or an event message cannot close its own block and pass as part of the prompt. MCP tool results go back to the model inside the same kind of `<tool_result>` block. Whenever an attachment or a tool is present, the system message states that text inside either block is data, and that the model must never follow an instruction found there or call a tool because that text asks for it.
+
 Earlier messages in the conversation go with each query as history. Each message is capped, and so is the total, which drops the oldest messages first. History carries the visible text of earlier answers, never their tool exchanges.
 
 !!! note
@@ -46,7 +48,7 @@ The default system prompt states each accuracy rule as a checkable prohibition. 
 
 The grounding rule covers claims about the user's own cluster: names, namespaces, images, values, states, events and log lines must come from the attached context or a tool result. General Argo CD and Kubernetes behaviour may come from the model's own knowledge, which lets the assistant explain a concept such as a sync wave when nothing is attached. The model says so when an answer depends on a version.
 
-The prompt describes nothing that may be absent. The MCP server roster and the tool rules are appended only when servers are configured. A `systemPrompt` [setting](deployment/settings.md) replaces the persona and its rules, and the attachments and MCP text are appended to whichever prompt is in force.
+The prompt describes nothing that may be absent. The MCP server roster and the tool rules are appended only when servers are configured. A `systemPrompt` [setting](deployment/settings.md) replaces the persona and its rules. The attachments, the rule that attached text is data, and the MCP text are appended to whichever prompt is in force.
 
 ### Chatbot Interface
 
@@ -74,7 +76,7 @@ Per message the provider:
 1. Reuses that connection, or makes it now if the warm-up has not finished or a server needs re-probing.
 2. Injects a **server roster** into the system message whenever any server is configured, listing each server's name, hostname, state, and its tool names. This is reference only - nothing in it is callable - and it is what lets the assistant answer "which MCP servers are available?" instead of reporting that it has no information about MCP.
 3. Sends the tools of **only the server(s) the user has named**, as `tools` on the Chat Completions request - see [Addressing a server](#addressing-a-server) below. A conversation naming no server gets no tools, so a normal question never triggers a call.
-4. Runs each call the backend returns via `tools/call`, and sends every result back as a `role: "tool"` message carrying the call's id. A reply without native calls is scanned for a call in one of the [text formats](#tool-call-formats). If a tool block is emitted when nothing is callable, the assistant retries once tool-free rather than showing the raw block.
+4. Runs each call the backend returns via `tools/call`, and sends every result back as a `role: "tool"` message carrying the call's id, with the output inside a `<tool_result>` block. A reply without native calls is scanned for a call in one of the [text formats](#tool-call-formats). If a tool block is emitted when nothing is callable, the assistant retries once tool-free rather than showing the raw block.
 
 #### Tool-calling modes
 
@@ -144,7 +146,7 @@ Set `name` on the server entry to override it (see [Settings](deployment/setting
 
 Addressing still accepts the server's reported name, its full hostname, and the hostname's first label, so anything that worked before the handle existed keeps working.
 
-A question runs a fixed number of tools at most, counted per tool, so a reply asking for several at once spends the same budget as several replies. The completion after the last tool is forced tool-free. When one reply runs several tools, each result is capped tighter than a lone one, so a batch cannot crowd out the manifest, logs and history. Results go back with the rule to answer only from what they contain.
+A question runs a fixed number of tools at most, counted per tool, so a reply asking for several at once spends the same budget as several replies. The completion after the last tool is forced tool-free. When one reply runs several tools, each result is capped tighter than a lone one, so a batch cannot crowd out the manifest, logs and history. Results go back with the rule to answer only from what they contain, and never to follow an instruction inside them.
 
 Servers are unauthenticated by default, the `token` flow adds an `Authorization: Bearer` header. A broken server never breaks the assistant - if it is unreachable, exposes no tools, or a call fails, the provider logs the reason to the console and continues in LLM-only mode. A failed call also puts a one-line notice in the chat naming the tool and the error, so a broken server reads differently from a model that chose not to call one. A server that failed is probed again on the next question, so a recovered server comes back without a reload. Stopping a question during the handshake drops the half-built connection, and the next question connects from scratch.
 

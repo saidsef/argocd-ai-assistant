@@ -12,7 +12,7 @@
 // be exercised directly.
 
 import { McpServerStatus, mcpState, ToolCallingMode } from "../model/provider";
-import { capText, MAX_MCP_ROSTER_CHARS } from "../util/context";
+import { capText, DATA_RULE, dataBlock, MAX_MCP_ROSTER_CHARS } from "../util/context";
 import { McpTool } from "./mcpClient";
 import { exampleArgs } from "./toolCall";
 
@@ -289,10 +289,21 @@ export function toolPrompt(tools: McpTool[], serverName: (index: number) => stri
     return text;
 }
 
+/** A tool's output as the model sees it, in a block that its own content cannot close. */
+export function toolResult(name: string, output: string): string {
+    return dataBlock("tool_result", { name: clean(name, MAX_SERVER_NAME_CHARS) }, output);
+}
+
+/** The note for a tool that failed. The error is the server's own text, so it gets a block too. */
+export function toolErrorNote(name: string, error: string): string {
+    const block = dataBlock("tool_result", { name: clean(name, MAX_SERVER_NAME_CHARS), status: "error" }, error);
+    return `The tool ${name} could not be run and returned nothing. The error it reported:\n${block}`;
+}
+
 /** The user message that hands text-protocol tool results back to the model. */
 export function resultsNote(notes: string[]): string {
     const plural = notes.length > 1;
-    return `${notes.join("\n\n")}\n\nAnswer the original question from ${plural ? "these results" : "this result"} and the context already provided. Use only what ${plural ? "they contain" : "it contains"} - do not extrapolate. If ${plural ? "they do" : "it does"} not answer the question, say so.`;
+    return `${notes.join("\n\n")}\n\n${DATA_RULE} Answer the original question from ${plural ? "these results" : "this result"} and the context already provided. Use only what ${plural ? "they contain" : "it contains"} - do not extrapolate. If ${plural ? "they do" : "it does"} not answer the question, say so.`;
 }
 
 // Bound on the server-supplied error text in a failure notice. Enough for "HTTP 503" or a short

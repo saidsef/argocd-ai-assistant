@@ -126,14 +126,15 @@ describe("toTextMessages", () => {
                     { id: "c2", type: "function", function: { name: "docs_search", arguments: '{"query":"b"}' } },
                 ],
             },
-            { role: "tool", tool_call_id: "c1", content: "first" },
-            { role: "tool", tool_call_id: "c2", content: "second" },
+            { role: "tool", tool_call_id: "c1", content: '<tool_result name="docs.search">\nfirst\n</tool_result>' },
+            { role: "tool", tool_call_id: "c2", content: '<tool_result name="docs.search">\nsecond\n</tool_result>' },
         ];
         const out = toTextMessages(messages, byName);
         assert.equal(out.length, 3);
         assert.deepEqual(out[0], messages[0]);
         assert.equal(out[1].content, '<tool name="docs.search">{"query":"a"}</tool>\n<tool name="docs.search">{"query":"b"}</tool>');
         assert.equal(out[2].role, "user");
-        assert.match(out[2].content!, /^Tool result for docs\.search:\nfirst\n\nTool result for docs\.search:\nsecond\n\nAnswer the original question from these results/);
+        assert.ok(out[2].content!.startsWith('<tool_result name="docs.search">\nfirst\n</tool_result>\n\n<tool_result name="docs.search">\nsecond\n</tool_result>\n\n'));
+        assert.match(out[2].content!, /Answer the original question from these results/);
     });
 });
