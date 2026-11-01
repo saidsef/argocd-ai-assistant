@@ -6,7 +6,7 @@ import { argocdFetch, Kinds } from "../util/util";
 export const MAX_LINES = 250;
 
 // The logs endpoint is a stream, so its deadline has to cover the whole read, not just the headers.
-// `follow=false` plus `tailLines` bounds it to at most MAX_LINES entries, so this is generous.
+// `follow=false` plus `tailLines` bounds it to `tailLines` entries per pod, so this is generous.
 const LOGS_REQUEST_MS = 60000;
 
 export function hasLogs(resource: any): boolean {
@@ -23,21 +23,23 @@ export function getGroup(apiVersion: string): string {
 // Distil log entries into the plain-text block that goes into the prompt.
 //
 // The wire format carries five fields per line, of which one is the log: `timeStampStr` duplicates
-// `timeStamp` at higher precision, `podName` repeats identically on every line, and `first`/`last`
+// `timeStamp` at higher precision, `podName` repeats on every line of a pod, and `first`/`last`
 // are stream-control flags. Attaching the raw array spends 2-3x the tokens for no extra signal
 // (measured on a real pod: 1,521 bytes of JSON for 972 bytes of log content, and short application
 // log lines are far worse). One `pod` header line plus `<timestamp> <content>` per line carries the
 // same information, in a shape the model reads more naturally than JSON.
 export function summariseLogs(entries: LogEntry[], container?: string): string {
     const all = Array.isArray(entries) ? entries : [];
-    const rows = all
-        // The stream ends with an empty-content sentinel entry; it is protocol, not a log line.
-        .filter((e) => (e?.content ?? "").length > 0)
-        .map((e) => (e.timeStamp ? `${e.timeStamp} ${e.content}` : e.content));
+    // The stream ends with an empty-content sentinel entry; it is protocol, not a log line.
+    const lines = all.filter((e) => (e?.content ?? "").length > 0);
+    // A workload's log interleaves its pods, so each line names its pod once there is more than one.
+    // A line Argo CD writes itself, such as a Kubernetes error, carries no pod name.
+    const pods = [...new Set(lines.map((e) => e.podName).filter(Boolean))];
+    const multiPod = pods.length > 1;
+    const rows = lines.map((e) => [multiPod && e.podName, e.timeStamp, e.content].filter(Boolean).join(" "));
 
-    const pod = all.find((e) => e?.podName)?.podName;
     const header = [
-        pod && `pod: ${pod}`,
+        multiPod ? `pods: ${pods.join(", ")}` : pods[0] && `pod: ${pods[0]}`,
         container && `container: ${container}`,
         `lines: ${rows.length}`
     ].filter(Boolean).join(", ");
@@ -77,14 +79,15 @@ export const getLogs = async (application: any, resource: any, container: string
     // casting the envelope straight to LogEntry, as this used to, embedded the wrapper in the prompt.)
     const results: LogEntry[] = [];
     for await (const line of readLines(response.body)) {
-        if (results.length >= count) break;
         try {
             const entry = JSON.parse(line)?.result;
-            if (entry) results.push(entry as LogEntry);
+            if (entry?.content) results.push(entry as LogEntry);
         } catch (_e) {
             // Ignore incomplete/malformed JSON objects.
         }
     }
 
-    return results;
+    // Argo CD tails each pod separately and merges the streams oldest first, so a workload returns
+    // up to `count` lines per pod. The newest `count` are the ones that show a failure.
+    return results.slice(Math.max(0, results.length - count));
 };

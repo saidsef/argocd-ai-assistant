@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import { summariseApplication } from "./application";
 import { MAX_EVENTS, summariseEvents } from "./events";
 import { MAX_EVENTS_CHARS } from "../util/context";
-import { getGroup, hasLogs, summariseLogs } from "./logs";
+import { getGroup, getLogs, hasLogs, summariseLogs } from "./logs";
 
 describe("getGroup", () => {
     it("splits the group off an apiVersion, and reports core resources as no group", () => {
@@ -44,6 +44,58 @@ describe("summariseLogs", () => {
     it("tolerates a non-array and missing fields", () => {
         assert.match(summariseLogs(undefined as any, "app"), /lines: 0/);
         assert.match(summariseLogs([{ content: "bare" }] as any), /\nbare/);
+    });
+
+    it("names the pod on every line when the lines come from several pods", () => {
+        const out = summariseLogs(
+            [
+                { timeStamp: "T1", content: "ok", podName: "web-a" },
+                { timeStamp: "T2", content: "FATAL out of memory", podName: "web-c" },
+                { content: "previous terminated container \"web\" in pod \"web-b\" not found", podName: "" },
+            ] as any,
+            "web"
+        );
+        assert.match(out, /^pods: web-a, web-c, container: web, lines: 3\n/);
+        assert.match(out, /\nweb-a T1 ok\nweb-c T2 FATAL out of memory\nprevious terminated/);
+    });
+});
+
+describe("getLogs", () => {
+    const realFetch = globalThis.fetch;
+    afterEach(() => { globalThis.fetch = realFetch; });
+
+    // Argo CD's merged stream: every pod's lines interleaved oldest first, then the sentinel.
+    const stream = (pods: string[], perPod: number) => {
+        const lines: string[] = [];
+        for (let i = 0; i < perPod; i++) {
+            for (const pod of pods) {
+                lines.push(JSON.stringify({ result: { content: `${pod} line ${i}`, timeStamp: `T${i}`, podName: pod } }));
+            }
+        }
+        lines.push(JSON.stringify({ result: { content: "", last: true, podName: "" } }));
+        return lines.join("\n") + "\n";
+    };
+
+    const stub = (body: string) => {
+        globalThis.fetch = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch;
+    };
+
+    const app = { metadata: { name: "web", namespace: "argocd" }, spec: { project: "default" } };
+    const deployment = { kind: "Deployment", apiVersion: "apps/v1", metadata: { name: "web", namespace: "default" } };
+
+    it("keeps the newest lines across every pod of a workload", async () => {
+        stub(stream(["web-a", "web-b", "web-c"], 5));
+        const entries = await getLogs(app, deployment, "web", 5);
+        assert.deepEqual(entries.map((e) => e.content), [
+            "web-b line 3", "web-c line 3", "web-a line 4", "web-b line 4", "web-c line 4",
+        ]);
+    });
+
+    it("drops the sentinel, so the count matches the lines attached", async () => {
+        stub(stream(["web-a"], 3));
+        const entries = await getLogs(app, deployment, "web", 5);
+        assert.equal(entries.length, 3);
+        assert.match(summariseLogs(entries, "web"), /^pod: web-a, container: web, lines: 3\n/);
     });
 });
 
