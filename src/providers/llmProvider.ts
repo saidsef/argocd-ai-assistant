@@ -31,9 +31,10 @@ function lastUserTurn(history?: ChatTurn[]): string {
     return "";
 }
 
-// Same URLs in the same order, the identity serverIndex values rely on. Names may change freely.
-function sameUrls(a: string[] | undefined, b: McpServerConfig[]): boolean {
-    return !!a && a.length === b.length && a.every((u, i) => u === b[i].url);
+// Same URLs and token opt-ins in the same order. serverIndex values rely on it, and names may change.
+const serverKey = (s: McpServerConfig): string => `${s.url}\u0000${s.token === true}`;
+function sameServers(a: string[] | undefined, b: McpServerConfig[]): boolean {
+    return !!a && a.length === b.length && a.every((k, i) => k === serverKey(b[i]));
 }
 
 // Accepts a baseURL with or without a trailing /v1, since the documented examples include it.
@@ -102,8 +103,8 @@ export class LlmProvider implements QueryProvider {
 
     private mcpClient?: McpClient;
     private mcpTools?: McpTool[];
-    // The URL list the cached client was built for, so a settings change invalidates it.
-    private mcpUrls?: string[];
+    // The server list the cached client was built for, so a settings change invalidates it.
+    private mcpKeys?: string[];
     // Per-server failure reason from the last probe, shown on the UI badge.
     private mcpErrors: (string | undefined)[] = [];
     // Set when a server failed, so the next query probes again instead of caching the failure.
@@ -141,8 +142,8 @@ export class LlmProvider implements QueryProvider {
         signal?: AbortSignal,
         onStatus?: (label: string | null) => void
     ): Promise<void> {
-        // Rebuild after a failed server or a changed URL list, since serverIndex values are list positions.
-        if (this.mcpNeedsReprobe || !sameUrls(this.mcpUrls, servers)) this.dropMcp();
+        // Rebuild after a failed server or a changed server list, since serverIndex values are list positions.
+        if (this.mcpNeedsReprobe || !sameServers(this.mcpKeys, servers)) this.dropMcp();
         // Adopt the newest token, which the token flow may have set since this client connected.
         this.mcpClient?.setAuthToken(mcpToken);
         if (this.mcpReady) return this.mcpReady;
@@ -156,8 +157,8 @@ export class LlmProvider implements QueryProvider {
     private async probeMcp(servers: McpServerConfig[], mcpToken: string | undefined, signal?: AbortSignal): Promise<void> {
         try {
             if (!this.mcpClient) {
-                this.mcpUrls = servers.map(s => s.url);
-                this.mcpClient = new McpClient(servers.map(s => s.url));
+                this.mcpKeys = servers.map(serverKey);
+                this.mcpClient = new McpClient(servers);
                 this.mcpClient.setAuthToken(mcpToken);
                 await this.mcpClient.connect(signal);
             }
@@ -190,7 +191,7 @@ export class LlmProvider implements QueryProvider {
     private dropMcp(): void {
         this.mcpClient = undefined;
         this.mcpTools = undefined;
-        this.mcpUrls = undefined;
+        this.mcpKeys = undefined;
         this.mcpNeedsReprobe = false;
         this.mcpReady = undefined;
     }

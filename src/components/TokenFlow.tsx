@@ -28,7 +28,7 @@ export function submitToken(
         );
         return "token_invalid";
     }
-    setMessages(injectMessage("Token saved. I will use it for MCP server requests."));
+    setMessages(injectMessage("Token saved. I will send it with requests to the MCP servers that accept it."));
     return "token_saved";
 }
 

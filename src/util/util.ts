@@ -104,7 +104,9 @@ export function parseMcpServers(raw: unknown): McpServerConfig[] {
         } else if (entry && typeof entry === "object" && typeof (entry as any).url === "string") {
             const url = (entry as any).url.trim();
             const name = typeof (entry as any).name === "string" ? (entry as any).name.trim() : undefined;
-            if (url) out.push(name ? { url, name } : { url });
+            // Only a literal `true` opts in, so a typo such as "false" never sends the token.
+            const token = (entry as any).token === true;
+            if (url) out.push({ url, ...(name ? { name } : {}), ...(token ? { token } : {}) });
         }
     }
     return out;
@@ -128,6 +130,21 @@ export function mcpWelcomeHint(handles: string[]): string {
         : handles.slice(0, -1).map((h) => `\`${h}\``).join(", ") + ` and \`${handles[handles.length - 1]}\``;
     return ` I can also use ${handles.length === 1 ? "the tool server" : "the tool servers"} ${list}` +
         ` - name one in your message (for example *${handles[0]}, ...*) to use its tools.`;
+}
+
+// Handles of the servers whose entry sets `token: true`, in the order they are configured.
+export function tokenServerHandles(servers: McpServerConfig[], status: Array<{ handle: string }>): string[] {
+    return servers.flatMap((s, i) => (s.token ? [status[i]?.handle || s.name || `server ${i + 1}`] : []));
+}
+
+// The message that opens the token flow, naming the servers that will receive the token, or why the
+// flow cannot open. A server receives the token only when its entry sets `token: true`.
+export function tokenPromptMessage(handles: string[]): string {
+    if (handles.length === 0) {
+        return "None of the configured MCP servers accepts an Argo CD token, so I have nowhere to send one. An administrator can add `token: true` to a server's entry in `data.mcpServers`.";
+    }
+    const list = handles.map((h) => `\`${h}\``).join(", ");
+    return `Please enter your Argo CD token. I will send it only to ${handles.length === 1 ? "the MCP server" : "the MCP servers"} ${list}.`;
 }
 
 // Normalise a token into an Authorization header value: accept a raw token or one already

@@ -13,7 +13,9 @@ import {
     isTokenRequest,
     mcpConfigured,
     mcpWelcomeHint,
-    stripManifestNoise
+    stripManifestNoise,
+    tokenPromptMessage,
+    tokenServerHandles
 } from "./util/util";
 import { capText, MAX_APP_SUMMARY_CHARS, MAX_EVENTS_CHARS, MAX_MANIFEST_CHARS } from "./util/context";
 import { MAX_EVENTS, summariseEvents } from "./service/events";
@@ -287,9 +289,10 @@ export const ResourceAssistantExtension = (props: any) => {
                 return true;
             }
             if (isTokenRequest(input) && mcpConfigured(mcpServers)) {
-                setMessages(
-                    injectMessage("Please enter your Argo CD token to use with an MCP server")
-                );
+                const handles = tokenServerHandles(mcpServers, getMcpStatus?.() ?? []);
+                setMessages(injectMessage(tokenPromptMessage(handles)));
+                // No server would receive a token, so there is nothing to collect.
+                if (handles.length === 0) return true;
                 setFlowNode("token");
                 setForm({});
                 setFlowError(null);
@@ -297,7 +300,7 @@ export const ResourceAssistantExtension = (props: any) => {
             }
             return false;
         },
-        [flowNode, resource, mcpServers, handleCancel]
+        [flowNode, resource, mcpServers, getMcpStatus, handleCancel]
     );
 
     const handleContainerSelect = React.useCallback((container: string) => {

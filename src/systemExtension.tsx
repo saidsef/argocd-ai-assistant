@@ -1,6 +1,6 @@
 import * as React from "react";
 import ChatInterface from "./components/ChatInterface";
-import { injectMessage, isTokenRequest, mcpConfigured, mcpWelcomeHint } from "./util/util";
+import { injectMessage, isTokenRequest, mcpConfigured, mcpWelcomeHint, tokenPromptMessage, tokenServerHandles } from "./util/util";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
 import { type ChatMessage } from "./components/useChat";
@@ -53,16 +53,17 @@ export const SystemAssistantExtension = (_props: any) => {
                 }
             }
             if (isTokenRequest(input) && mcpConfigured(mcpServers)) {
-                setMessages(
-                    injectMessage("Please enter your Argo CD token to use with an MCP server")
-                );
+                const handles = tokenServerHandles(mcpServers, getMcpStatus?.() ?? []);
+                setMessages(injectMessage(tokenPromptMessage(handles)));
+                // No server would receive a token, so there is nothing to collect.
+                if (handles.length === 0) return true;
                 setFlowNode("token");
                 setForm({});
                 return true;
             }
             return false;
         },
-        [flowNode, mcpServers]
+        [flowNode, mcpServers, getMcpStatus]
     );
 
     const handleTokenSubmit = React.useCallback(
