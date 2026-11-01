@@ -3,7 +3,7 @@ import { afterEach, describe, it } from "node:test";
 import { summariseApplication } from "./application";
 import { MAX_EVENTS, summariseEvents } from "./events";
 import { MAX_EVENTS_CHARS } from "../util/context";
-import { getGroup, getLogs, hasLogs, summariseLogs } from "./logs";
+import { getGroup, getLogs, hasLogs, restartCount, summariseLogs } from "./logs";
 import { firstUnhealthy, hasPods, podsOf, summarisePods } from "./pods";
 import { driftFields, getManagedResource, isOutOfSync, summariseDrift } from "./drift";
 
@@ -59,6 +59,40 @@ describe("summariseLogs", () => {
         );
         assert.match(out, /^pods: web-a, web-c, container: web, lines: 3\n/);
         assert.match(out, /\nweb-a T1 ok\nweb-c T2 FATAL out of memory\nprevious terminated/);
+    });
+});
+
+describe("previous container logs", () => {
+    it("reads a container's restart count from the Pod status", () => {
+        const pod = { kind: "Pod", status: { containerStatuses: [{ name: "web", restartCount: 3 }, { name: "sidecar", restartCount: 0 }] } };
+        assert.equal(restartCount(pod, "web"), 3);
+        assert.equal(restartCount(pod, "sidecar"), 0);
+        assert.equal(restartCount({ kind: "Pod" }, "web"), 0);
+    });
+
+    it("says in the header that the lines come from the previous instance", () => {
+        const out = summariseLogs([{ timeStamp: "T1", content: "panic: out of memory", podName: "web-a" }] as any, "web", true);
+        assert.match(out, /^pod: web-a, container: web, instance: previous, before the last restart, lines: 1\n/);
+        assert.doesNotMatch(summariseLogs([{ content: "ok", podName: "web-a" }] as any, "web"), /instance/);
+    });
+
+    it("asks Argo CD for the previous instance only when told to", async () => {
+        const realFetch = globalThis.fetch;
+        const urls: string[] = [];
+        globalThis.fetch = (async (url: string) => {
+            urls.push(url);
+            return new Response("", { status: 200 });
+        }) as unknown as typeof fetch;
+        try {
+            const app = { metadata: { name: "web", namespace: "argocd" }, spec: { project: "default" } };
+            const pod = { kind: "Pod", metadata: { name: "web-a", namespace: "default" } };
+            await getLogs(app, pod, "web", 5, undefined, true);
+            await getLogs(app, pod, "web", 5);
+            assert.match(urls[0], /[?&]previous=true(&|$)/);
+            assert.doesNotMatch(urls[1], /previous/);
+        } finally {
+            globalThis.fetch = realFetch;
+        }
     });
 });
 

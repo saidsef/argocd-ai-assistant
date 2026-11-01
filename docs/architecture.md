@@ -58,7 +58,7 @@ The chat interface is a custom React implementation (`ChatInterface` + the `useC
 
 1. **Start** - an opening message with the resource Kind and Name, plus how to attach logs if the resource supports them.
 2. **Loop** - the user enters queries, the node loops after each one. Keywords switch to other flows.
-3. **`attach`** - starts the Attach Logs flow: pick a container, then the number of lines (up to the configured limit). The distilled log is attached to every subsequent question in the session until **New chat** detaches it.
+3. **`attach`** - starts the Attach Logs flow: pick a container, then the number of lines (up to the configured limit). The distilled log is attached to every subsequent question in the session until **New chat** detaches it. When the container has restarted, the flow first asks whether to attach the current instance or the previous one, which holds the lines from before the last restart. A Pod's container status gives its restart count. A workload offers the choice once any of its pods has restarted. The header of a previous instance's log says that it comes from the previous instance.
 4. **`token`** (when `data.mcpServers` is set) - the user supplies an Argo CD API token. It is stored in `sessionStorage` and sent as an `Authorization: Bearer` header to each MCP server whose entry sets `token: true`, so a server such as [mcp-github-pr-issue-analyser](https://github.com/saidsef/mcp-github-pr-issue-analyser) can act on Argo CD on the user's behalf. The flow names the servers that will receive the token. When no configured server sets `token: true`, the flow says so and does not ask for one.
 
 ### Enabling MCP
