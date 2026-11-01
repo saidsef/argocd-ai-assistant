@@ -31,7 +31,7 @@ Each query is sent to the backend with additional context:
 1. **Resource manifest** - the live manifest, provided by Argo CD when the extension is invoked.
 2. **Argo CD Application summary** - a distilled `argocd app get` view (source/Helm chart, sync status, health, sync policy, images, and any out-of-sync or degraded resources) fetched from the Argo CD REST API. For an Application resource it replaces the full manifest (a large token saving); for a child resource it is attached alongside, grounding it in the owning Application's GitOps state.
 3. **Events** - retrieved automatically and attached. Cached, not continuously updated.
-4. **Logs** (optional) - a single container's log, attached via a guided flow. Distilled to a `<timestamp> <line>` block with the pod named once in a header, rather than the raw API envelope (measured ~35-60% fewer tokens). Cached and re-sent on every request, re-run the flow to refresh.
+4. **Logs** (optional) - a single container's log, attached via a guided flow. Distilled to a `<timestamp> <line>` block with the pod named once in a header, rather than the raw API envelope (measured ~35-60% fewer tokens). For a workload with several pods, the block holds the most recent lines across all of them, and each line starts with the name of the pod that wrote it. Cached and re-sent on every request, re-run the flow to refresh.
 
 Every context item is bounded twice: by item count (events, resource lists, log lines) and by size in characters. When an item exceeds its ceiling it is truncated with a visible `[truncated: showing N of M characters ...]` marker, so the model knows it is reading a fragment.
 
