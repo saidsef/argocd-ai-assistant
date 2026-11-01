@@ -28,7 +28,7 @@ globalThis.argocdAssistantSettings = {
 | `model` | No | Model name (e.g., `glm-5.3`). Left out, the Assistant asks the backend for `/v1/models` and uses the answer when there is exactly one. Several, and it asks you to pick, naming them. |
 | `data.baseURL` | No | OpenAI-compatible API base URL, with or without a trailing `/v1` (both forms resolve to the same `/v1/chat/completions` endpoint). Defaults to the Argo CD proxy path if omitted. |
 | `data.apiKey` | No | API key sent **from the browser** as `Authorization: Bearer …`. It is readable in the browser - **not recommended**, prefer server-side injection via the proxy ([Injecting the API token](proxy.md#injecting-the-api-token)). |
-| `data.mcpServers` | No | MCP servers, each CORS-enabled for the Argo CD origin. An entry is either a URL string or `{url, name}`, where `name` overrides the short handle the assistant would otherwise derive (e.g. `["https://mcp.example.com", {url: "https://cf.example.com/mcp", name: "wiki"}]`). The assistant always knows which servers are configured, but only offers a server's tools when the user names it in their message or the one before it. See [MCP Tool Integration](../architecture.md#mcp-tool-integration). |
+| `data.mcpServers` | No | MCP servers, each CORS-enabled for the Argo CD origin. An entry is either a URL string or `{url, name, token}`. `name` overrides the short handle the assistant would otherwise derive, and `token: true` sends the user's Argo CD token from the `token` flow to that server (e.g. `["https://mcp.example.com", {url: "https://argocd-mcp.example.com/mcp", name: "argocd", token: true}]`). The assistant always knows which servers are configured, but only offers a server's tools when the user names it in their message or the one before it. See [MCP Tool Integration](../architecture.md#mcp-tool-integration). |
 | `data.toolCalling` | No | How MCP tools reach the model. `auto` (the default) sends them as `tools` on the request, and switches to describing them in the system prompt for a backend that rejects that. `native` never switches, and `text` always describes them in the system prompt. See [Tool-calling modes](../architecture.md#tool-calling-modes). |
 | `maximumLogLines` | No | Max log lines attachable (default: 250, hard ceiling 5000). A value that is not a positive whole number falls back to the default. |
 | `systemPrompt` | No | Overrides the built-in assistant persona/instructions. The default is an Argo CD / Kubernetes expert prompt that grounds answers in the attached manifest, events, and logs, and carries the accuracy rules below. Setting this **replaces** those rules - it does not add to them. The attached context and the MCP server list are appended either way. |
@@ -73,11 +73,15 @@ data:
         data: {
             mcpServers: [
                 "https://mcp.example.com/mcp",
-                { url: "https://wiki.example.com/mcp", name: "wiki" }
+                { url: "https://wiki.example.com/mcp", name: "wiki" },
+                { url: "https://argocd-mcp.example.com/mcp", name: "argocd", token: true }
             ]
         }
     };
 ```
+
+!!! warning "The token goes only to servers that set `token: true`"
+    The `token` flow stores the user's Argo CD token and sends it as `Authorization: Bearer` on every request, the handshake included, to each server whose entry sets `token: true`. The token carries the user's full Argo CD permissions, so set the flag only on a server that acts on Argo CD for the user. Earlier releases sent the token to every configured server. A deployment that relies on a server receiving it has to add `token: true` to that server's entry.
 
 The rest of the work is on the servers. The browser calls each one directly rather than through the Argo CD proxy, so a server has to accept cross-origin requests from the Argo CD origin:
 

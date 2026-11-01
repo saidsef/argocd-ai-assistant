@@ -1,3 +1,4 @@
+import type { McpServerConfig } from "../model/provider";
 import { readLines, sseData } from "../util/stream";
 import { bearer, errorMessage } from "../util/util";
 
@@ -67,8 +68,11 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export class McpClient {
     private urls: string[];
+    // Which servers opted in to the Argo CD token. The rest never see it, so a third-party server
+    // cannot act on Argo CD with the user's permissions.
+    private sendsToken: boolean[];
     private sessionIds: (string | null)[];
-    // Optional Argo CD token (from the token flow) sent as a Bearer header on every request.
+    // Optional Argo CD token (from the token flow) sent as a Bearer header to the opted-in servers.
     private authToken?: string;
     // Per-server identity from the `initialize` handshake; null until connected.
     private serverInfos: (McpServerInfo | null)[];
@@ -78,12 +82,13 @@ export class McpClient {
     private toolErrors: (string | undefined)[];
     private nextId = 1;
 
-    constructor(urls: string[]) {
-        this.urls = urls;
-        this.sessionIds = new Array(urls.length).fill(null);
-        this.serverInfos = new Array(urls.length).fill(null);
-        this.connectErrors = new Array(urls.length).fill(undefined);
-        this.toolErrors = new Array(urls.length).fill(undefined);
+    constructor(servers: McpServerConfig[]) {
+        this.urls = servers.map(s => s.url);
+        this.sendsToken = servers.map(s => s.token === true);
+        this.sessionIds = new Array(servers.length).fill(null);
+        this.serverInfos = new Array(servers.length).fill(null);
+        this.connectErrors = new Array(servers.length).fill(undefined);
+        this.toolErrors = new Array(servers.length).fill(undefined);
     }
 
     // Set/replace the Bearer token used to authenticate MCP requests. Called per query so a token
@@ -254,7 +259,7 @@ export class McpClient {
         }
 
         // Normalise like the LLM apiKey path: accept a raw token or one already prefixed.
-        if (this.authToken) {
+        if (this.authToken && this.sendsToken[serverIndex]) {
             headers["Authorization"] = bearer(this.authToken);
         }
 

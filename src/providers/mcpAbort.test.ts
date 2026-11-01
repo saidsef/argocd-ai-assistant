@@ -60,7 +60,7 @@ describe("McpClient abort handling", () => {
     it("rejects rather than recording a cancel as a per-server failure", async () => {
         globalThis.fetch = ((_url: string, init: RequestInit) => hangUntilAborted(init.signal)) as typeof fetch;
 
-        const client = new McpClient([MCP_URL, "http://other.test/mcp"]);
+        const client = new McpClient([{ url: MCP_URL }, { url: "http://other.test/mcp" }]);
         const controller = new AbortController();
         const connecting = client.connect(controller.signal);
         controller.abort();
@@ -74,7 +74,7 @@ describe("McpClient abort handling", () => {
         globalThis.fetch = (async (url: string) =>
             url.startsWith(MCP_URL) ? new Response("nope", { status: 503 }) : json({})) as unknown as typeof fetch;
 
-        const client = new McpClient([MCP_URL]);
+        const client = new McpClient([{ url: MCP_URL }]);
         await client.connect();
         assert.match(client.getErrors()[0]!, /unreachable: .*503/);
     });
@@ -87,7 +87,7 @@ describe("McpClient abort handling", () => {
             return new Response("nope", { status: 503 });
         }) as unknown as typeof fetch;
 
-        const client = new McpClient([MCP_URL]);
+        const client = new McpClient([{ url: MCP_URL }]);
         await client.connect();
         const afterConnect = methods.length;
 

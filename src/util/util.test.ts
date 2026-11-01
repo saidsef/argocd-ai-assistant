@@ -10,6 +10,8 @@ import {
     mcpWelcomeHint,
     parseMcpServers,
     stripManifestNoise,
+    tokenPromptMessage,
+    tokenServerHandles,
 } from "./util";
 
 describe("parseMcpServers", () => {
@@ -35,6 +37,34 @@ describe("parseMcpServers", () => {
 
     it("trims whitespace and omits an empty name rather than storing one", () => {
         assert.deepEqual(parseMcpServers([{ url: "  https://a/mcp  ", name: "   " }]), [{ url: "https://a/mcp" }]);
+    });
+
+    it("opts a server in to the token only for a literal true", () => {
+        assert.deepEqual(parseMcpServers([
+            { url: "https://argocd/mcp", name: "argocd", token: true },
+            { url: "https://a/mcp", token: "true" },
+            { url: "https://b/mcp", token: false },
+        ]), [
+            { url: "https://argocd/mcp", name: "argocd", token: true },
+            { url: "https://a/mcp" },
+            { url: "https://b/mcp" },
+        ]);
+    });
+});
+
+describe("token flow messages", () => {
+    const servers = [{ url: "https://docs/mcp" }, { url: "https://argocd/mcp", token: true }];
+
+    it("names only the servers that accept the token", () => {
+        const handles = tokenServerHandles(servers, [{ handle: "docs" }, { handle: "argocd" }]);
+        assert.deepEqual(handles, ["argocd"]);
+        assert.equal(tokenPromptMessage(handles), "Please enter your Argo CD token. I will send it only to the MCP server `argocd`.");
+    });
+
+    it("says when no configured server accepts a token", () => {
+        assert.deepEqual(tokenServerHandles([{ url: "https://docs/mcp" }], [{ handle: "docs" }]), []);
+        assert.match(tokenPromptMessage([]), /None of the configured MCP servers accepts an Argo CD token/);
+        assert.match(tokenPromptMessage([]), /`token: true`/);
     });
 });
 

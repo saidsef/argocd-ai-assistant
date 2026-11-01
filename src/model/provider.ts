@@ -50,7 +50,7 @@ export type QueryContext = {
     application?: any;
     attachments: Attachment[];
     settings: AssistantSettings;
-    /** User-provided Argo CD token (via the token flow) sent as a Bearer header to MCP servers; undefined when unset. */
+    /** User-provided Argo CD token (via the token flow), sent as a Bearer header to the MCP servers that set `token`; undefined when unset. */
     mcpToken?: string;
 }
 
@@ -76,6 +76,8 @@ export interface McpServerConfig {
     url: string;
     /** Overrides the derived handle. Optional; omit and one is derived from the server or hostname. */
     name?: string;
+    /** Sends the user's Argo CD token from the token flow to this server. Off unless set to `true`. */
+    token?: boolean;
 }
 
 /** Live view of a configured MCP server, surfaced in the assistant UI. */
