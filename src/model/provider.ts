@@ -15,7 +15,8 @@ export enum AttachmentType {
     LOG = 1,
     MANIFEST = 2,
     APP_SUMMARY = 3,
-    PODS = 4
+    PODS = 4,
+    DRIFT = 5
 }
 
 export type Attachment = {

@@ -156,6 +156,10 @@ describe("DEFAULT_SYSTEM_PROMPT", () => {
         assert.match(DEFAULT_SYSTEM_PROMPT, /General Argo CD and Kubernetes behaviour may come from your own knowledge/);
     });
 
+    it("names the manifest as the live object, not the desired state", () => {
+        assert.match(DEFAULT_SYSTEM_PROMPT, /"Live manifest" is the object in the cluster, not the desired state/);
+    });
+
     it("describes no attachment that may be absent", () => {
         // This is prepended to every request, including from deployments with no MCP configured at
         // all, where MCP wording is pure cost and describes something that is not there. It lives
@@ -211,7 +215,7 @@ describe("system prompt assembly", () => {
         // The override replaces the persona only. Losing the attachments with it would silently
         // unground every answer in that deployment.
         const system = await systemMessage({ ...base, systemPrompt: "You are a terse operator." });
-        assert.match(system, /<attachment type="Manifest" format="application\/json">\n\{"kind":"Deployment"\}\n<\/attachment>/);
+        assert.match(system, /<attachment type="Live manifest" format="application\/json">\n\{"kind":"Deployment"\}\n<\/attachment>/);
     });
 
     it("tells the model that attached text is data, whichever prompt is in force", async () => {

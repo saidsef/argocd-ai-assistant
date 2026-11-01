@@ -3,6 +3,7 @@ import ChatInterface from "./components/ChatInterface";
 import { getLogs, hasLogs, MAX_LINES, summariseLogs } from "./service/logs";
 import { ApplicationSummary, getApplicationSummary, summariseApplication } from "./service/application";
 import { firstUnhealthy, getPodEvents, getResourceTree, hasPods, PodState, podsOf, summarisePods } from "./service/pods";
+import { getManagedResource, isOutOfSync, summariseDrift } from "./service/drift";
 import {
     argocdFetch,
     errorMessage,
@@ -18,7 +19,7 @@ import {
     tokenPromptMessage,
     tokenServerHandles
 } from "./util/util";
-import { capText, MAX_APP_SUMMARY_CHARS, MAX_EVENTS_CHARS, MAX_MANIFEST_CHARS, MAX_PODS_CHARS } from "./util/context";
+import { capText, MAX_APP_SUMMARY_CHARS, MAX_DRIFT_CHARS, MAX_EVENTS_CHARS, MAX_MANIFEST_CHARS, MAX_PODS_CHARS } from "./util/context";
 import { MAX_EVENTS, summariseEvents } from "./service/events";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
@@ -62,6 +63,9 @@ export const ResourceAssistantExtension = (props: any) => {
     // The pods behind a workload and why fetching them failed, handled the same way as the events.
     const [pods, setPods] = React.useState<{ list: PodState[]; text: string } | null>(null);
     const [podsError, setPodsError] = React.useState<string | null>(null);
+    // The fields of an OutOfSync resource that differ from the target state, and why fetching them failed.
+    const [drift, setDrift] = React.useState<string | null>(null);
+    const [driftError, setDriftError] = React.useState<string | null>(null);
     // Mirrors storageRef.current.logs so the header chip re-renders when a log is attached or
     // detached; sessionStorage is not reactive.
     const [logsAttached, setLogsAttached] = React.useState(false);
@@ -81,6 +85,8 @@ export const ResourceAssistantExtension = (props: any) => {
     const resource_name = resource?.metadata?.name || "";
     const resource_kind = resource?.kind || "";
     const resourceID = getResourceIdentifier(resource);
+    // Read from the Application's status, so a Synced resource does not cost a request.
+    const outOfSync = isOutOfSync(application, resource);
     // Clamped, not trusted: the value comes from a hand-edited ConfigMap, and a 0/negative/NaN made
     // every input unsatisfiable ("needs to be more than 0 and 0 or less"). Also capped, so a typo
     // cannot ask argocd-server for a million lines.
@@ -187,6 +193,20 @@ export const ResourceAssistantExtension = (props: any) => {
             });
         }
 
+        if (driftError) {
+            attachments.push({
+                content: `This resource is OutOfSync, but its target state could not be fetched from the Argo CD API (${driftError}). Do not state or imply which fields differ - say that the target state could not be retrieved.`,
+                mimeType: "text/plain",
+                type: AttachmentType.DRIFT
+            });
+        } else if (drift) {
+            attachments.push({
+                content: capText(drift, MAX_DRIFT_CHARS, "the OutOfSync fields"),
+                mimeType: "text/plain",
+                type: AttachmentType.DRIFT
+            });
+        }
+
         const cachedLogs = storageRef.current?.logs;
         if (cachedLogs) {
             // Already distilled and capped when it was fetched (service/logs.ts summariseLogs).
@@ -203,7 +223,7 @@ export const ResourceAssistantExtension = (props: any) => {
             settings: globalThis.argocdAssistantSettings ?? settings,
             mcpToken: storageRef.current?.mcpToken ?? undefined
         };
-    }, [application, resource, isApplication, summary, events, eventsError, pods, podsError, settings]);
+    }, [application, resource, isApplication, summary, events, eventsError, pods, podsError, drift, driftError, settings]);
 
     // Memoised because getMcpStatus allocates a status object per server and re-derives every
     // handle (up to three `new URL()` each), and the Argo CD host hands down fresh resource and
@@ -238,10 +258,11 @@ export const ResourceAssistantExtension = (props: any) => {
         }
         if (!eventsError && events?.items?.length > 0) sources.push(`events (${events.items.length})`);
         if (!podsError && pods) sources.push(`pods (${pods.list.length})`);
+        if (!driftError && drift) sources.push("diff");
         if (logsAttached) sources.push("logs");
 
         const attached = sources.length ? sources.join(", ") : "nothing yet";
-        const unavailable = [eventsError && "events unavailable", podsError && "pods unavailable"].filter(Boolean);
+        const unavailable = [eventsError && "events unavailable", podsError && "pods unavailable", driftError && "diff unavailable"].filter(Boolean);
         return {
             label: [...sources, ...unavailable].join(" · ") || "no context",
             state: (unavailable.length ? "error" : "on") as "error" | "on",
@@ -249,9 +270,10 @@ export const ResourceAssistantExtension = (props: any) => {
                 `Answers are grounded in ${attached}.`,
                 eventsError && `Kubernetes events could not be fetched (${eventsError}), so recent events are not included.`,
                 podsError && `The pods could not be fetched (${podsError}), so their health and restarts are not included.`,
+                driftError && `The target state could not be fetched (${driftError}), so the OutOfSync fields are not included.`,
             ].filter(Boolean).join(" "),
         };
-    }, [isApplication, summary, resource, events, eventsError, pods, podsError, logsAttached]);
+    }, [isApplication, summary, resource, events, eventsError, pods, podsError, drift, driftError, logsAttached]);
 
     // Said once, in the transcript, the first time events fail - the chip alone is easy to miss when
     // the answer reads confidently.
@@ -259,8 +281,9 @@ export const ResourceAssistantExtension = (props: any) => {
         () => [
             eventsError && `I could not load Kubernetes events for this resource (${eventsError}), so my answers will not include them.`,
             podsError && `I could not load the pods of this resource (${podsError}), so my answers will not include their health or restarts.`,
+            driftError && `I could not load the target state of this resource (${driftError}), so my answers will not say which fields are OutOfSync.`,
         ].filter(Boolean).join(" ") || null,
-        [eventsError, podsError]
+        [eventsError, podsError, driftError]
     );
 
     const handleCancel = React.useCallback(() => {
@@ -470,6 +493,23 @@ export const ResourceAssistantExtension = (props: any) => {
         });
         return () => controller.abort();
     }, [resourceID, application_name]);
+
+    // The fields that differ from the target state, fetched only while the resource is OutOfSync.
+    // Keyed on the sync status too, so a resource that drifts mid-session gets its fields.
+    React.useEffect(() => {
+        const controller = new AbortController();
+        setDrift(null);
+        setDriftError(null);
+        if (!outOfSync || !application_name) return;
+        getManagedResource(application, resource, controller.signal)
+            .then((item) => { if (!controller.signal.aborted) setDrift(summariseDrift(item, resource?.kind)); })
+            .catch((err) => {
+                if (err instanceof Error && err.name === "AbortError") return;
+                console.warn("Failed to fetch the target state, answering without it:", err);
+                setDriftError(errorMessage(err));
+            });
+        return () => controller.abort();
+    }, [resourceID, application_name, outOfSync]);
 
     // Fetch the owning Application's distilled summary (chart/source, sync, health, resource
     // rollup) once per application, mirroring the events effect's cancellation guard. Keyed on the
