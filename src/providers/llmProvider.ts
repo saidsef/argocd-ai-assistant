@@ -81,6 +81,7 @@ Accuracy:
 Answering:
 - Cite the fields, conditions or events you reason from.
 - An "Argo CD Application" summary (a distilled \`argocd app get\`) may be attached - use it for source/chart, sync, health and deployment questions.
+- The "Live manifest" is the object in the cluster, not the desired state. "OutOfSync fields" give the target and live values.
 - Prefer concrete kubectl/argocd commands and remediation steps over explanation.
 - Reply in Markdown; put commands, manifests and log excerpts in fenced code blocks with a language tag.`;
 
@@ -701,9 +702,10 @@ export class LlmProvider implements QueryProvider {
         switch (type) {
             case AttachmentType.EVENTS: return 'Events';
             case AttachmentType.LOG: return 'Log';
-            case AttachmentType.MANIFEST: return 'Manifest';
+            case AttachmentType.MANIFEST: return 'Live manifest';
             case AttachmentType.APP_SUMMARY: return 'Argo CD Application';
             case AttachmentType.PODS: return 'Pods';
+            case AttachmentType.DRIFT: return 'OutOfSync fields';
             default: return 'Attachment';
         }
     }

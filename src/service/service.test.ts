@@ -5,6 +5,7 @@ import { MAX_EVENTS, summariseEvents } from "./events";
 import { MAX_EVENTS_CHARS } from "../util/context";
 import { getGroup, getLogs, hasLogs, summariseLogs } from "./logs";
 import { firstUnhealthy, hasPods, podsOf, summarisePods } from "./pods";
+import { driftFields, getManagedResource, isOutOfSync, summariseDrift } from "./drift";
 
 describe("getGroup", () => {
     it("splits the group off an apiVersion, and reports core resources as no group", () => {
@@ -160,6 +161,84 @@ describe("pods of a workload", () => {
         assert.equal(hasPods({ kind: "CronJob", spec: { jobTemplate: { spec: { template: { spec: { containers: [] } } } } } }), true);
         assert.equal(hasPods({ kind: "Pod", spec: { containers: [] } }), false);
         assert.equal(hasPods({ kind: "Service", spec: {} }), false);
+    });
+});
+
+describe("OutOfSync fields", () => {
+    const deployment = { apiVersion: "apps/v1", kind: "Deployment", metadata: { name: "web", namespace: "default" } };
+    const app = (status: string, group = "apps") => ({
+        status: { resources: [{ group, kind: "Deployment", namespace: "default", name: "web", status }] },
+    });
+
+    it("reads the sync status from the Application, matching group, kind, name and namespace", () => {
+        assert.equal(isOutOfSync(app("OutOfSync"), deployment), true);
+        assert.equal(isOutOfSync(app("Synced"), deployment), false);
+        assert.equal(isOutOfSync(app("OutOfSync", "extensions"), deployment), false);
+        // Core resources have no group in the Application's status.
+        const cm = { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "web", namespace: "default" } };
+        assert.equal(isOutOfSync({ status: { resources: [{ kind: "ConfigMap", namespace: "default", name: "web", status: "OutOfSync" }] } }, cm), true);
+        assert.equal(isOutOfSync(undefined, deployment), false);
+    });
+
+    it("lists each field the target sets that the live object holds differently", () => {
+        const target = { spec: { replicas: 3, template: { spec: { containers: [{ name: "web", image: "web:1.4.2" }] } } } };
+        const live = { spec: { replicas: 5, progressDeadlineSeconds: 600, template: { spec: { containers: [{ name: "web", image: "web:1.4.1", imagePullPolicy: "IfNotPresent" }] } } }, status: { replicas: 5 } };
+        assert.deepEqual(driftFields(target, live), [
+            "spec.replicas: target 3, live 5",
+            'spec.template.spec.containers[0].image: target "web:1.4.2", live "web:1.4.1"',
+        ]);
+    });
+
+    it("treats a dropped zero value and another spelling of a quantity as the same state", () => {
+        const target = { spec: { minReadySeconds: 0, hostNetwork: false, env: [{ name: "A", value: "" }], resources: { limits: { cpu: "1000m", memory: "1Gi" } } } };
+        const live = { spec: { env: [{ name: "A" }], resources: { limits: { cpu: "1", memory: "1024Mi" } } } };
+        assert.deepEqual(driftFields(target, live), []);
+        assert.deepEqual(driftFields({ resources: { requests: { cpu: "500m" } } }, { resources: { requests: { cpu: "1" } } }), [
+            'resources.requests.cpu: target "500m", live "1"',
+        ]);
+    });
+
+    it("names a differing Secret value without showing it", () => {
+        const lines = driftFields({ data: { password: "+++++" }, type: "Opaque" }, { data: { password: "++++++++" }, type: "Opaque" }, "Secret");
+        assert.deepEqual(lines, ["data.password: the target and live values differ (Secret values are not shown)"]);
+    });
+
+    it("quotes a key that is not an identifier and skips the last-applied annotation", () => {
+        const target = { metadata: { labels: { "app.kubernetes.io/name": "web" }, annotations: { "kubectl.kubernetes.io/last-applied-configuration": "{}" } } };
+        const live = { metadata: { labels: { "app.kubernetes.io/name": "api" }, annotations: { "kubectl.kubernetes.io/last-applied-configuration": "{\"data\":1}" } } };
+        assert.deepEqual(driftFields(target, live), ['metadata.labels["app.kubernetes.io/name"]: target "web", live "api"']);
+    });
+
+    it("writes a header that names where each value comes from, and caps the list", () => {
+        const item = {
+            targetState: JSON.stringify({ a: 1, b: 2, c: 3 }),
+            normalizedLiveState: JSON.stringify({ a: 9, b: 9, c: 9 }),
+        };
+        const out = summariseDrift(item, "Deployment", 2);
+        assert.match(out, /^OutOfSync fields \(target from the Application's source, live from the cluster; fields set only on the live object are not listed\):\n/);
+        assert.match(out, /\na: target 1, live 9\nb: target 2, live 9\n1 more field differs$/);
+    });
+
+    it("says what Argo CD reported when there is nothing to compare", () => {
+        assert.match(summariseDrift(undefined), /did not return a target state/);
+        assert.match(summariseDrift({ targetState: null, normalizedLiveState: "{}" }), /source does not define it/);
+        assert.match(summariseDrift({ targetState: "{\"a\":1}", normalizedLiveState: "{\"a\":1,\"b\":2}" }), /No field set in Argo CD's target state differs/);
+    });
+
+    it("asks for the one resource by kind, group, name and namespace", async () => {
+        const realFetch = globalThis.fetch;
+        let seen = "";
+        globalThis.fetch = (async (url: string) => {
+            seen = url;
+            return new Response(JSON.stringify({ items: [{ name: "web" }] }), { status: 200 });
+        }) as unknown as typeof fetch;
+        try {
+            const item = await getManagedResource({ metadata: { name: "shop", namespace: "argocd" }, spec: { project: "default" } }, deployment);
+            assert.equal(item.name, "web");
+            assert.equal(seen, "/api/v1/applications/shop/managed-resources?appNamespace=argocd&kind=Deployment&group=apps&name=web&namespace=default");
+        } finally {
+            globalThis.fetch = realFetch;
+        }
     });
 });
 

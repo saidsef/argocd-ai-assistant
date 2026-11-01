@@ -8,11 +8,11 @@
 //
 // Sized in characters (roughly 4 characters per token for JSON/YAML). The attachment ceilings below
 // are *per-item*: they bound how large one entry can be, not how many there are. The worst case
-// stacks manifest + app summary + events + pods + log (80k chars) plus the roster (2k) and a tool
-// result (16k). History used to be the largest term of all and the only one that grew on its own - bounded
+// stacks manifest + app summary + events + pods + OutOfSync fields + log (88k chars) plus the
+// roster (2k) and a tool result (16k). History used to be the largest term of all and the only one that grew on its own - bounded
 // by turn count but not by size, it re-sent MAX_HISTORY_MESSAGES x MAX_HISTORY_TURN_CHARS = 80k
 // chars on every request - so it now has an aggregate cap of its own (MAX_HISTORY_CHARS, applied by
-// budgetHistory below). That brings the worst case to ~122k chars, roughly 30k tokens.
+// budgetHistory below). That brings the worst case to ~130k chars, roughly 32k tokens.
 //
 // In practice attachments are far smaller than their ceilings (a real Application summary is ~1.3k
 // chars against a 12k cap), so the caps only bite on outliers: one ConfigMap with an embedded file,
@@ -22,6 +22,7 @@ export const MAX_MANIFEST_CHARS = 24000;
 export const MAX_APP_SUMMARY_CHARS = 12000;
 export const MAX_EVENTS_CHARS = 12000;
 export const MAX_PODS_CHARS = 8000;
+export const MAX_DRIFT_CHARS = 8000;
 export const MAX_LOG_CHARS = 24000;
 export const MAX_TOOL_RESULT_CHARS = 16000;
 export const MAX_HISTORY_TURN_CHARS = 4000;
