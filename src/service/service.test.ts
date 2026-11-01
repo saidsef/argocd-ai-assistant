@@ -4,6 +4,7 @@ import { summariseApplication } from "./application";
 import { MAX_EVENTS, summariseEvents } from "./events";
 import { MAX_EVENTS_CHARS } from "../util/context";
 import { getGroup, getLogs, hasLogs, summariseLogs } from "./logs";
+import { firstUnhealthy, hasPods, podsOf, summarisePods } from "./pods";
 
 describe("getGroup", () => {
     it("splits the group off an apiVersion, and reports core resources as no group", () => {
@@ -96,6 +97,69 @@ describe("getLogs", () => {
         const entries = await getLogs(app, deployment, "web", 5);
         assert.equal(entries.length, 3);
         assert.match(summariseLogs(entries, "web"), /^pod: web-a, container: web, lines: 3\n/);
+    });
+});
+
+describe("pods of a workload", () => {
+    const pod = (name: string, parent: string, health: string, info: Array<[string, string]>, message?: string) => ({
+        kind: "Pod", name, namespace: "default", uid: `uid-${name}`,
+        parentRefs: [{ kind: "ReplicaSet", uid: parent }],
+        health: { status: health, ...(message ? { message } : {}) },
+        info: info.map(([n, value]) => ({ name: n, value })),
+    });
+    const tree = {
+        nodes: [
+            { kind: "ReplicaSet", name: "web-7d9f", uid: "rs-new", parentRefs: [{ kind: "Deployment", uid: "deploy-web" }] },
+            { kind: "ReplicaSet", name: "web-6c1a", uid: "rs-old", parentRefs: [{ kind: "Deployment", uid: "deploy-web" }] },
+            pod("web-7d9f-def34", "rs-new", "Healthy", [["Status Reason", "Running"], ["Containers", "1/1"]]),
+            pod("web-7d9f-abc12", "rs-new", "Degraded", [["Status Reason", "CrashLoopBackOff"], ["Containers", "0/1"], ["Restart Count", "14"]], "back-off 5m0s restarting failed container"),
+            pod("web-6c1a-zzz99", "rs-old", "Progressing", [["Status Reason", "Terminating"], ["Containers", "1/1"]]),
+            pod("api-1234-aaaaa", "rs-api", "Degraded", [["Status Reason", "Error"]]),
+        ],
+    };
+    const deployment = { kind: "Deployment", metadata: { name: "web", uid: "deploy-web" }, spec: { template: { spec: { containers: [{ name: "web" }] } } } };
+
+    it("finds every pod below a workload through its ReplicaSets, unhealthy first", () => {
+        const pods = podsOf(tree, deployment);
+        assert.deepEqual(pods.map((p) => p.name), ["web-6c1a-zzz99", "web-7d9f-abc12", "web-7d9f-def34"]);
+        assert.equal(pods.find((p) => p.name === "web-7d9f-abc12")?.restarts, 14);
+        // Argo CD leaves the restart count out when it is zero.
+        assert.equal(pods.find((p) => p.name === "web-7d9f-def34")?.restarts, 0);
+        assert.equal(firstUnhealthy(pods)?.name, "web-6c1a-zzz99");
+    });
+
+    it("writes one line per pod with its health, status reason, containers and restarts", () => {
+        const out = summarisePods("Deployment/web", podsOf(tree, deployment));
+        assert.match(out, /^Pods of Deployment\/web \(3\):\n/);
+        assert.match(out, /\n- web-7d9f-abc12 Degraded, Status Reason: CrashLoopBackOff, Containers: 0\/1, Restart Count: 14, Message: back-off 5m0s restarting failed container\n/);
+        assert.match(out, /\n- web-7d9f-def34 Healthy, Status Reason: Running, Containers: 1\/1, Restart Count: 0$/);
+    });
+
+    it("lists a fixed number of pods however many the workload has", () => {
+        const many = Array.from({ length: 50 }, (_, i) => ({ name: `web-${i}`, health: "Healthy", restarts: 0 }));
+        const lines = summarisePods("Deployment/web", many, undefined, 5).split("\n");
+        assert.equal(lines.length, 1 + 5 + 1);
+        assert.equal(lines[lines.length - 1], "- 45 more pods not listed");
+    });
+
+    it("adds the events of the first unhealthy pod, or says why they are missing", () => {
+        const pods = podsOf(tree, deployment);
+        const events = [{ type: "Warning", reason: "BackOff", message: "Back-off restarting failed container", lastTimestamp: "T" }];
+        assert.match(summarisePods("Deployment/web", pods, { pod: "web-7d9f-abc12", items: events }), /Events of pod web-7d9f-abc12, most recent first:\n\{"total":1,"items":\[\{"type":"Warning","reason":"BackOff"/);
+        assert.match(summarisePods("Deployment/web", pods, { pod: "web-7d9f-abc12", error: "Pod events API returned 403 Forbidden" }), /Events of pod web-7d9f-abc12 could not be fetched \(Pod events API returned 403 Forbidden\)\.$/);
+    });
+
+    it("says when the tree shows no pods", () => {
+        assert.equal(summarisePods("Deployment/web", []), "The Argo CD resource tree shows no pods for Deployment/web.");
+        assert.deepEqual(podsOf({ nodes: null }, deployment), []);
+        assert.deepEqual(podsOf(tree, { kind: "Deployment", metadata: {} }), []);
+    });
+
+    it("attaches pods only for a resource with a pod template", () => {
+        assert.equal(hasPods(deployment), true);
+        assert.equal(hasPods({ kind: "CronJob", spec: { jobTemplate: { spec: { template: { spec: { containers: [] } } } } } }), true);
+        assert.equal(hasPods({ kind: "Pod", spec: { containers: [] } }), false);
+        assert.equal(hasPods({ kind: "Service", spec: {} }), false);
     });
 });
 

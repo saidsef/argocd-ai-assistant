@@ -703,6 +703,7 @@ export class LlmProvider implements QueryProvider {
             case AttachmentType.LOG: return 'Log';
             case AttachmentType.MANIFEST: return 'Manifest';
             case AttachmentType.APP_SUMMARY: return 'Argo CD Application';
+            case AttachmentType.PODS: return 'Pods';
             default: return 'Attachment';
         }
     }
