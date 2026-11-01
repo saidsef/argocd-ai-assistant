@@ -2,6 +2,7 @@ import * as React from "react";
 import ChatInterface from "./components/ChatInterface";
 import { getLogs, hasLogs, MAX_LINES, summariseLogs } from "./service/logs";
 import { ApplicationSummary, getApplicationSummary, summariseApplication } from "./service/application";
+import { firstUnhealthy, getPodEvents, getResourceTree, hasPods, PodState, podsOf, summarisePods } from "./service/pods";
 import {
     argocdFetch,
     errorMessage,
@@ -17,7 +18,7 @@ import {
     tokenPromptMessage,
     tokenServerHandles
 } from "./util/util";
-import { capText, MAX_APP_SUMMARY_CHARS, MAX_EVENTS_CHARS, MAX_MANIFEST_CHARS } from "./util/context";
+import { capText, MAX_APP_SUMMARY_CHARS, MAX_EVENTS_CHARS, MAX_MANIFEST_CHARS, MAX_PODS_CHARS } from "./util/context";
 import { MAX_EVENTS, summariseEvents } from "./service/events";
 import { ManageStorage } from "./util/storage";
 import { ExtensionScope } from "./util/extensions";
@@ -58,6 +59,9 @@ export const ResourceAssistantExtension = (props: any) => {
     // the model happily answers "no events indicate a problem" about a resource whose events simply
     // did not load. Now it reaches the model, the header chip and a one-off notice.
     const [eventsError, setEventsError] = React.useState<string | null>(null);
+    // The pods behind a workload and why fetching them failed, handled the same way as the events.
+    const [pods, setPods] = React.useState<{ list: PodState[]; text: string } | null>(null);
+    const [podsError, setPodsError] = React.useState<string | null>(null);
     // Mirrors storageRef.current.logs so the header chip re-renders when a log is attached or
     // detached; sessionStorage is not reactive.
     const [logsAttached, setLogsAttached] = React.useState(false);
@@ -169,6 +173,20 @@ export const ResourceAssistantExtension = (props: any) => {
             });
         }
 
+        if (podsError) {
+            attachments.push({
+                content: `The pods of this resource could not be fetched from the Argo CD resource tree (${podsError}). No pod state is available for this conversation. Do not state or imply anything about the pods' health or restarts - say that pod state could not be retrieved.`,
+                mimeType: "text/plain",
+                type: AttachmentType.PODS
+            });
+        } else if (pods) {
+            attachments.push({
+                content: capText(pods.text, MAX_PODS_CHARS, "the pod list"),
+                mimeType: "text/plain",
+                type: AttachmentType.PODS
+            });
+        }
+
         const cachedLogs = storageRef.current?.logs;
         if (cachedLogs) {
             // Already distilled and capped when it was fetched (service/logs.ts summariseLogs).
@@ -185,7 +203,7 @@ export const ResourceAssistantExtension = (props: any) => {
             settings: globalThis.argocdAssistantSettings ?? settings,
             mcpToken: storageRef.current?.mcpToken ?? undefined
         };
-    }, [application, resource, isApplication, summary, events, eventsError, settings]);
+    }, [application, resource, isApplication, summary, events, eventsError, pods, podsError, settings]);
 
     // Memoised because getMcpStatus allocates a status object per server and re-derives every
     // handle (up to three `new URL()` each), and the Argo CD host hands down fresh resource and
@@ -219,25 +237,30 @@ export const ResourceAssistantExtension = (props: any) => {
             if (summary) sources.push("app");
         }
         if (!eventsError && events?.items?.length > 0) sources.push(`events (${events.items.length})`);
+        if (!podsError && pods) sources.push(`pods (${pods.list.length})`);
         if (logsAttached) sources.push("logs");
 
         const attached = sources.length ? sources.join(", ") : "nothing yet";
+        const unavailable = [eventsError && "events unavailable", podsError && "pods unavailable"].filter(Boolean);
         return {
-            label: (eventsError ? [...sources, "events unavailable"] : sources).join(" · ") || "no context",
-            state: (eventsError ? "error" : "on") as "error" | "on",
-            detail: eventsError
-                ? `Answers are grounded in ${attached}. Kubernetes events could not be fetched (${eventsError}), so recent events are not included.`
-                : `Answers are grounded in ${attached}.`,
+            label: [...sources, ...unavailable].join(" · ") || "no context",
+            state: (unavailable.length ? "error" : "on") as "error" | "on",
+            detail: [
+                `Answers are grounded in ${attached}.`,
+                eventsError && `Kubernetes events could not be fetched (${eventsError}), so recent events are not included.`,
+                podsError && `The pods could not be fetched (${podsError}), so their health and restarts are not included.`,
+            ].filter(Boolean).join(" "),
         };
-    }, [isApplication, summary, resource, events, eventsError, logsAttached]);
+    }, [isApplication, summary, resource, events, eventsError, pods, podsError, logsAttached]);
 
     // Said once, in the transcript, the first time events fail - the chip alone is easy to miss when
     // the answer reads confidently.
     const notice = React.useMemo(
-        () => eventsError
-            ? `I could not load Kubernetes events for this resource (${eventsError}), so my answers will not include them.`
-            : null,
-        [eventsError]
+        () => [
+            eventsError && `I could not load Kubernetes events for this resource (${eventsError}), so my answers will not include them.`,
+            podsError && `I could not load the pods of this resource (${podsError}), so my answers will not include their health or restarts.`,
+        ].filter(Boolean).join(" ") || null,
+        [eventsError, podsError]
     );
 
     const handleCancel = React.useCallback(() => {
@@ -417,6 +440,35 @@ export const ResourceAssistantExtension = (props: any) => {
         // the Argo CD host hands down fresh objects as it polls, which re-ran this effect (and so
         // re-fetched, after blanking the events) on every poll. This matches both the sibling
         // app-summary effect below and the documented "cached, not continuously updated" behaviour.
+    }, [resourceID, application_name]);
+
+    // The pods behind a workload, from the resource tree, plus the events of the first unhealthy one.
+    // Fetched once per resource like the events above, and keyed the same way.
+    React.useEffect(() => {
+        const controller = new AbortController();
+        setPods(null);
+        setPodsError(null);
+        if (!hasPods(resource) || !application_name) return;
+        const owner = `${resource.kind}/${resource.metadata?.name ?? ""}`;
+        (async () => {
+            const list = podsOf(await getResourceTree(application, controller.signal), resource);
+            const unhealthy = firstUnhealthy(list);
+            let podEvents: { pod: string; items?: any[]; error?: string } | undefined;
+            if (unhealthy) {
+                try {
+                    podEvents = { pod: unhealthy.name, items: await getPodEvents(application, unhealthy, controller.signal) };
+                } catch (err) {
+                    if (err instanceof Error && err.name === "AbortError") throw err;
+                    podEvents = { pod: unhealthy.name, error: errorMessage(err) };
+                }
+            }
+            if (!controller.signal.aborted) setPods({ list, text: summarisePods(owner, list, podEvents) });
+        })().catch((err) => {
+            if (err instanceof Error && err.name === "AbortError") return;
+            console.warn("Failed to fetch the resource tree, answering without pod state:", err);
+            setPodsError(errorMessage(err));
+        });
+        return () => controller.abort();
     }, [resourceID, application_name]);
 
     // Fetch the owning Application's distilled summary (chart/source, sync, health, resource
