@@ -1,6 +1,6 @@
 import * as React from "react";
 import ChatInterface from "./components/ChatInterface";
-import { getLogs, hasLogs, MAX_LINES, summariseLogs } from "./service/logs";
+import { getLogs, hasLogs, MAX_LINES, restartCount, summariseLogs } from "./service/logs";
 import { ApplicationSummary, getApplicationSummary, summariseApplication } from "./service/application";
 import { firstUnhealthy, getPodEvents, getResourceTree, hasPods, PodState, podsOf, summarisePods } from "./service/pods";
 import { getManagedResource, isOutOfSync, summariseDrift } from "./service/drift";
@@ -10,6 +10,7 @@ import {
     getContainers,
     getResourceIdentifier,
     injectMessage,
+    Kinds,
     isAttachRequest,
     isCancelRequest,
     isTokenRequest,
@@ -33,6 +34,7 @@ type FlowNode =
     | "start"
     | "loop"
     | "attach"
+    | "ask_instance"
     | "ask_lines"
     | "get_logs"
     | TokenFlowNode;
@@ -50,7 +52,7 @@ export const ResourceAssistantExtension = (props: any) => {
 
     const { resource, application } = props;
 
-    const [form, setForm] = React.useState<{ container?: string; lines?: string; token?: string }>({});
+    const [form, setForm] = React.useState<{ container?: string; previous?: boolean; lines?: string; token?: string }>({});
     const [events, setEvents] = React.useState<Events>({ items: [] });
     const [flowNode, setFlowNode] = React.useState<FlowNode>("start");
     const [flowError, setFlowError] = React.useState<string | null>(null);
@@ -349,15 +351,38 @@ export const ResourceAssistantExtension = (props: any) => {
         [flowNode, resource, mcpServers, getMcpStatus, handleCancel]
     );
 
-    const handleContainerSelect = React.useCallback((container: string) => {
-        setForm({ container });
+    // A Pod's status counts restarts per container. A workload's pod list counts them per pod, so a
+    // workload offers the previous instance once any of its pods has restarted.
+    const hasRestarted = React.useCallback(
+        (container: string) => resource?.kind === Kinds.POD
+            ? restartCount(resource, container) > 0
+            : (pods?.list ?? []).some((p) => p.restarts > 0),
+        [resource, pods]
+    );
+
+    const handleContainerSelect = React.useCallback(
+        (container: string, setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
+            setForm({ container });
+            setFlowError(null);
+            if (!hasRestarted(container)) {
+                setFlowNode("ask_lines");
+                return;
+            }
+            setMessages(injectMessage(`**${container}** has restarted. Attach the logs of the current instance, or of the previous one, which ended at the last restart?`));
+            setFlowNode("ask_instance");
+        },
+        [hasRestarted]
+    );
+
+    const handleInstanceSelect = React.useCallback((previous: boolean) => {
+        setForm((prev) => ({ ...prev, previous }));
         setFlowNode("ask_lines");
-        setFlowError(null);
     }, []);
 
     const handleLinesSubmit = React.useCallback(
         (setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
             const container = form.container;
+            const previous = !!form.previous;
             if (!container) {
                 setFlowError("Select a container first.");
                 return;
@@ -386,17 +411,17 @@ export const ResourceAssistantExtension = (props: any) => {
             logAbortRef.current?.abort();
             const controller = new AbortController();
             logAbortRef.current = controller;
-            getLogs(application, resource, container, lines, controller.signal)
+            getLogs(application, resource, container, lines, controller.signal, previous)
                 .then((result: LogEntry[]) => {
                     if (storageRef.current !== storage) return; // superseded by a resource switch
                     logAbortRef.current = null;
                     // Store the distilled text, not the raw stream envelopes: this string is
                     // re-sent verbatim with every subsequent question, so its size is paid for
                     // on every request.
-                    const attached = storage.setLogs(summariseLogs(result, container));
+                    const attached = storage.setLogs(summariseLogs(result, container, previous));
                     setLogsAttached(attached);
                     setMessages(injectMessage(attached
-                        ? `Attached ${result.length} log line${result.length === 1 ? "" : "s"} from **${container}**. Start a new chat to detach them.`
+                        ? `Attached ${result.length} log line${result.length === 1 ? "" : "s"} from ${previous ? "the previous instance of " : ""}**${container}**. Start a new chat to detach them.`
                         : "The logs could not be stored for this session, so they will not be attached. Session storage may be full or disabled."));
                     setFlowNode("loop");
                 })
@@ -539,13 +564,27 @@ export const ResourceAssistantExtension = (props: any) => {
                                 <button
                                     key={c}
                                     type="button"
-                                    onClick={() => handleContainerSelect(c)}
+                                    onClick={() => handleContainerSelect(c, setMessages)}
                                     className="chat-flow-button"
                                     aria-label={`Select container ${c}`}
                                 >
                                     {c}
                                 </button>
                             ))}
+                            <button type="button" onClick={handleCancel} className="chat-flow-button-cancel">
+                                Cancel
+                            </button>
+                        </div>
+                    );
+                case "ask_instance":
+                    return (
+                        <div className="chat-flow-ui">
+                            <button type="button" onClick={() => handleInstanceSelect(false)} className="chat-flow-button">
+                                Current
+                            </button>
+                            <button type="button" onClick={() => handleInstanceSelect(true)} className="chat-flow-button">
+                                Previous
+                            </button>
                             <button type="button" onClick={handleCancel} className="chat-flow-button-cancel">
                                 Cancel
                             </button>
@@ -593,7 +632,7 @@ export const ResourceAssistantExtension = (props: any) => {
                     return (
                         <div className="chat-flow-ui" role="status">
                             <span className="chat-typing" aria-hidden="true"><span /><span /><span /></span>
-                            <span className="chat-tool-status">Fetching logs from {form.container}…</span>
+                            <span className="chat-tool-status">Fetching logs from {form.previous ? "the previous instance of " : ""}{form.container}…</span>
                             <button type="button" onClick={handleCancel} className="chat-flow-button-cancel">
                                 Cancel
                             </button>
@@ -612,7 +651,7 @@ export const ResourceAssistantExtension = (props: any) => {
                     return null;
             }
         },
-        [flowNode, containers, form, maxLogLines, flowError, handleCancel, handleContainerSelect, handleLinesSubmit, handleTokenSubmit]
+        [flowNode, containers, form, maxLogLines, flowError, handleCancel, handleContainerSelect, handleInstanceSelect, handleLinesSubmit, handleTokenSubmit]
     );
 
     if (chatKey === null) return null;

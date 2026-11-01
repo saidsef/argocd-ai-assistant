@@ -13,6 +13,12 @@ export function hasLogs(resource: any): boolean {
     return !!(resource?.spec?.template?.spec?.containers || resource?.kind === Kinds.POD);
 }
 
+/** How often a Pod's container has restarted, from its status. 0 when the status does not say. */
+export function restartCount(pod: any, container: string): number {
+    const statuses = Array.isArray(pod?.status?.containerStatuses) ? pod.status.containerStatuses : [];
+    return Number(statuses.find((s: any) => s?.name === container)?.restartCount) || 0;
+}
+
 // The API group of an apiVersion: "apps/v1" -> "apps", and "v1" -> "" (core resources have no
 // group; returning "v1" as the group made the logs API reject core-group non-Pod workloads).
 export function getGroup(apiVersion: string): string {
@@ -28,7 +34,7 @@ export function getGroup(apiVersion: string): string {
 // (measured on a real pod: 1,521 bytes of JSON for 972 bytes of log content, and short application
 // log lines are far worse). One `pod` header line plus `<timestamp> <content>` per line carries the
 // same information, in a shape the model reads more naturally than JSON.
-export function summariseLogs(entries: LogEntry[], container?: string): string {
+export function summariseLogs(entries: LogEntry[], container?: string, previous = false): string {
     const all = Array.isArray(entries) ? entries : [];
     // The stream ends with an empty-content sentinel entry; it is protocol, not a log line.
     const lines = all.filter((e) => (e?.content ?? "").length > 0);
@@ -41,6 +47,8 @@ export function summariseLogs(entries: LogEntry[], container?: string): string {
     const header = [
         multiPod ? `pods: ${pods.join(", ")}` : pods[0] && `pod: ${pods[0]}`,
         container && `container: ${container}`,
+        // Without this the model reads a crashed instance's last lines as the running one's.
+        previous && "instance: previous, before the last restart",
         `lines: ${rows.length}`
     ].filter(Boolean).join(", ");
 
@@ -49,7 +57,7 @@ export function summariseLogs(entries: LogEntry[], container?: string): string {
     return `${header}\n${capText(rows.join("\n"), MAX_LOG_CHARS, "container log", "end")}`;
 }
 
-export const getLogs = async (application: any, resource: any, container: string, count: number, signal?: AbortSignal): Promise<LogEntry[]> => {
+export const getLogs = async (application: any, resource: any, container: string, count: number, signal?: AbortSignal, previous = false): Promise<LogEntry[]> => {
     const params = new URLSearchParams({
         appNamespace: application?.metadata?.namespace ?? "",
         namespace: resource?.metadata?.namespace ?? "",
@@ -58,6 +66,9 @@ export const getLogs = async (application: any, resource: any, container: string
         follow: "false",
         sinceSeconds: "0"
     });
+    // Argo CD passes this to Kubernetes for every pod. A pod with no previous instance answers with
+    // a "previous terminated container ... not found" line, not an error status.
+    if (previous) params.append("previous", "true");
 
     if (resource?.kind === Kinds.POD) {
         params.append("podName", resource?.metadata?.name ?? "");
