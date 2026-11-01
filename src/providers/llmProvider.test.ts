@@ -149,6 +149,13 @@ describe("DEFAULT_SYSTEM_PROMPT", () => {
         assert.match(DEFAULT_SYSTEM_PROMPT, /Never claim to have run a command/);
     });
 
+    it("grounds claims about the cluster without forbidding general knowledge", () => {
+        // The system-level page attaches nothing, so a rule covering every claim would forbid
+        // explaining what a sync wave is.
+        assert.match(DEFAULT_SYSTEM_PROMPT, /Every claim about this cluster/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /General Argo CD and Kubernetes behaviour may come from your own knowledge/);
+    });
+
     it("describes no attachment that may be absent", () => {
         // This is prepended to every request, including from deployments with no MCP configured at
         // all, where MCP wording is pure cost and describes something that is not there. It lives
@@ -158,8 +165,8 @@ describe("DEFAULT_SYSTEM_PROMPT", () => {
 
     it("stays short enough to be worth sending on every request", () => {
         // A guard against the rules growing back into prose, not a tuned budget: the whole point of
-        // one line per rule is that it does not creep. Roughly 400 tokens.
-        assert.ok(DEFAULT_SYSTEM_PROMPT.length < 1800, `prompt is ${DEFAULT_SYSTEM_PROMPT.length} chars`);
+        // one line per rule is that it does not creep. Roughly 500 tokens.
+        assert.ok(DEFAULT_SYSTEM_PROMPT.length < 2000, `prompt is ${DEFAULT_SYSTEM_PROMPT.length} chars`);
     });
 });
 
