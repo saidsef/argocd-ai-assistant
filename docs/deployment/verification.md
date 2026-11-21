@@ -1,100 +1,98 @@
-# Verification & Troubleshooting
+# Verification and troubleshooting
 
-After applying the configuration, wait for the Argo CD server pod to restart (the Operator or Deployment rollout handles this).
+Run these checks after `argocd-server` restarts. The commands use the container names from the Operator and raw manifest pages. The Helm chart names the server container `server` and the installer `argocd-ai-assistant`.
 
-## Verification
+## Checks
 
-1. **Check the initContainer logs** (look for `UI extension installed successfully`):
+1. The installer extracted the extension, and its log contains `installed successfully`:
 
-```shell
-kubectl logs -n argocd deployment/argocd-server -c extension-argocd-ai-assistant
-```
+    ```shell
+    kubectl -n argocd logs deploy/argocd-server -c extension-argocd-ai-assistant
+    ```
 
-2. **Verify the extension files are present** in the running `argocd-server` container:
+2. The server container can see the extension:
 
-```shell
-kubectl exec -n argocd deployment/argocd-server -c argocd-server -- ls -la /tmp/extensions/resources/extensions-argocd-ai-assistant/
-```
+    ```shell
+    kubectl -n argocd exec deploy/argocd-server -c argocd-server -- \
+      ls /tmp/extensions/resources/extensions-argocd-ai-assistant/
+    ```
 
-3. **Confirm the server is serving the bundle.** Argo CD concatenates every extension `.js` under `/tmp/extensions/resources/` into a single `/extensions.js` (there is no per-file URL). Port-forward and check it contains the bundle:
+3. Argo CD serves the extension. It joins every extension under `/tmp/extensions/resources/` into one `/extensions.js`:
 
-```shell
-kubectl -n argocd port-forward deployment/argocd-server 8080:8080 &
-curl -sk https://localhost:8080/extensions.js | grep -c 'extension-argocd-ai-assistant-bundle'   # > 0 means the bundle loaded
-```
+    ```shell
+    kubectl -n argocd port-forward deploy/argocd-server 8080:8080 &
+    curl -sk https://localhost:8080/extensions.js | grep -c extension-argocd-ai-assistant-bundle
+    curl -sk https://localhost:8080/extensions.js | grep -c 'argocdAssistantSettings *='
+    ```
 
-`argocdAssistantSettings` is the wrong string to grep for: the bundle reads that global itself, so it appears whether or not a settings extension is mounted. Grep for the settings file's own assignment if you deployed one:
+    A count above zero from the first command means the extension loaded. From the second, it means a settings file loaded.
 
-```shell
-curl -sk https://localhost:8080/extensions.js | grep -c 'argocdAssistantSettings *='
-```
+4. The proxy answers. This needs an admin session and an existing Application:
 
-4. **Test the proxy path end to end** without a browser. The proxy authenticates with the `argocd.token` cookie and requires the application/project headers, so an Application must exist:
+    ```shell
+    PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)
+    TOKEN=$(curl -sk https://localhost:8080/api/v1/session \
+      -H 'Content-Type: application/json' \
+      -d "{\"username\":\"admin\",\"password\":\"$PASSWORD\"}" \
+      | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+    curl -sk -N https://localhost:8080/extensions/assistant/v1/chat/completions \
+      --cookie "argocd.token=$TOKEN" \
+      -H 'Content-Type: application/json' \
+      -H "Argocd-Application-Name: argocd:<app>" \
+      -H "Argocd-Project-Name: <project>" \
+      -d '{"model":"<model>","messages":[{"role":"user","content":"hi"}],"stream":true}'
+    ```
 
-```shell
-TOKEN=$(curl -sk https://localhost:8080/api/v1/session \
-  -d "{\"username\":\"admin\",\"password\":\"$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)\"}" \
-  | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+    The reply streams `chat.completion.chunk` lines and ends with `data: [DONE]`. With the Operator, the admin password is in the `argocd-cluster` Secret under `admin.password`.
 
-curl -sk -N https://localhost:8080/extensions/assistant/v1/chat/completions \
-  --cookie "argocd.token=$TOKEN" \
-  -H "Argocd-Application-Name: argocd:<your-app>" \
-  -H "Argocd-Project-Name: default" \
-  -d '{"model":"<your-model>","messages":[{"role":"user","content":"hi"}],"stream":true}'
-```
+5. In the UI, open an Application, select a resource, open the **Assistant** tab and ask a question.
 
-You should see a streamed `chat.completion.chunk` response from your backend ending in `data: [DONE]`.
-
-5. **In the UI**, open any Application, click a resource, confirm the **Assistant** tab appears, and ask a question - the chatbot should stream a response.
-
-> The [`examples/kind/`](https://github.com/saidsef/argocd-ai-assistant/tree/main/examples/kind) harness automates checks 1-4 against a throwaway cluster - see [Local Testing with kind](local-testing.md).
+The [kind harness](local-testing.md) runs these checks and more against a throwaway cluster.
 
 ## Troubleshooting
 
-### The Assistant tab does not appear
+### Missing Assistant tab
 
-- Verify the initContainer ran successfully: `kubectl logs -n argocd deployment/argocd-server -c extension-argocd-ai-assistant`
-- Check that the extension JS file exists in the pod: `kubectl exec ... -- ls /tmp/extensions/resources/extensions-argocd-ai-assistant/`
-- **If the file exists in the initContainer logs but the tab still does not appear, confirm the `extensions` volume is mounted into the `argocd-server` _container_, not only the initContainer** - this is the most common misconfiguration. Check `/extensions.js` is served: `curl -sk https://<argocd>/extensions.js | grep extension-argocd-ai-assistant-bundle`.
-- Ensure the `--enable-proxy-extension` flag (or `server.enable.proxy.extension: "true"`) is set on argocd-server.
+- Check that the installer's log contains `installed successfully`.
+- Check that the `argocd-server` container mounts the extensions volume, not only the initContainer. This is the most common cause.
+- Check that `/extensions.js` contains `extension-argocd-ai-assistant-bundle`.
 
-### The tab appears but every question returns 404
+### "LLM endpoint not found (404)"
 
-The proxy extension is registered under some other name. The browser always asks for `/extensions/assistant`, so `extension.config.assistant` and the `invoke` policy have to use `assistant` too - see [the note on the proxy page](proxy.md). Read back the key you actually applied:
+The proxy is registered under a name other than `assistant`, as [Extension name](proxy.md#extension-name) describes. List the proxy keys in `argocd-cm`:
 
 ```shell
 kubectl -n argocd get cm argocd-cm -o jsonpath='{.data}' | grep -o 'extension\.config\.[a-z0-9-]*'
 ```
 
-### The Assistant asks you to set a model
+When `data.baseURL` is set, the 404 can also come from that URL.
 
-With `model` unset the Assistant reads `/v1/models` from the backend and uses the answer when there is exactly one. Two things produce this message:
+### "Still resolving an Argo CD application to authorise this request"
 
-- The backend serves several models. The message names them - copy one into the `model` field (see [Settings Extension](settings.md)).
-- The lookup got nothing. Check `baseURL` is reachable from the Argo CD server pod, and that the backend serves `/v1/models` at all - the browser console carries the status it returned.
+The extension has not yet found an Application to send with the request, or the user cannot read any. On the system-level `/assistant` page, the user needs read access to at least one Application.
 
-### A reply comes back empty
+### "Authentication failed (401)" or "Access forbidden (403)"
 
-The Assistant names the cause from the stream's `finish_reason`:
+The backend rejected the API key. Check that the Secret holds `Bearer <your-api-token>`, as [API token injection](proxy.md#api-token-injection) describes. If the key is correct, check that the user's role can invoke the `assistant` extension, as [RBAC](proxy.md#rbac) describes.
 
-| Message names | Fix |
+### Model choice message
+
+With `model` unset, the Assistant asks the backend for `/v1/models`. When the backend serves several models, the message lists them, and one of them goes in the `model` [setting](settings.md). When the lookup returns nothing, check that the backend is reachable from `argocd-server` and serves `/v1/models`. The browser console shows the status it returned.
+
+### Empty reply
+
+The message names the cause from the stream's `finish_reason`:
+
+| Cause | Fix |
 |---|---|
-| A content filter | Rephrase the question, or check the backend's content-filter configuration |
-| The output token limit | Attach less context, or raise the limit on the backend |
-| No usable data | Check that the backend sends an OpenAI-compatible SSE stream from `/v1/chat/completions` |
+| A content filter | Rephrase the question, or check the backend's content filter |
+| The output token limit | Attach less context, or raise the backend's limit |
+| No usable data | Check that the backend streams OpenAI-compatible server-sent events from `/v1/chat/completions` |
 
-For any failed request other than a 401, 403, 404 or 429, the message carries the backend's own error text when it sent one.
+### "The assistant stopped responding"
 
-### Streaming does not work / responses are buffered
-
-- Verify your Argo CD version supports proxy extensions with streaming (requires Argo CD >= v2.13).
-- Check the LLM backend streams at all. A model that is slow to its first token can outlast the proxy defaults - see [Tuning the connection](proxy.md#tuning-the-connection).
+The backend stayed silent for longer than the extension's fixed limit, which a setting cannot change. A backend that loads its model on the first request may need to keep the model loaded. [Connection timeouts](proxy.md#connection-timeouts) covers the proxy's own settings.
 
 ### CORS errors in the browser console
 
-- This indicates traffic is not going through the proxy extension. Ensure the `baseURL` in settings points to the proxy path (or omit it to use the default proxy behaviour).
-
-### RBAC errors
-
-- Ensure the RBAC policy `p, role:readonly, extensions, invoke, assistant, allow` is configured.
-- Verify the user has a role that includes this permission.
+The browser is calling a backend directly. Leave `data.baseURL` unset to send requests through the proxy, or allow the Argo CD origin on the backend. MCP servers need the headers listed in [MCP servers](settings.md#mcp-servers).

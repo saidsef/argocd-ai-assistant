@@ -1,157 +1,111 @@
-### Introduction
+# Architecture
 
-Argo CD enables extending the User Interface (UI) it provides via an
-[extension](https://argo-cd.readthedocs.io/en/latest/developer-guide/extensions/ui-extensions/) mechanism.
-The Assistant for Argo CD uses the
-[Resource Tab Extension](https://argo-cd.readthedocs.io/en/latest/developer-guide/extensions/ui-extensions/#resource-tab-extensions) to provide
-an additional tab on the Resource slide-out that appears when a Resource is clicked in the UI.
+The Assistant is an Argo CD [UI extension](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/ui-extensions/). It adds an **Assistant** tab to every resource's slide-out panel. When MCP servers are configured, it also adds a system-level page at `/assistant`.
 
-The Assistant uses a single generic LLM provider that speaks the standard OpenAI-compatible chat completions API, so it works with any compatible backend (a local inference server, vLLM, OpenAI, Azure OpenAI, and so on) rather than being tied to a specific one.
+![Diagram: an Assistant tab in a browser reads context from Argo CD's API on its own origin, sends questions through a proxy extension at /extensions/assistant to an OpenAI-compatible backend, and calls MCP servers directly](architecture.svg)
 
-### Architecture
+## Request path
 
-The extension is composed of two main parts: the UI extension bundle (JavaScript/React) loaded by the Argo CD server, and the backend LLM service accessed through the Argo CD Proxy Extension.
+1. The installer initContainer extracts the extension into `argocd-server`, which serves it to the browser.
+2. When a user opens the Assistant tab, the extension reads that resource's context from the Argo CD API.
+3. Each question goes with the context and earlier messages to `/extensions/assistant`. Argo CD's proxy extension checks the user against the resource's Application. It then forwards the request to the LLM backend. With `data.baseURL` set, the browser calls that URL directly instead.
+4. The backend streams its answer back as server-sent events.
+5. The browser calls MCP servers directly, without the proxy.
 
-![Architecture of the Assistant for Argo CD: the Assistant tab in the user's browser reads manifests, events, pod logs and the Application summary from the Argo CD API on the same origin, sends chat requests to an OpenAI-compatible LLM backend through the proxy extension at /extensions/assistant which authorises each one against an Application, and calls MCP servers directly rather than through the proxy](architecture.svg)
+## Context
 
-**Communication flow:**
-
-1. The Argo CD server loads the extension JS bundle via an initContainer at startup.
-2. When a user opens a resource and clicks the **Assistant** tab, the extension renders a chatbot interface.
-3. The extension fetches the resource manifest (provided by Argo CD), events (via Argo CD API), and optionally container logs.
-4. User queries + context are sent to the LLM backend through the Argo CD [Proxy Extension](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/), avoiding CORS issues.
-5. The proxy forwards requests to the configured LLM service. Responses stream back via SSE.
-
-CORS would otherwise block the browser from calling the backend directly, so all backend traffic is proxied through the `argocd-server` pod. Streaming responses are handled natively by the proxy - no client-side header workarounds.
-
-### Query Context
-
-Each query is sent to the backend with additional context:
-
-1. **Resource manifest** - the live manifest, provided by Argo CD when the extension is invoked. The prompt names it as the live object, not the desired state.
-2. **Argo CD Application summary** - a distilled `argocd app get` view (source/Helm chart, sync status, health, sync policy, images, and any out-of-sync or degraded resources) fetched from the Argo CD REST API. For an Application resource it replaces the full manifest (a large token saving); for a child resource it is attached alongside, grounding it in the owning Application's GitOps state.
-3. **Events** - retrieved automatically and attached. Cached, not continuously updated.
-4. **Pods** - for a workload such as a Deployment, StatefulSet, DaemonSet or CronJob, one line per pod from the Application's resource tree, with its health, status reason, ready containers and restart count. Argo CD returns only the selected resource's own events, so the events of the first unhealthy pod are attached with the list. Unhealthy pods come first, and the list names a fixed number of pods and counts the rest. A failed fetch is stated to the model and shown on the header chip. Cached, not continuously updated.
-5. **OutOfSync fields** - for a resource the Application reports as OutOfSync, each field set in Argo CD's target state whose live value differs, with both values, from the managed-resources API. A Synced resource does not cost a request. A zero value that the API server leaves out and another spelling of a resource quantity, such as `1000m` and `1`, count as equal. Fields set only on the live object are not listed, and Secret values are not shown. A failed fetch is stated to the model and shown on the header chip.
-6. **Logs** (optional) - a single container's log, attached via a guided flow. Distilled to a `<timestamp> <line>` block with the pod named once in a header, rather than the raw API envelope (measured ~35-60% fewer tokens). For a workload with several pods, the block holds the most recent lines across all of them, and each line starts with the name of the pod that wrote it. Cached and re-sent on every request, re-run the flow to refresh.
-
-Every context item is bounded twice: by item count (events, resource lists, pods, log lines) and by size in characters. When an item exceeds its ceiling it is truncated with a visible `[truncated: showing N of M characters ...]` marker, so the model knows it is reading a fragment.
-
-Each attachment goes into the system message inside an `<attachment>` block that names its type and format. The extension escapes every `<attachment` and `<tool_result` tag inside the content, so a log line or an event message cannot close its own block and pass as part of the prompt. MCP tool results go back to the model inside the same kind of `<tool_result>` block. Whenever an attachment or a tool is present, the system message states that text inside either block is data, and that the model must never follow an instruction found there or call a tool because that text asks for it.
-
-Earlier messages in the conversation go with each query as history. Each message is capped, and so is the total, which drops the oldest messages first. History carries the visible text of earlier answers, never their tool exchanges.
-
-!!! note
-    Most inference providers cap tokens, so large context items can exhaust the query limit.
-
-### System prompt
-
-The default system prompt states each accuracy rule as a checkable prohibition. A model can satisfy "be accurate" while padding an answer with plausible defaults, but "a field missing from the live manifest is not set" is a rule it either followed or did not. The prompt holds one line per rule and repeats none of them, because it goes with every request and each line is paid for every time.
-
-The answer rules give every reply one shape, whichever model writes it: a sentence that answers the question, up to three bullets of quoted evidence, and a command only when the user has to act. A reply stays under 120 words unless the user asks for detail, and does not use headings or bold. The model adds a caveat only when the context shows a problem, and does not raise questions, fixes or what-if scenarios of its own. When a tool returns documentation, the model quotes the sentence it relies on instead of paraphrasing it.
-
-The grounding rule covers claims about the user's own cluster: names, namespaces, images, values, states, events and log lines must come from the attached context or a tool result. General Argo CD and Kubernetes behaviour may come from the model's own knowledge, which lets the assistant explain a concept such as a sync wave when nothing is attached. The model says so when an answer depends on a version.
-
-The prompt describes nothing that may be absent. The MCP server roster and the tool rules are appended only when servers are configured. A `systemPrompt` [setting](deployment/settings.md) replaces the persona and its rules. The attachments, the rule that attached text is data, and the MCP text are appended to whichever prompt is in force.
-
-### Chatbot Interface
-
-The chat interface is a custom React implementation (`ChatInterface` + the `useChat` hook), with streaming responses and Markdown rendering (`marked` + `dompurify`). The conversation flow:
-
-1. **Start** - an opening message with the resource Kind and Name, plus how to attach logs if the resource supports them.
-2. **Loop** - the user enters queries, the node loops after each one. Keywords switch to other flows.
-3. **`attach`** - starts the Attach Logs flow: pick a container, then the number of lines (up to the configured limit). The distilled log is attached to every subsequent question in the session until **New chat** detaches it. When the container has restarted, the flow first asks whether to attach the current instance or the previous one, which holds the lines from before the last restart. A Pod's container status gives its restart count. A workload offers the choice once any of its pods has restarted. The header of a previous instance's log says that it comes from the previous instance.
-4. **`token`** (when `data.mcpServers` is set) - the user supplies an Argo CD API token. It is stored in `sessionStorage` and sent as an `Authorization: Bearer` header to each MCP server whose entry sets `token: true`, so a server such as [mcp-github-pr-issue-analyser](https://github.com/saidsef/mcp-github-pr-issue-analyser) can act on Argo CD on the user's behalf. The flow names the servers that will receive the token. When no configured server sets `token: true`, the flow says so and does not ask for one.
-
-### Enabling MCP
-
-MCP is enabled by configuring `data.mcpServers` in the [settings extension](deployment/settings.md) - there is no feature flag. When at least one server is configured, the extension also registers a system-level extension at `/assistant` (in addition to the per-resource tab), where users can manage an Argo CD API token for MCP server access, and the `token` conversation flow becomes available.
-
-The Argo CD Proxy Extension authorises every request against a specific Application, via the `Argocd-Application-Name` and `Argocd-Project-Name` headers. The system-level page has no resource, and therefore no Application of its own, so on load it looks up the first Application the user can read and uses it purely for that authorisation - nothing about it is sent to the model. A user who can read no Applications cannot use the system-level page; the assistant says so rather than surfacing the proxy's raw `400 Invalid headers` response.
-
-### MCP Tool Integration
-
-When `data.mcpServers` is set, the LLM provider connects to each server over an HTTP-streamable JSON-RPC transport as the tab opens, not on the first message. The browser calls servers directly, so each must send CORS headers for the Argo CD origin.
-
-Connecting early is what makes the short name usable: a server's handle comes from the name it reports during the handshake, so waiting until the first message would mean the badge and the welcome message could only offer a URL hostname - and would then disagree with the assistant once it did connect. The warm-up and a first message sent while it is still running share one handshake, so a server is never initialised twice.
-
-Per message the provider:
-
-1. Reuses that connection, or makes it now if the warm-up has not finished or a server needs re-probing.
-2. Injects a **server roster** into the system message whenever any server is configured, listing each server's name, hostname, state, and its tool names. This is reference only - nothing in it is callable - and it is what lets the assistant answer "which MCP servers are available?" instead of reporting that it has no information about MCP.
-3. Sends the tools of **only the server(s) the user has named**, as `tools` on the Chat Completions request - see [Addressing a server](#addressing-a-server) below. A conversation naming no server gets no tools, so a normal question never triggers a call.
-4. Runs each call the backend returns via `tools/call`, and sends every result back as a `role: "tool"` message carrying the call's id, with the output inside a `<tool_result>` block. A reply without native calls is scanned for a call in one of the [text formats](#tool-call-formats). If a tool block is emitted when nothing is callable, the assistant retries once tool-free rather than showing the raw block.
-
-#### Tool-calling modes
-
-The provider sends tools natively by default. A backend that answers a request carrying `tools` with 400 or 422 gets the same step again in the text protocol: the system message describes each tool with its schema and asks for a `<tool>` block, and any native exchange so far is rewritten as tool blocks and a results note. When that retry succeeds, the provider uses the text protocol for that base URL and model for the rest of the session. A 400 that the retry also gets is returned as it is, and nothing is recorded.
-
-In native mode:
-
-- Every call id gets a tool message, since the next request is rejected while any id is unanswered. That includes a call to an unknown tool, a call whose arguments are not a JSON object, a repeat, which gets the first call's result, and a call past the budget.
-- Tool names are rewritten to letters, digits, `_` and `-`, at most 64 characters, and mapped back to the MCP tool. Two servers exposing the same name get distinct names.
-- Each call goes back to the backend as it arrived, including fields the extension does not read.
-- The final pass sends `tool_choice: "none"`, and any call that still arrives is dropped.
-
-The `data.toolCalling` [setting](deployment/settings.md) fixes the mode. `native` never falls back, and `text` never sends `tools`, which suits a gateway that drops the field without an error.
-
-#### Tool-call formats
-
-In the text protocol, the system message asks the model to call a tool with a `<tool name="...">` block that holds JSON arguments. Models often answer in another shape, and `src/providers/toolCall.ts` accepts each of these. A native-mode reply that carries no native calls goes through the same parser.
-
-| Format | Example | Arguments |
+| Attachment | Sent | Content |
 |---|---|---|
-| Prompted tag | `<tool name="docs_search">{"query":"argo"}</tool>` | JSON body |
-| Prompted tag in the model's sentinel tokens | `<｜｜DSML｜｜tool name="docs_search">{"query":"argo"}</｜｜DSML｜｜tool>` | JSON body |
-| DeepSeek DSML | `<｜DSML｜invoke name="docs_search">`, inside a `function_calls` or `calls` tag | One `parameter` element per argument. `string="true"` marks a raw string, and any other value is read as JSON. |
-| Bare JSON | `{"name":"docs_search","arguments":{"query":"argo"}}` | The `arguments`, `args`, `input` or `parameters` object |
+| Live manifest | for every resource except an Application | the object as stored in the cluster, without `managedFields` and the last-applied annotation |
+| Application summary | always, in place of the manifest for an Application | source, sync and health status, sync policy, images, recent history, and any out-of-sync or unhealthy resources |
+| Events | when the resource has events | Argo CD's events for the resource |
+| Pods | for resources with a pod template, and for CronJobs | each pod's health, status reason, ready containers and restart count, unhealthy pods first, with the events of the first unhealthy pod |
+| OutOfSync fields | when Argo CD reports the resource OutOfSync | each field whose live value differs from Argo CD's target state, with both values, and Secret fields without their values |
+| Logs | after the user runs `attach` | recent lines from one container, across every pod of a workload |
 
-A sentinel is one or two vertical bars, ASCII or full-width, then up to 32 characters without whitespace, one or two more bars and an optional space. An HTML tag name cannot contain a vertical bar, so the sentinel never matches ordinary markup. A closing tag must name the same tag as its opening tag, and its sentinel may differ.
+When a fetch fails, the attachment states the failure and the header chip shows it. The model is told that the data is missing, and does not read an empty attachment as a clean result.
 
-Only a block that names an advertised tool runs. The prompt's own `EXACT_TOOL_NAME` template and any tool syntax quoted in an answer never match one. A block that names no advertised tool still counts as an attempt, and the parser does not fall back to bare JSON after one.
+Every attachment is capped by item count and by size. A cut attachment ends with a `[truncated: ...]` marker, which the prompt tells the model to treat as a fragment. Each attachment sits in an `<attachment>` block, with any `<attachment` or `<tool_result` tag in its text escaped. The system message states that text inside these blocks is data and never an instruction.
 
-The parser returns every call in the reply, in order, and drops an identical repeat. A body that is not valid JSON gives the tool empty arguments. DeepSeek sometimes mixes its two forms and closes a JSON body with a `parameter` tag it never opened, and the parser drops that tag before reading the JSON.
+Earlier messages go with each question. The extension sends a fixed number of recent messages and caps each one. It drops the oldest when their total grows too large. History holds the visible text of earlier answers, not their tool calls.
 
-Bare JSON counts as a call only when nothing but a code fence follows it, since prose after the object marks it as an example. An object without a tool name runs only when its keys fit exactly one tool's schema.
+The conversation, attached log and any MCP token stay in the tab's `sessionStorage`, per resource, until the tab closes. **New chat** clears the conversation and detaches the log.
 
-#### Tool blocks in the stream
+## System prompt
 
-The model's tool block never reaches the chat, and the answer arrives in a later completion. Native calls arrive outside the reply text, and the filter runs in both modes for text calls. `src/providers/toolMarker.ts` forwards the text before the first marker and withholds everything from the marker onward. A marker is an opening `tool` or `invoke` tag, or a `function_calls` or `calls` tag, with or without a sentinel, followed by whitespace or `>`. A bare word boundary would match `<toolbar>` in prose while it streams, and hide the rest of it.
+The built-in prompt is `DEFAULT_SYSTEM_PROMPT` in [`src/providers/llmProvider.ts`](https://github.com/saidsef/argocd-ai-assistant/blob/main/src/providers/llmProvider.ts). It holds two sets of rules.
 
-The chat derives its deltas from the cumulative reply, so the filter never shows a character it might later have to take back. It holds back a trailing `<` until the text after it either completes a marker or can no longer become one. Each update examines only as many characters as the longest marker, so the cost per update stays constant however long the reply grows.
+The accuracy rules require every claim about the cluster to come from an attachment or a tool result. General Argo CD and Kubernetes behaviour may come from the model's own knowledge. A field missing from the live manifest counts as not set, one missing from a summary counts as unknown, and every inference must be marked as one.
 
-#### Addressing a server
+The answer rules give every reply one shape: a sentence that answers the question, a few bullets of quoted evidence, and a command only when the user has to act, within a word limit. They rule out headings, bold text, what-if scenarios and fixes nobody asked for.
 
-A server is addressed when one of its **handles** appears as a whole word, case-insensitively, in the current message **or the one immediately before it**. The two-turn window is what makes a natural follow-up work:
+The extension appends the attachments and a data rule to the prompt. When MCP servers are configured, it also appends a list of them. When the user names a server, it adds the rules for calling that server's tools. A [`systemPrompt` setting](deployment/settings.md#system-prompt-override) replaces the built-in prompt, and the extension still appends these parts.
+
+## Conversation commands
+
+Each command is a message on its own.
+
+| Command | Effect |
+|---|---|
+| `attach` | Starts the log flow. The user picks a container, its previous instance if it has restarted, and a number of lines up to `maximumLogLines`. The log goes with every later question until **New chat**. |
+| `token` | Asks for an Argo CD API token for the MCP servers whose entry sets `token: true`. Available when `data.mcpServers` is set. |
+| `cancel`, `quit` or `exit` | Leaves the current flow. |
+
+## MCP servers
+
+`data.mcpServers` in the [settings](deployment/settings.md#mcp-servers) lists the servers. The extension connects to each one over HTTP-streamable JSON-RPC when the tab opens. The browser makes these calls itself, and each server must allow requests from the Argo CD origin.
+
+The system message always lists the configured servers, with each server's state and tool names. The model can answer questions about the servers from that list.
+
+### Addressing a server
+
+A question offers a server's tools only when it names the server. The extension looks for the server's short name, reported name, hostname or first hostname label as a whole word, in any case. It searches the current message and the user's previous one. Because the previous message counts, a follow-up can leave the name out:
 
 ```text
-you:       docs, what does a sync wave do?      <- names "docs", its tools are offered
-assistant: ...
-you:       and how do hooks interact with them? <- names nothing, but "docs" is still offered
-you:       is the pod healthy?                  <- outside the window, no tools offered
+you:  docs, what does a sync wave do?        <- names "docs", its tools are offered
+you:  and how do hooks interact with them?   <- names nothing, "docs" is still offered
+you:  is the pod healthy?                    <- no tools offered
 ```
 
-Only the user's own previous message counts. Assistant replies are never scanned - they routinely name every server now that the roster exists, and matching one would advertise everything on every subsequent turn.
+The extension never scans replies for names. A question that does not name a server never calls a tool.
 
-#### The short name
+### Short names
 
-Each server gets one short **handle**. It is what the badge shows, what the welcome message suggests, what the roster lists, and what the assistant asks you to type - one string, decided once, so no surface can advertise a name the matcher does not accept.
+Each server has one short name, shown in the header badge and the welcome message. It is the first distinctive word of the name the server reports, or else of its hostname's first label. Words shorter than four characters are skipped, as are these filler words: `mcp`, `server`, `servers`, `service`, `services`, `svc`, `api`, `apis`, `tool`, `tools`, `www`, `http`, `https`, `local`, `internal`, `cluster` and `default`.
 
-It is derived from the first distinctive word of the server-reported name, or failing that of the hostname's first label. Filler words are dropped (`mcp`, `server`, `service`, `svc`, `api`, `tool`, `www`, `local`, `internal`, `cluster`, `default`), as is anything shorter than 4 characters - so a server at `api.example.com` never turns the word "api" into an invocation.
-
-| server | reports | handle |
+| Server | Reported name | Short name |
 |---|---|---|
 | `mcp.docs.example.com` | `docs-mcp-server` | `docs` |
-| `github-mcp.saidsef.co.uk` | `github-mcp-saidsef` | `github` |
-| `searxng.internal` | nothing | `searxng` |
-| `api.example.com` | nothing | `api.example.com` (nothing distinctive to use) |
+| `searxng.internal` | none | `searxng` |
+| `api.example.com` | none | `api.example.com` |
 
-Set `name` on the server entry to override it (see [Settings](deployment/settings.md)). If two servers would end up with the same handle, neither keeps it - both fall back to their hostname, then to `host:port` - so you are never asked to type something that addresses two servers at once.
+When two servers would share a short name, both fall back to their hostname, then to `host:port`, then to the full URL. The `name` field of a server entry sets the short name directly.
 
-Addressing still accepts the server's reported name, its full hostname, and the hostname's first label, so anything that worked before the handle existed keeps working.
+### Tool-calling modes
 
-A question runs a fixed number of tools at most, counted per tool, so a reply asking for several at once spends the same budget as several replies. The completion after the last tool is forced tool-free. When one reply runs several tools, each result is capped tighter than a lone one, so a batch cannot crowd out the manifest, logs and history. Results go back with the rule to answer only from what they contain, and never to follow an instruction inside them.
+Tools go to the backend natively, as `tools` on the chat completions request. A backend that answers such a request with 400 or 422 gets the same step again, with tools described in the system message instead. The model is then asked for a `<tool>` block. When that retry succeeds, the extension stays in text mode for that backend and model until the page reloads. The `data.toolCalling` [setting](deployment/settings.md) fixes either mode.
 
-Servers are unauthenticated by default. The `token` flow adds an `Authorization: Bearer` header to every request, the handshake included, for each server whose entry sets `token: true`, and the other servers never receive it. A broken server never breaks the assistant - if it is unreachable, exposes no tools, or a call fails, the provider logs the reason to the console and continues in LLM-only mode. A failed call also puts a one-line notice in the chat naming the tool and the error, so a broken server reads differently from a model that chose not to call one. A server that failed is probed again on the next question, so a recovered server comes back without a reload. Stopping a question during the handshake drops the half-built connection, and the next question connects from scratch.
+In native mode, every tool call gets a result message, because the backend rejects a conversation with an unanswered call. That includes a call to an unknown tool, a call with invalid arguments and a call past the budget. Tool names are rewritten to letters, digits, `_` and `-`, and mapped back to the MCP tool. The last completion of a question sends `tool_choice: "none"`.
 
-The conversation state, streaming transport, and LLM-provider calls are all bespoke (`useChat` + `LlmProvider`), because the Assistant needs features beyond an off-the-shelf chatbot, such as attaching context and the bounded MCP tool loop.
+### Tool-call formats
+
+In text mode, and for a native reply without native calls, the extension reads tool calls from the reply text. It accepts these shapes:
+
+| Format | Example |
+|---|---|
+| Prompted tag | `<tool name="docs_search">{"query":"argo"}</tool>` |
+| Prompted tag in the model's sentinel tokens | `<｜｜DSML｜｜tool name="docs_search">{"query":"argo"}</｜｜DSML｜｜tool>` |
+| DeepSeek DSML | `<｜DSML｜invoke name="docs_search">`, with one `parameter` element per argument |
+| Bare JSON | `{"name":"docs_search","arguments":{"query":"argo"}}`, where `tool` may replace `name`, and `args`, `input` or `parameters` may replace `arguments` |
+
+Only a call to an advertised tool runs, and an identical repeat runs once. Bare JSON counts as a call only when nothing but a code fence follows it. An object without a tool name runs only when its keys fit exactly one tool's schema.
+
+### Tool blocks in the stream
+
+The chat never shows a tool block. While a reply streams, the extension shows the text before the first tool marker and holds back everything after it. A trailing `<` waits until the extension can tell whether a marker follows.
+
+### Limits and failures
+
+A question runs a fixed number of tools at most, and the completion after the last one cannot call another. Each tool result is capped in size, with a tighter cap when one reply runs several tools. A request to a server times out after a fixed time, and a 502 or 503 is retried with a fresh session.
+
+When a server is unreachable, does not list any tools or fails a call, the extension logs the reason in the browser console and answers without that server's tools. A failed call also puts a one-line notice in the chat. The extension tries a failed server again on the next question.

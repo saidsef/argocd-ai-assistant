@@ -1,21 +1,18 @@
 # Install with the Helm chart
 
-Use this page when Argo CD comes from the community [`argo/argo-cd`](https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd) chart. Every step below is a fragment of one values file.
+Use this page when Argo CD comes from the community [`argo/argo-cd`](https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd) chart. Each step is a fragment of one values file.
 
-Installing another way? [Argo CD Operator](operator.md) · [Raw manifests](raw.md)
+[`examples/argo-cd-values.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/argo-cd-values.yaml) contains all five steps. Edit its backend URL, and pin a version in place of its `latest` download URL, before you install it:
 
-!!! tip "One file rather than five blocks"
-    The fragments on this page are already assembled at [`examples/argo-cd-values.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/argo-cd-values.yaml). That file tracks the newest release, so only the backend URL needs editing before you pass it:
+```shell
+helm upgrade --install argocd argo/argo-cd \
+  --namespace argocd --create-namespace \
+  -f examples/argo-cd-values.yaml
+```
 
-    ```shell
-    helm upgrade --install argocd argo/argo-cd \
-      --namespace argocd --create-namespace \
-      -f examples/argo-cd-values.yaml
-    ```
+In the snippets, replace `<version>` with a [release](../deployment.md#release-artefacts) and the service URL with your backend.
 
-Replace `<version>` with the [latest release tag](../deployment.md#build-and-package) and `services[].url` with your own backend. [Proxy & Backend Configuration](proxy.md) covers the other backend shapes, API token injection, and the timeouts you can set.
-
-## 1. Enable the proxy extension
+## 1. Proxy extension
 
 ```yaml
 configs:
@@ -23,7 +20,7 @@ configs:
     server.enable.proxy.extension: "true"
 ```
 
-## 2. Point the proxy at your backend
+## 2. Proxy target
 
 ```yaml
 configs:
@@ -33,13 +30,9 @@ configs:
       - url: http://ollama.ollama.svc.cluster.local:11434
 ```
 
-The key has to be `extension.config.assistant`. The browser asks for `/extensions/assistant` and that path is compiled into the extension, so a proxy registered under any other name returns 404 on the first question.
+The key must be `extension.config.assistant`, as [Extension name](proxy.md#extension-name) explains. A provider that needs an API key takes a header from a Secret, as described in [API token injection](proxy.md#api-token-injection). The chart does not need the key itself.
 
-For an external provider that needs an API key, keep the key out of `values.yaml` and out of the browser: put it in a labelled Secret and have the proxy inject the header - see [Injecting the API token](proxy.md#injecting-the-api-token). With that approach the chart never sees the token, so you do not set `configs.secret.extra` at all.
-
-## 3. Grant RBAC
-
-Users need `invoke` on the `assistant` extension, and read access to the Application they are asking about. `role:readonly` covers the second part.
+## 3. RBAC
 
 ```yaml
 configs:
@@ -49,9 +42,9 @@ configs:
       p, role:readonly, extensions, invoke, assistant, allow
 ```
 
-## 4. Install the extension
+Add the `p` line to your existing policy rather than replacing it. `policy.default` gives every user `role:readonly`. Leave it out if you assign roles yourself, as long as each user of the Assistant can invoke the extension and read the Application. [RBAC](proxy.md#rbac) has the details.
 
-The chart's `server.extensions` block creates the installer initContainer and mounts the shared volume into both it and the `argocd-server` container, so there is no volume wiring to get wrong:
+## 4. Extension installer
 
 ```yaml
 server:
@@ -64,13 +57,11 @@ server:
             value: "https://github.com/saidsef/argocd-ai-assistant/releases/download/v<version>/extension-argocd-ai-assistant.tar"
 ```
 
-Defining the initContainer yourself under `server.initContainers` works too, but then the server-side `server.volumeMounts` entry is yours to add - the block above is doing it for you, and a missing server-side mount is the most common reason the tab never appears.
+The chart creates the installer initContainer and mounts its volume into both that container and `argocd-server`. If you define the initContainer yourself under `server.initContainers`, add the server-side `server.volumeMounts` entry too.
 
-## 5. Add the settings extension
+## 5. Settings extension
 
-Optional. Every setting has a default, and a backend serving a single model is fully configured by steps 1 to 4 - the Assistant reads the model name off `/v1/models`. Add this when you want to pin a model, override the system prompt, or configure MCP servers.
-
-The settings arrive as a second extension: a ConfigMap mounted into `argocd-server`. [Settings Extension](settings.md) has the ConfigMap and every field it accepts, this is where you mount it.
+This step is optional. Add it to name a model, replace the prompt or add MCP servers. [Settings extension](settings.md) describes the file, and this mounts it from a ConfigMap that the chart creates:
 
 ```yaml
 server:
@@ -82,11 +73,7 @@ server:
     - name: ai-assistant-settings
       mountPath: /tmp/extensions/resources/argocd-ai-assistant-settings
       readOnly: true
-```
 
-The chart can carry the ConfigMap itself, so the settings are part of the release rather than a separate `kubectl apply`:
-
-```yaml
 extraObjects:
   - apiVersion: v1
     kind: ConfigMap
@@ -95,20 +82,13 @@ extraObjects:
     data:
       extension-settings.js: |
         globalThis.argocdAssistantSettings = {
-            model: "your-model"
+            model: "<model-name>"
         };
-        (() => { console.log("Argo CD AI Assistant settings loaded"); })();
 ```
 
-## Worked values files
+## Example values files
 
-| File | What it is |
-|------|------------|
-| [`examples/argo-cd-values.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/argo-cd-values.yaml) | the five blocks assembled, ready for `helm -f` |
-| [`examples/kind/helm-values.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/kind/helm-values.yaml) | the same, pointed at a mock LLM, applied by the [kind harness](local-testing.md) on every run |
-
-## Next steps
-
-- [Settings Extension](settings.md) - pin a model, change the prompt, add MCP servers
-- [Proxy & Backend Configuration](proxy.md) - other backends, API token injection, TLS
-- [Verification & Troubleshooting](verification.md) - confirm it loaded and answers
+| File | Contents |
+|---|---|
+| [`examples/argo-cd-values.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/argo-cd-values.yaml) | All five steps, ready for `helm -f` |
+| [`examples/kind/helm-values.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/kind/helm-values.yaml) | The same steps pointed at a mock LLM, with an API key header and longer timeouts, used by the [kind harness](local-testing.md) |
