@@ -141,9 +141,12 @@ describe("DEFAULT_SYSTEM_PROMPT", () => {
 
     it("makes each rule checkable rather than an adjective", () => {
         // A model can satisfy "be accurate" while filling gaps with defaults, so the prompt has to
-        // say what unknown means, that uncertainty is an acceptable answer, and that a truncated
-        // attachment is a fragment - the three places a plausible answer gets invented.
-        assert.match(DEFAULT_SYSTEM_PROMPT, /unknown, not default/);
+        // say what a missing field means, that uncertainty is an acceptable answer, and that a
+        // truncated attachment is a fragment - the three places a plausible answer gets invented.
+        // The live manifest is the whole object, so a field missing there is not set, while the
+        // summaries are distilled and a field missing from one says nothing.
+        assert.match(DEFAULT_SYSTEM_PROMPT, /missing from the live manifest is not set/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /missing elsewhere is unknown/);
         assert.match(DEFAULT_SYSTEM_PROMPT, /Say when you cannot tell/);
         assert.match(DEFAULT_SYSTEM_PROMPT, /\[truncated: \.\.\.\]/);
         assert.match(DEFAULT_SYSTEM_PROMPT, /Never claim to have run a command/);
@@ -156,13 +159,23 @@ describe("DEFAULT_SYSTEM_PROMPT", () => {
         assert.match(DEFAULT_SYSTEM_PROMPT, /General Argo CD and Kubernetes behaviour may come from your own knowledge/);
     });
 
-    it("puts the answer first and keeps it to the question", () => {
-        // "Lead with the answer" alone still let a model open with one line and then walk through
-        // every field it read and answer questions nobody asked, so each habit is named.
-        assert.match(DEFAULT_SYSTEM_PROMPT, /first sentence answers the question/);
+    it("gives every reply the same shape and length", () => {
+        // Advice such as "lead with the answer" let each model fill the rest its own way, from a
+        // few sentences to headed reports. A fixed shape and a word limit hold them to one form.
+        assert.match(DEFAULT_SYSTEM_PROMPT, /Every reply has this shape and nothing more/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /One sentence that answers the question/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /Up to three bullets of evidence/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /Stay under 120 words/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /No headings, bold/);
+    });
+
+    it("keeps the reply to the question", () => {
+        // In live comparisons, half the reasoning errors sat in asides the question did not ask
+        // for, so each kind is named and a caveat has to rest on something the context shows.
         assert.match(DEFAULT_SYSTEM_PROMPT, /Answer only what was asked/);
-        assert.match(DEFAULT_SYSTEM_PROMPT, /pose and answer your own follow-up questions/);
-        assert.match(DEFAULT_SYSTEM_PROMPT, /cite only the field, condition or event it rests on/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /what-if scenarios, unrequested fixes or follow-up questions of your own/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /only when the context shows a problem/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /Draw no conclusion about the cluster/);
     });
 
     it("names the manifest as the live object, not the desired state", () => {

@@ -255,7 +255,10 @@ Do not output a <tool> block or any tool-call JSON: nothing will execute it and 
 }
 
 // Stated with the results, since this is where a fabricated fact can arrive with a tool's authority.
-const RESULTS_RULE = "Answer from tool results and the context already provided. Use only what the results contain - do not extrapolate. If they do not answer the question, say so.";
+// A paraphrase is where a fetched page gets misstated, so the model quotes the sentence it relies on.
+export const QUOTE_RULE = "Quote the sentence that answers the question rather than paraphrasing it.";
+
+const RESULTS_RULE = `Answer from tool results and the context already provided. Use only what the results contain - do not extrapolate. If they do not answer the question, say so. ${QUOTE_RULE}`;
 
 // The persona accepts "the context does not show this" as an answer, which a short reply reaches for
 // even when an attached tool could supply the missing value, such as the current time.
@@ -307,7 +310,7 @@ export function toolErrorNote(name: string, error: string): string {
 /** The user message that hands text-protocol tool results back to the model. */
 export function resultsNote(notes: string[]): string {
     const plural = notes.length > 1;
-    return `${notes.join("\n\n")}\n\n${DATA_RULE} Answer the original question from ${plural ? "these results" : "this result"} and the context already provided. Use only what ${plural ? "they contain" : "it contains"} - do not extrapolate. If ${plural ? "they do" : "it does"} not answer the question, say so.`;
+    return `${notes.join("\n\n")}\n\n${DATA_RULE} Answer the original question from ${plural ? "these results" : "this result"} and the context already provided. Use only what ${plural ? "they contain" : "it contains"} - do not extrapolate. If ${plural ? "they do" : "it does"} not answer the question, say so. ${QUOTE_RULE}`;
 }
 
 // Bound on the server-supplied error text in a failure notice. Enough for "HTTP 503" or a short
