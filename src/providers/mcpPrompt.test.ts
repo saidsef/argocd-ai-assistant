@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { McpServerStatus } from "../model/provider";
-import { clean, deriveHandle, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, resolveHandles, serverHandles, toolFailureNotice, toolPrompt } from "./mcpPrompt";
+import { clean, deriveHandle, FILL_GAP_RULE, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, resolveHandles, serverHandles, toolFailureNotice, toolPrompt } from "./mcpPrompt";
 import type { McpTool } from "./mcpClient";
 
 describe("toolFailureNotice", () => {
@@ -51,6 +51,14 @@ describe("toolPrompt", () => {
         assert.doesNotMatch(text, /Available tools:|Arguments schema|<tool/);
         assert.match(text, /At most 3 tools will run/);
         assert.match(text, /do not extrapolate/);
+    });
+
+    it("tells the model to call a tool before reporting a gap it could fill, in both modes", () => {
+        // Under the short-answer rules, a model with a clock tool attached sometimes answered that
+        // the context had no current time instead of calling the tool.
+        for (const mode of ["text", "native"] as const) {
+            assert.ok(toolPrompt(two, () => "docs", 3, mode).includes(FILL_GAP_RULE), mode);
+        }
     });
 });
 

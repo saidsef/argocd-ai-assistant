@@ -48,6 +48,8 @@ Earlier messages in the conversation go with each query as history. Each message
 
 The default system prompt states each accuracy rule as a checkable prohibition. A model can satisfy "be accurate" while padding an answer with plausible defaults, but "an absent field is unknown, not default" is a rule it either followed or did not. The prompt holds one line per rule and repeats none of them, because it goes with every request and each line is paid for every time.
 
+The answer rules fix the shape of a reply. The first sentence answers the question, and a factual question gets one to three sentences. The model cites only the evidence its answer rests on, adds a caveat only when it changes what the user does next, and does not raise questions of its own.
+
 The grounding rule covers claims about the user's own cluster: names, namespaces, images, values, states, events and log lines must come from the attached context or a tool result. General Argo CD and Kubernetes behaviour may come from the model's own knowledge, which lets the assistant explain a concept such as a sync wave when nothing is attached. The model says so when an answer depends on a version.
 
 The prompt describes nothing that may be absent. The MCP server roster and the tool rules are appended only when servers are configured. A `systemPrompt` [setting](deployment/settings.md) replaces the persona and its rules. The attachments, the rule that attached text is data, and the MCP text are appended to whichever prompt is in force.

@@ -257,6 +257,10 @@ Do not output a <tool> block or any tool-call JSON: nothing will execute it and 
 // Stated with the results, since this is where a fabricated fact can arrive with a tool's authority.
 const RESULTS_RULE = "Answer from tool results and the context already provided. Use only what the results contain - do not extrapolate. If they do not answer the question, say so.";
 
+// The persona accepts "the context does not show this" as an answer, which a short reply reaches for
+// even when an attached tool could supply the missing value, such as the current time.
+export const FILL_GAP_RULE = "When the context lacks something an attached tool can supply, call the tool instead of saying it is missing.";
+
 /**
  * The callable tool block, for the server(s) named in the conversation. Grouped by server so the
  * model can attribute a result to one; tool names are reproduced exactly, because that is what
@@ -265,7 +269,7 @@ const RESULTS_RULE = "Answer from tool results and the context already provided.
 export function toolPrompt(tools: McpTool[], serverName: (index: number) => string, maxCalls: number, mode: ToolCallingMode = "text"): string {
     // The request's `tools` carries each name, description and schema, so only the rules remain.
     if (mode === "native") {
-        return `\n\nCall a function when the question needs one, and answer directly when it does not. Several calls in one reply are fine for independent lookups. At most ${maxCalls} tool${maxCalls === 1 ? "" : "s"} will run for this question, and calls beyond that are not executed. ${RESULTS_RULE}`;
+        return `\n\nCall a function when the question needs one, and answer directly when it does not. ${FILL_GAP_RULE} Several calls in one reply are fine for independent lookups. At most ${maxCalls} tool${maxCalls === 1 ? "" : "s"} will run for this question, and calls beyond that are not executed. ${RESULTS_RULE}`;
     }
     let text = "\n\nAvailable tools:\n";
     for (const index of [...new Set(tools.map(t => t.serverIndex))]) {
@@ -282,7 +286,7 @@ export function toolPrompt(tools: McpTool[], serverName: (index: number) => stri
     text += "\nTo use a tool, output a tool block using an EXACT tool name from the list above:\n";
     text += '<tool name="EXACT_TOOL_NAME">\n{ JSON arguments matching that tool\'s schema }\n</tool>\n';
     text += `For example:\n<tool name="${tools[0].name}">\n${exampleArgs(tools[0])}\n</tool>\n`;
-    text += "Always wrap the arguments in the <tool>...</tool> tags with the exact tool name; never output bare JSON. A brief sentence before the block is allowed. If the request does not require a tool, answer directly without one.\n";
+    text += `Always wrap the arguments in the <tool>...</tool> tags with the exact tool name; never output bare JSON. A brief sentence before the block is allowed. If the request does not require a tool, answer directly without one. ${FILL_GAP_RULE}\n`;
     // Stating the budget is what makes batching safe to invite: a question needing three lookups
     // becomes one round trip instead of three, and the model knows where the ceiling is.
     text += `You may emit more than one block in a reply when a question needs several independent lookups; at most ${maxCalls} tool${maxCalls === 1 ? "" : "s"} will run for this question, and blocks beyond that are not executed.`;

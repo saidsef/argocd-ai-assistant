@@ -156,6 +156,15 @@ describe("DEFAULT_SYSTEM_PROMPT", () => {
         assert.match(DEFAULT_SYSTEM_PROMPT, /General Argo CD and Kubernetes behaviour may come from your own knowledge/);
     });
 
+    it("puts the answer first and keeps it to the question", () => {
+        // "Lead with the answer" alone still let a model open with one line and then walk through
+        // every field it read and answer questions nobody asked, so each habit is named.
+        assert.match(DEFAULT_SYSTEM_PROMPT, /first sentence answers the question/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /Answer only what was asked/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /pose and answer your own follow-up questions/);
+        assert.match(DEFAULT_SYSTEM_PROMPT, /cite only the field, condition or event it rests on/);
+    });
+
     it("names the manifest as the live object, not the desired state", () => {
         assert.match(DEFAULT_SYSTEM_PROMPT, /"Live manifest" is the object in the cluster, not the desired state/);
     });
@@ -169,8 +178,8 @@ describe("DEFAULT_SYSTEM_PROMPT", () => {
 
     it("stays short enough to be worth sending on every request", () => {
         // A guard against the rules growing back into prose, not a tuned budget: the whole point of
-        // one line per rule is that it does not creep. Roughly 500 tokens.
-        assert.ok(DEFAULT_SYSTEM_PROMPT.length < 2000, `prompt is ${DEFAULT_SYSTEM_PROMPT.length} chars`);
+        // one line per rule is that it does not creep. Roughly 600 tokens.
+        assert.ok(DEFAULT_SYSTEM_PROMPT.length < 2400, `prompt is ${DEFAULT_SYSTEM_PROMPT.length} chars`);
     });
 });
 
