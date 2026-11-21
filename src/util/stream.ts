@@ -43,9 +43,8 @@ export async function* readLines(
  * The payload of an SSE `data:` line, or null for anything else (comments, `event:`, blank lines,
  * and the terminal `[DONE]` sentinel).
  *
- * The space after the colon is optional in the SSE grammar, so matching `"data: "` literally - as
- * every hand-rolled parser here used to - silently yields an empty *successful* reply against a
- * backend that emits `data:{...}`.
+ * The space after the colon is optional in the SSE grammar. A backend that sends `data:{...}` must
+ * parse as well. See #119.
  */
 export function sseData(line: string): string | null {
     if (!line.startsWith("data:")) return null;

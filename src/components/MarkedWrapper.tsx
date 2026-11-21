@@ -4,12 +4,8 @@ import { marked } from "marked";
 import { ABSOLUTE_URI, keepClass, SANITIZE_CONFIG } from "./sanitize";
 import { copyText, useCopyState } from "./useCopy";
 
-// Post-sanitise hardening, applied to every node:
-//  - drop any class that is not a fenced-block language token (see keepClass in ./sanitize);
-//  - open *external* assistant links in a new tab with rel hardening. Same-origin links (an Argo CD
-//    deep link like /applications/foo, or a #fragment) stay in the tab, which is where the user
-//    expects the console to navigate. target/rel are set only here and are not allow-listed in
-//    SANITIZE_CONFIG, so model output can neither supply nor override them.
+// Same-origin links stay in the tab, where the user expects the console to navigate. Only this hook
+// sets `target` and `rel`, because SANITIZE_CONFIG does not allow them in model output.
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     const className = node.getAttribute?.('class');
     if (className != null && !keepClass(node.tagName, className)) {
@@ -33,8 +29,10 @@ const parseMarkdown = (children: React.ReactNode): string => {
     return DOMPurify.sanitize(marked.parse(markdown, { async: false }), SANITIZE_CONFIG);
 };
 
-// While streaming, `children` grows every animation frame; re-parsing the whole answer each time is
-// O(n) per frame. Throttle re-parses to one per THROTTLE_MS, always rendering the final text.
+/**
+ * While a reply streams, `children` grows every animation frame, and each parse covers the whole
+ * answer. Parses run at most once per THROTTLE_MS, and the final text always renders.
+ */
 const THROTTLE_MS = 120;
 
 const MarkedWrapper = ({
@@ -49,8 +47,8 @@ const MarkedWrapper = ({
     const onCopyClick = React.useCallback((e: React.MouseEvent<HTMLDivElement>) => {
         const btn = (e.target as HTMLElement).closest('.code-copy-btn') as HTMLElement | null;
         if (!btn) return;
-        // Resolved from the block, not the button's parent: the button now sits inside an actions
-        // cluster alongside the language label, so parentElement is no longer the wrapper.
+        // Resolved from the block, because the button sits in an actions cluster beside the
+        // language label.
         const code = btn.closest('.code-block')?.querySelector('pre')?.textContent ?? '';
         if (!code) return;
         copyText(code).then((state) => {
@@ -91,12 +89,8 @@ const MarkedWrapper = ({
         return () => clearTimeout(t);
     }, [children]);
 
-    // Wrap each code block with a container, a language label and a copy button, as real DOM after
-    // sanitising.
-    //
-    // This used to be a string replace of <pre> before DOMPurify ran, which forced <button> to stay
-    // in the allow-list and broke outright on model output containing `<pre class="...">` - the
-    // closing tag matched, the opening tag did not, and the stray </div> corrupted the bubble.
+    // The copy controls are built as DOM after sanitising, because the allow-list does not include
+    // <button>. See #119.
     React.useLayoutEffect(() => {
         const root = contentRef.current;
         if (!root) return;

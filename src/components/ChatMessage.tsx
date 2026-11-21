@@ -25,7 +25,7 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
         <div className={`chat-message ${className}`}>
             {textParts.map((part, i) =>
                 isUser
-                    // pre-wrap in CSS: the user's own Shift+Enter newlines used to collapse on submit.
+                    // CSS pre-wrap keeps the newlines the user typed with Shift+Enter.
                     ? <span key={`${message.id}-${i}`}>{part.text}</span>
                     : <MarkedWrapper key={`${message.id}-${i}`}>{part.text}</MarkedWrapper>
             )}
@@ -37,8 +37,7 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
                     type="button"
                     className="chat-message-copy"
                     onClick={onCopy}
-                    // The accessible name always contains the visible label (WCAG 2.5.3), so the two
-                    // never drift the way the code-block button's fixed label used to.
+                    // The accessible name always contains the visible label (WCAG 2.5.3).
                     aria-label={copyState === "copied" ? "Copied message" : copyState === "failed" ? "Copy failed" : "Copy message"}
                 >
                     {copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy"}

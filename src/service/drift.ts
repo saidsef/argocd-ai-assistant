@@ -4,13 +4,13 @@
 import { argocdFetch } from "../util/util";
 import { getGroup } from "./logs";
 
-// Differing fields listed by path. The rest are counted.
+/** Differing fields listed by path. The rest are counted. */
 export const MAX_DRIFT_FIELDS = 30;
 
-// One value in a line. A whole ConfigMap file can sit in a single field.
+/** One value in a line. A whole ConfigMap file can sit in a single field. */
 const MAX_VALUE_CHARS = 300;
 
-// Fields the cluster or a client writes, which say nothing about drift from the source.
+/** Fields the cluster or a client writes, which say nothing about drift from the source. */
 const SKIPPED_PATHS = new Set([
     "status",
     "metadata.managedFields",
@@ -49,13 +49,15 @@ const show = (value: unknown): string => {
 
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
-// The API server leaves a zero value out of the object it stores, so a target `false` or `""` and an
-// absent live field are the same state. Argo CD's own diff treats them as equal.
+/**
+ * A target `false` or `""` and an absent live field are the same state, because the API server
+ * leaves a zero value out of the object it stores. Argo CD's own diff treats them as equal.
+ */
 const isZero = (v: unknown): boolean =>
     v === null || v === false || v === 0 || v === "" ||
     (Array.isArray(v) && v.length === 0) || (isObject(v) && Object.keys(v).length === 0);
 
-// Resource quantities have several spellings of one value, such as "1000m" and "1" for a CPU.
+/** Resource quantities have several spellings of one value, such as "1000m" and "1" for a CPU. */
 const QUANTITY_PATH = /\.(limits|requests|hard)[.[]/;
 const QUANTITY = /^([+-]?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(Ki|Mi|Gi|Ti|Pi|Ei|n|u|m|k|M|G|T|P|E)?$/;
 const SCALE: Record<string, number> = {

@@ -29,7 +29,7 @@ export function getContainers(resource: any): string[] {
     return Array.isArray(containers) ? containers.map((c: any) => c.name) : [];
 }
 
-// Strips managedFields + last-applied-configuration to cut tokens; returns a copy.
+/** A copy of a manifest without managedFields and the last-applied annotation, which only cost tokens. */
 export function stripManifestNoise(resource: any): any {
     if (!resource || typeof resource !== "object" || typeof resource.metadata !== "object" || resource.metadata === null) {
         return resource;
@@ -42,6 +42,7 @@ export function stripManifestNoise(resource: any): any {
     return { ...resource, metadata: restMetadata };
 }
 
+/** A state updater that appends a UI-only message, which never goes to the model. */
 export function injectMessage(
     msg: string,
     role: "user" | "assistant" = "assistant"
@@ -63,10 +64,10 @@ function matchesKeyword(input: string, ...keywords: string[]): boolean {
     return keywords.some((k) => upper.localeCompare(k, undefined, { sensitivity: 'base' }) === 0);
 }
 
-// True when `term` appears as a whole word in `text`, case-insensitive. Unlike matchesKeyword
-// (whole-string equality) this matches an occurrence anywhere in the text, with word boundaries so
-// "docs" matches "hey docs, search" but not "documentation"/"docside". Tolerant of names containing
-// spaces/dots/hyphens (boundary = start/end or any non-alphanumeric char).
+/**
+ * Whether `term` appears anywhere in `text` as a whole word, in any case. "docs" matches "hey docs,
+ * search" but not "documentation". Any character that is not a letter or digit is a boundary.
+ */
 export function containsWord(text: string, term: string): boolean {
     if (!text || !term) return false;
     const esc = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -86,13 +87,9 @@ export function isCancelRequest(input: string): boolean {
 }
 
 /**
- * Read `settings.data.mcpServers` into a checked shape.
- *
- * The setting is hand-written into a ConfigMap and reaches us as `any`; it used to be *cast* to
- * `string[]` at every read site and never checked, so one malformed entry would surface much later
- * as a TypeError inside a query rather than as a missing server. Entries that are neither a
- * non-empty URL string nor an object with a string `url` are dropped, so a bad line costs that one
- * server and nothing else.
+ * Read `settings.data.mcpServers` into a checked shape. The setting is hand-written into a
+ * ConfigMap. An entry that is neither a URL string nor an object with a string `url` is dropped,
+ * and costs that one server only. See #123.
  */
 export function parseMcpServers(raw: unknown): McpServerConfig[] {
     if (!Array.isArray(raw)) return [];
@@ -112,17 +109,15 @@ export function parseMcpServers(raw: unknown): McpServerConfig[] {
     return out;
 }
 
-// MCP is active whenever at least one server is configured in settings.data.mcpServers.
+/** Whether at least one MCP server is configured, which is what turns MCP on. */
 export const mcpConfigured = (servers?: McpServerConfig[]): boolean =>
     Array.isArray(servers) && servers.length > 0;
 
-// One sentence naming the configured MCP servers and how to invoke them, appended to the welcome
-// message. Nothing in the UI used to say that naming a server is what enables its tools - it was
-// documented only in docs/architecture.md, so the feature was effectively undiscoverable.
-//
-// Takes handles, not display names, and renders them as code spans: the point of the sentence is to
-// show a literal string to type, and a code span cannot be broken (or exploited) by whatever
-// punctuation a remote server put in its reported name.
+/**
+ * One sentence for the welcome message that names the configured MCP servers and how to use them.
+ * It shows handles as code spans, because the user types them, and a remote server's punctuation
+ * cannot break a code span. See #123.
+ */
 export function mcpWelcomeHint(handles: string[]): string {
     if (handles.length === 0) return "";
     const list = handles.length === 1
@@ -132,13 +127,15 @@ export function mcpWelcomeHint(handles: string[]): string {
         ` - name one in your message (for example *${handles[0]}, ...*) to use its tools.`;
 }
 
-// Handles of the servers whose entry sets `token: true`, in the order they are configured.
+/** Handles of the servers whose entry sets `token: true`, in the order they are configured. */
 export function tokenServerHandles(servers: McpServerConfig[], status: Array<{ handle: string }>): string[] {
     return servers.flatMap((s, i) => (s.token ? [status[i]?.handle || s.name || `server ${i + 1}`] : []));
 }
 
-// The message that opens the token flow, naming the servers that will receive the token, or why the
-// flow cannot open. A server receives the token only when its entry sets `token: true`.
+/**
+ * The message that opens the token flow and names each server that will receive a token. When no
+ * entry sets `token: true`, it says why the flow cannot open.
+ */
 export function tokenPromptMessage(handles: string[]): string {
     if (handles.length === 0) {
         return "None of the configured MCP servers accepts an Argo CD token, so I have nowhere to send one. An administrator can add `token: true` to a server's entry in `data.mcpServers`.";
@@ -147,25 +144,23 @@ export function tokenPromptMessage(handles: string[]): string {
     return `Please enter your Argo CD token. I will send it only to ${handles.length === 1 ? "the MCP server" : "the MCP servers"} ${list}.`;
 }
 
-// Normalise a token into an Authorization header value: accept a raw token or one already
-// prefixed with "Bearer ". Shared by the LLM and MCP request paths. The prefix test is
-// case-insensitive because the scheme is (RFC 7235) - a token pasted as "bearer abc" used to be
-// double-prefixed into "Bearer bearer abc" and rejected by the backend.
+/**
+ * A token as an Authorization header value, with "Bearer " added unless it is already there. The
+ * prefix test ignores case, because the scheme is case-insensitive (RFC 7235). See #119.
+ */
 export const bearer = (token: string): string =>
     /^bearer\s/i.test(token) ? token : `Bearer ${token}`;
 
-// The message of anything thrown, for logs and user-facing errors alike. `catch` binds `unknown`,
-// and every call site needs the same two-line dance to get a string out of it.
+/** The message of anything thrown, for logs and user-facing errors, because `catch` binds `unknown`. */
 export const errorMessage = (err: unknown): string =>
     err instanceof Error ? err.message : String(err);
 
-// Routing headers for every Argo CD request - the same-origin REST API and the proxy extension
-// alike. Both Argocd-* headers are always emitted: the proxy rejects a request that omits either
-// (400 `header "Argocd-Project-Name" must be provided`), so there is nothing to gain by dropping an
-// empty one. `extra` carries the per-call Content-Type/Accept, which differ between the JSON API
-// paths and the streaming chat POST. Origin is a forbidden header name - fetch() silently drops any
-// attempt to set it - so it is omitted; the proxy authenticates via the argocd.token cookie.
-// HTTP header names are case-insensitive, so the title-case here matches the lowercase form too.
+/**
+ * Routing headers for every Argo CD request, to the REST API and the proxy extension alike. Both
+ * Argocd-* headers are always sent, because the proxy rejects a request without either. `extra`
+ * carries the Content-Type and Accept of each call. A page cannot set Origin, and the proxy
+ * authenticates with the argocd.token cookie instead.
+ */
 export function argocdHeaders(application: any, extra?: Record<string, string>): Record<string, string> {
     const namespace = application?.metadata?.namespace || "";
     const name = application?.metadata?.name || "";
@@ -176,32 +171,30 @@ export function argocdHeaders(application: any, extra?: Record<string, string>):
     };
 }
 
-// Headers for the same-origin Argo CD REST API (events, logs, applications).
+/** Headers for the same-origin Argo CD REST API, which serves events, logs and applications. */
 export const argocdApiHeaders = (application: any): Record<string, string> =>
     argocdHeaders(application, { "Content-Type": "application/json", "Accept": "application/json" });
 
-// True once an Application carries everything the proxy needs to authorise a request. All three are
-// required: the proxy 400s on an empty namespace/name and 401s when the project does not match the
-// named Application's own project.
+/**
+ * Whether an Application carries the name, namespace and project that the proxy needs. The proxy
+ * returns 400 for an empty name or namespace, and 401 when the project does not match.
+ */
 export const canRouteToProxy = (application: any): boolean =>
     !!application?.metadata?.name && !!application?.metadata?.namespace && !!application?.spec?.project;
 
-// Abort an Argo CD API request that has not completed within this window. argocd-server can stall
-// (a slow repo-server, a wedged cluster cache) and none of these calls used to have a deadline, so
-// the assistant would sit on a spinner - notably the log-fetch flow, which has no cancel button.
+/**
+ * Deadline for an Argo CD API request, because argocd-server can stall on a slow repo-server or a
+ * wedged cluster cache. See #123.
+ */
 const ARGOCD_REQUEST_MS = 30000;
 
 /**
- * GET a same-origin Argo CD API endpoint with this extension's standard auth/routing headers and a
- * deadline. Throws a message naming `what` on timeout or a non-2xx status; returns the Response
- * otherwise (streaming callers still need to check `body`).
+ * GET a same-origin Argo CD API endpoint with the routing headers and a deadline. It throws a
+ * message naming `what` on a timeout or a non-2xx status, and otherwise returns the Response.
  *
- * The timeout covers the body as well as the headers, so a streaming caller must allow for the whole
- * stream (service/logs.ts passes a longer window; its stream is bounded by `follow=false`+`tailLines`).
- *
- * `options.signal` composes with that deadline, so an unmount, a resource switch or a Cancel button
- * actually drops the request rather than leaving it in flight for up to `timeoutMs`. A caller cancel
- * unwinds as an AbortError for the caller to filter; the deadline still becomes the friendly message.
+ * A streaming caller passes a longer `timeoutMs`, because the deadline covers the body as well as
+ * the headers. `options.signal` drops the request when the caller cancels, which unwinds as an
+ * AbortError for the caller to filter.
  */
 export async function argocdFetch(
     url: string,

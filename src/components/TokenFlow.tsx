@@ -3,12 +3,16 @@ import type { ChatMessage } from "./useChat";
 import { injectMessage } from "../util/util";
 import { ManageStorage } from "../util/storage";
 
-// Shared flow states for collecting an Argo CD token (MCP feature). Both the resource-
-// and system-level extensions fold these into their own FlowNode unions.
+/**
+ * Shared flow states for collecting an Argo CD token (MCP feature). Both the resource-
+ * and system-level extensions fold these into their own FlowNode unions.
+ */
 export type TokenFlowNode = "token" | "token_saved" | "token_invalid";
 
-// Store the token (or flag it invalid) and post a status message. Returns the next flow
-// node so the caller can drive its own state machine.
+/**
+ * Store the token, or flag it invalid, and post a status message. It returns the next flow node,
+ * which the caller uses to drive its own state machine.
+ */
 export function submitToken(
     input: string,
     storage: ManageStorage,
@@ -38,7 +42,7 @@ interface TokenPromptProps {
     onSubmit: () => void;
 }
 
-// Password input + Save button shown while collecting the token (states "token" / "token_invalid").
+/** Password input + Save button shown while collecting the token (states "token" / "token_invalid"). */
 export const TokenPrompt = ({ value, onChange, onSubmit }: TokenPromptProps) => {
     const inputRef = React.useRef<HTMLInputElement>(null);
     // Move focus to the field when the prompt appears (mirrors ChatInput); preventScroll avoids a jump.

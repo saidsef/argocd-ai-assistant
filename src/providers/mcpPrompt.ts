@@ -1,41 +1,29 @@
-// Everything MCP contributes to the system prompt.
-//
-// Two distinct blocks, and the difference matters:
-//
-//  - the *roster* lists every configured server for reference. It is present whenever MCP is
-//    configured, so the assistant can answer "which servers are available?" instead of saying its
-//    context contains no information about MCP. Nothing in it is callable.
-//  - the *tool block* lists the tools of the server(s) the user actually named, with schemas and
-//    the calling syntax. Only these can be invoked, and only on this turn.
-//
-// Kept pure and separate from LlmProvider so the wording - which is the entire mechanism here - can
-// be exercised directly.
+// Everything MCP adds to the system prompt. A roster lists every configured server, which the model
+// can describe but not call. A tool block lists the tools of each server the user named, which it
+// can call. See docs/architecture.md#mcp-servers.
 
 import { McpServerStatus, mcpState, ToolCallingMode } from "../model/provider";
 import { capText, DATA_RULE, dataBlock, MAX_MCP_ROSTER_CHARS } from "../util/context";
 import { McpTool } from "./mcpClient";
 import { exampleArgs } from "./toolCall";
 
-// Tool names beyond this are summarised as a count. The count still answers "how many tools does X
-// have?"; listing 200 names on every request would not answer anything the count does not.
+/**
+ * Tool names beyond this are summarised as a count, which answers the same questions as a list of
+ * every name.
+ */
 const MAX_ROSTER_TOOL_NAMES = 20;
 
-// Server names and tool names arrive from a remote `initialize` / `tools/list` response, and the
-// roster puts them in the *system* message of every request - the highest-trust position in the
-// prompt, and one the user has not opted into per-server the way the tool block requires. Strip
-// anything that could restructure the prompt (newlines, control characters) and bound the length.
+/** Bounds for remote-supplied names and errors, which go into the system message of every request. */
 export const MAX_SERVER_NAME_CHARS = 64;
 const MAX_ERROR_CHARS = 200;
 
+/**
+ * A remote-supplied name or message made safe for the prompt. Control characters and newlines
+ * become spaces, because they could restructure the prompt. Backticks go, because a handle is shown
+ * in a code span. `_` stays, because the model must call each tool by its exact name.
+ */
 export function clean(value: string | undefined, max: number): string {
     return (value ?? "")
-        // Control characters and newlines are the injection risk: they would let a remote-supplied
-        // name restructure the prompt it is embedded in. Backticks are stripped because a handle is
-        // rendered as a markdown code span in the welcome bubble and would otherwise close it.
-        //
-        // Nothing else is removed. Underscores in particular must survive: tool names here are the
-        // exact strings the model is told to call and parseToolCall matches on, so mangling
-        // `docs_fetch_docs` into `docsfetchdocs` would advertise a name that can never work.
         .replace(/[\p{C}\s]+/gu, " ")
         .replace(/`/g, "")
         .trim()
@@ -46,9 +34,8 @@ export function clean(value: string | undefined, max: number): string {
  * The host of a configured server URL. Never the URL itself, which may carry `user:pass@` or a
  * query token and is shown to the user and sent to the model.
  *
- * Falls back through a scheme-less retry (`docs.example.com/mcp` is a plausible thing to configure)
- * and then a hand-rolled host extraction, because the previous `catch { return url }` handed back
- * the very string this function exists to avoid.
+ * A URL without a scheme, such as `docs.example.com/mcp`, is parsed again with `https://`, and one
+ * that still fails falls back to a hand-rolled host extraction. See #123.
  */
 export function hostnameOf(url: string): string {
     for (const candidate of [url, `https://${url}`]) {
@@ -70,16 +57,20 @@ function hostPortOf(url: string): string {
     }
 }
 
-// Words that identify no particular server. Dropped while deriving a handle so `docs-mcp-server`
-// becomes `docs` rather than `docs-mcp-server`, and so a bare `api.example.com` yields nothing
-// distinctive and falls back to its hostname instead of turning "api" into an invocation.
+/**
+ * Words that do not identify a particular server. Deriving a handle drops them, which turns
+ * `docs-mcp-server` into `docs`. A bare `api.example.com` then falls back to its hostname rather
+ * than turning "api" into an invocation.
+ */
 const FILLER = new Set([
     "mcp", "server", "servers", "service", "services", "svc", "api", "apis",
     "tool", "tools", "www", "http", "https", "local", "internal", "cluster", "default",
 ]);
 
-// A handle has to survive containsWord as a whole word, and short words collide with ordinary Argo
-// CD questions ("the api server is failing").
+/**
+ * A handle has to survive containsWord as a whole word, and short words collide with ordinary Argo
+ * CD questions ("the api server is failing").
+ */
 const MIN_HANDLE_CHARS = 4;
 
 /**
@@ -168,20 +159,18 @@ export function serverHandles(status: Pick<McpServerStatus, "handle" | "name" | 
 
 /**
  * The reference list of configured MCP servers, appended to the system prompt whenever any are
- * configured - addressed or not.
+ * configured, whether or not the user named one.
  *
- * `addressed` holds the server indices whose tools are callable this turn; their tool names are
- * omitted here because the tool block below repeats them in full with schemas, and two lists of the
- * same names invites the model to treat the wrong one as authoritative.
+ * `addressed` holds the indices of the servers whose tools are callable this turn. Their tool names
+ * are left out here, because the tool block repeats them with schemas. Two lists of the same names
+ * invite the model to trust the wrong one.
  */
 export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addressed: Set<number>, mode: ToolCallingMode = "text"): string {
     if (servers.length === 0) return "";
 
     const lines = servers.map((s, i) => {
-        // The handle leads the line, because it is the string the user types and the string the
-        // assistant must quote back at them. The reported name and host follow only when they add
-        // something, so a server whose handle was shortened (or pushed to its hostname by a
-        // collision) is still identifiable.
+        // The handle leads the line, because users type it and the assistant quotes it. A reported
+        // name or host that differs follows it, which keeps a shortened handle identifiable.
         const name = clean(s.name, MAX_SERVER_NAME_CHARS);
         const host = clean(hostnameOf(s.url), MAX_SERVER_NAME_CHARS);
         const shownName = name === s.handle ? "" : name;
@@ -220,18 +209,16 @@ export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addresse
         ? "\n\nMCP servers configured for this conversation. Each is addressed by the name at the start of its line:\n"
         : "\n\nMCP servers configured for this conversation, each addressed by the name at the start of its line (reference only - no tool can be called in this reply):\n";
 
-    // The cap bounds the *list* - the part that grows with the deployment. Capping the block as a
-    // whole kept the start, so a large enough deployment silently dropped the guidance off the end,
-    // losing exactly the instructions that stop the model emitting an uncallable tool block.
+    // Only the list is capped, because it grows with each deployment, and the guidance after it
+    // must survive. See #132.
     return capText(header + lines.join("\n"), MAX_MCP_ROSTER_CHARS, "the MCP server list") + "\n" + guidance(anyAddressed, mode);
 }
 
-// The "complete set" sentence used to live in DEFAULT_SYSTEM_PROMPT, where it was sent even by
-// deployments with no MCP at all - describing an attachment that was not there. It belongs with the
-// list it describes, which is emitted only when servers are configured, and it now survives a
-// `systemPrompt` override (which previously discarded it).
-// The condition on *when* to use the list is as load-bearing as the completeness claim: stated
-// without it, the model opened every reply with the inventory regardless of the question. See #132.
+/**
+ * Sent with the list rather than in DEFAULT_SYSTEM_PROMPT. Deployments without MCP then never see
+ * it, and a `systemPrompt` override keeps it. The second sentence stops the model reciting the list
+ * in every reply. See #132.
+ */
 const COMPLETE_SET = `This list is complete: when the user asks about MCP, answer from it in prose - which servers exist, their state and which tools they expose - and never say you have no information about MCP. When they ask anything else, do not recite it: no preamble, aside or closing note about which servers are attached or how many tools they have.`;
 
 function guidance(anyAddressed: boolean, mode: ToolCallingMode): string {
@@ -254,20 +241,25 @@ Do not output a <tool> block or any tool-call JSON: nothing will execute it and 
 - If answering needs a tool, ask the user to include that server's name - exactly as written at the start of its line above - in their next message, then answer as far as you can without it.`;
 }
 
-// Stated with the results, since this is where a fabricated fact can arrive with a tool's authority.
-// A paraphrase is where a fetched page gets misstated, so the model quotes the sentence it relies on.
+/**
+ * Stated with the results, because that is where a fabricated fact can arrive with a tool's
+ * authority. A paraphrase can misstate a fetched page, which is why the model quotes the sentence
+ * it relies on.
+ */
 export const QUOTE_RULE = "Quote the sentence that answers the question rather than paraphrasing it.";
 
 const RESULTS_RULE = `Answer from tool results and the context already provided. Use only what the results contain - do not extrapolate. If they do not answer the question, say so. ${QUOTE_RULE}`;
 
-// The persona accepts "the context does not show this" as an answer, which a short reply reaches for
-// even when an attached tool could supply the missing value, such as the current time.
+/**
+ * The persona accepts "the context does not show this" as an answer. A short reply reaches for it
+ * even when an attached tool could supply the missing value, such as the current time.
+ */
 export const FILL_GAP_RULE = "When the context lacks something an attached tool can supply, call the tool instead of saying it is missing.";
 
 /**
- * The callable tool block, for the server(s) named in the conversation. Grouped by server so the
- * model can attribute a result to one; tool names are reproduced exactly, because that is what
- * parseToolCall matches on.
+ * The callable tool block, for the server(s) named in the conversation. Grouping by server lets the
+ * model attribute a result to one. Tool names are reproduced exactly, because parseToolCall matches
+ * on them.
  */
 export function toolPrompt(tools: McpTool[], serverName: (index: number) => string, maxCalls: number, mode: ToolCallingMode = "text"): string {
     // The request's `tools` carries each name, description and schema, so only the rules remain.
@@ -313,8 +305,10 @@ export function resultsNote(notes: string[]): string {
     return `${notes.join("\n\n")}\n\n${DATA_RULE} Answer the original question from ${plural ? "these results" : "this result"} and the context already provided. Use only what ${plural ? "they contain" : "it contains"} - do not extrapolate. If ${plural ? "they do" : "it does"} not answer the question, say so. ${QUOTE_RULE}`;
 }
 
-// Bound on the server-supplied error text in a failure notice. Enough for "HTTP 503" or a short
-// server message; a returned HTML error page does not become the reply.
+/**
+ * Bound on the server-supplied error text in a failure notice. It fits a short message, but not a
+ * whole HTML error page.
+ */
 export const MAX_NOTICE_DETAIL_CHARS = 200;
 
 /**

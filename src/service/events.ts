@@ -1,15 +1,14 @@
-// Curated, token-efficient view of a resource's Kubernetes events - the essence of
-// `kubectl get events`. Dumping raw core/v1 Events wastes tokens on managedFields, a full
-// involvedObject ref and several overlapping timestamps, and buries the signal a reviewer wants:
-// what happened, how often, over what window, to which container, reported by what. This distils
-// each event to that signal and caps the list to the most recent `max`.
+// A compact view of a resource's Kubernetes events, like `kubectl get events`. Each event keeps what
+// happened, how often, over what window, to which container and who reported it.
 
 import { capText } from "../util/context";
 
 export const MAX_EVENTS = 20;
 
-// An event `message` is free text with no length limit (a failed admission webhook can return
-// kilobytes), so cap the longest ones individually rather than letting one event crowd out the rest.
+/**
+ * An event `message` is free text without a length limit, and a failed admission webhook can return
+ * kilobytes. Each message is capped so that one event cannot crowd out the rest.
+ */
 const MAX_MESSAGE_CHARS = 1000;
 
 interface EventSummary {
@@ -30,21 +29,28 @@ interface EventsSummary {
     items: EventSummary[];
 }
 
-// Best-effort recency key. Argo CD returns core/v1 Events whose timestamps are RFC3339 strings,
-// which sort lexicographically in chronological order, so a plain string compare orders them
-// correctly without parsing. Falls back through the timestamp fields an Event may carry.
+/**
+ * Best-effort recency key. Argo CD returns core/v1 Events with RFC3339 timestamps, which sort
+ * chronologically as plain strings without parsing. It falls back through the timestamp fields an
+ * Event may carry.
+ */
 function recencyKey(e: any): string {
     return e?.lastTimestamp || e?.eventTime || e?.metadata?.creationTimestamp || e?.firstTimestamp || "";
 }
 
-// Without this a multi-container pod yields several indistinguishable "Container created" events.
+/**
+ * The container an event concerns, which tells apart the "Container created" events of a
+ * multi-container pod.
+ */
 function containerOf(obj: any): string | undefined {
     const match = /\{([^}]+)\}/.exec(typeof obj?.fieldPath === "string" ? obj.fieldPath : "");
     return match?.[1] || undefined;
 }
 
-// Distil a list of Kubernetes events into a compact, most-recent-first summary. Pure and defensive:
-// tolerates missing fields and a non-array input, and never throws.
+/**
+ * Kubernetes events distilled into a compact summary, newest first. It tolerates missing fields and
+ * a non-array input, and never throws.
+ */
 export function summariseEvents(items: any[], max: number = MAX_EVENTS): EventsSummary {
     const all = Array.isArray(items) ? items : [];
     // Copy before sorting so the caller's array is not mutated; newest first.

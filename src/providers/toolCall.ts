@@ -1,10 +1,11 @@
 // Accepted tool-call shapes: see docs/architecture.md#tool-call-formats.
+
 const BAR = "[|｜]";
 const SENTINEL_BODY_MAX = 32;
-// DeepSeek puts a space after the sentinel: `<｜｜DSML｜｜ invoke name="x">`.
+/** DeepSeek puts a space after the sentinel: `<｜｜DSML｜｜ invoke name="x">`. */
 const SENTINEL = `(?:${BAR}{1,2}[^\\s<>"|｜]{0,${SENTINEL_BODY_MAX}}${BAR}{1,2} ?)?`;
 
-// `tool` is the prompted tag. DeepSeek's native `invoke` sits in a `function_calls` or `calls` tag.
+/** `tool` is the prompted tag. DeepSeek's native `invoke` sits in a `function_calls` or `calls` tag. */
 const CALL_TAG = "(?:tool|invoke)";
 const WRAPPER_TAG = "(?:function_calls|calls)";
 
@@ -20,7 +21,7 @@ export const MAX_TOOL_MARKER = "<".length + 2 + SENTINEL_BODY_MAX + 2 + " ".leng
 /** Regex source for a string that may still grow into a TOOL_MARKER as more text streams in. */
 export const PARTIAL_TOOL_MARKER = `^<(?:${BAR}{1,2}[^\\s<>"|｜]{0,${SENTINEL_BODY_MAX}}(?:${BAR}{1,2} ?)?)?[a-z_]*$`;
 
-// One element per argument, where `string="true"` marks a raw string and anything else is JSON.
+/** One element per argument, where `string="true"` marks a raw string and anything else is JSON. */
 const PARAM = new RegExp(`<${SENTINEL}parameter\\s+name="([^"]+)"([^>]*)>([\\s\\S]*?)</${SENTINEL}parameter>`, "g");
 const STRAY_PARAM = new RegExp(`</?${SENTINEL}parameter\\b[^>]*>`, "g");
 
@@ -64,7 +65,7 @@ export function parseToolCalls(text: string, tools?: ToolSpec[]): ToolCall[] {
     return bare ? [bare] : [];
 }
 
-// The body of a call block: JSON, or the native form's `parameter` elements.
+/** The body of a call block: JSON, or the native form's `parameter` elements. */
 function parseArguments(body: string): any {
     const args: Record<string, any> = {};
     let named = false;
@@ -94,7 +95,7 @@ export function parseToolCall(text: string, tools?: ToolSpec[]): ToolCall | null
     return parseToolCalls(text, tools)[0] ?? null;
 }
 
-// The model emitted a bare or fenced JSON object instead of the <tool> wrapper.
+/** The model emitted a bare or fenced JSON object instead of the <tool> wrapper. */
 function parseBareJsonCall(text: string, tools?: ToolSpec[]): ToolCall | null {
     const json = extractJsonObject(text);
     if (!json || typeof json.value !== "object") return null;
@@ -122,7 +123,7 @@ function parseBareJsonCall(text: string, tools?: ToolSpec[]): ToolCall | null {
     return null;
 }
 
-// The first brace-balanced JSON object in `text` and the index just past it, or null.
+/** The first brace-balanced JSON object in `text` and the index just past it, or null. */
 export function extractJsonObject(text: string): { value: any; end: number } | null {
     const start = text.indexOf("{");
     if (start < 0) return null;
@@ -150,7 +151,7 @@ export function extractJsonObject(text: string): { value: any; end: number } | n
     return null;
 }
 
-// True when every provided arg key is a known schema property and all required props are set.
+/** True when every provided arg key is a known schema property and all required props are set. */
 export function argsFitSchema(keys: string[], schema: any): boolean {
     if (keys.length === 0) return false;
     const props = schemaProperties(schema);
@@ -161,7 +162,7 @@ export function argsFitSchema(keys: string[], schema: any): boolean {
     return required.every(r => keys.includes(r));
 }
 
-// A minimal example arguments object for the prompt, derived from a tool's schema.
+/** A minimal example arguments object for the prompt, derived from a tool's schema. */
 export function exampleArgs(tool: ToolSpec): string {
     const schema = tool.inputSchema;
     const props = schemaProperties(schema) ?? {};
@@ -175,7 +176,7 @@ export function exampleArgs(tool: ToolSpec): string {
     return JSON.stringify(obj);
 }
 
-// A schema's `properties` map, or null when the schema declares none.
+/** A schema's `properties` map, or null when the schema does not declare any. */
 function schemaProperties(schema: any): Record<string, any> | null {
     const props = schema?.properties;
     if (!props || typeof props !== "object") return null;
