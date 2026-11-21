@@ -1,101 +1,90 @@
 # Local end-to-end testing with kind
 
-This directory spins up a local [kind](https://kind.sigs.k8s.io/) cluster, installs
-Argo CD using each of the documented deployment methods, installs the **Argo CD AI
-Assistant** extension built from the local source, wires it to an in-cluster **mock
-OpenAI-compatible LLM**, and verifies the whole path end to end - including a real
-request through the Argo CD proxy extension that streams a completion back.
-
-It exists so you can prove a change actually deploys and works before cutting a
-release, without needing a GPU, a real LLM, or any external hosting.
-
-## What gets verified
-
-`verify.sh` runs nine checks against a live `argocd-server`:
-
-1. the installer initContainer downloaded and extracted the extension tar
-2. the extension bundle is present at `/tmp/extensions/resources/extensions-argocd-ai-assistant/`
-3. the settings extension is present at `/tmp/extensions/resources/argocd-ai-assistant-settings/`
-4. `argocd-server` serves `/extensions.js` containing the bundle **and** the settings
-5. a sample `Application` exists (required for the proxy's RBAC check)
-6. `POST /extensions/assistant/v1/chat/completions` returns a streamed completion, proving the proxy extension + RBAC + service routing all work
-7. the dedicated labelled Secret `argocd-ai-assistant-secret` reads back with `openai-api-key` at the expected value (read directly from the cluster)
-8. the proxy injected that token as the `Authorization` header via `$argocd-ai-assistant-secret:openai-api-key` - the mock LLM echoes what it received, proving the documented [token-injection path](../../docs/deployment/proxy.md)
-9. `GET /extensions/assistant/v1/models` reports exactly one model, which is what the Assistant falls back on when the settings extension names none
+`setup.sh` creates a [kind](https://kind.sigs.k8s.io/) cluster, installs Argo CD with
+one of the three documented methods, installs the extension built from this working
+tree and runs `verify.sh` against it. A mock LLM in the cluster answers every request.
+The run does not need a GPU, an API key or a release.
 
 ## Prerequisites
 
-- `kind`, `kubectl`, `helm`, `docker` (running), `yarn` + `node`, `python3`, `curl`
-- Internet access (pulls Argo CD manifests, the chart, the installer image, and
-  the `nginx`/`python` images used by the support services)
+`kind`, `kubectl`, `helm`, a running `docker`, `node` with `yarn`, `python3` and `curl`.
+The run downloads Argo CD's manifests, the Helm chart, the operator and container
+images, and needs internet access.
 
 ## Usage
 
 ```bash
-# from the repo root
-./examples/kind/setup.sh raw        # raw Kubernetes manifests
-./examples/kind/setup.sh helm       # community Helm chart (argo/argo-cd)
-./examples/kind/setup.sh operator   # argocd-operator + ArgoCD CR
+./examples/kind/setup.sh raw        # raw manifests
+./examples/kind/setup.sh helm       # argo/argo-cd Helm chart
+./examples/kind/setup.sh operator   # argocd-operator and an ArgoCD resource
 ```
 
-Each run is fully isolated in its own cluster (`argocd-ai-<method>`). Successful
-output ends with `== 9 passed, 0 failed ==`.
+Each method runs in its own cluster, `argocd-ai-<method>`. A successful run ends with
+`== 9 passed, 0 failed ==`.
 
-Useful overrides:
+| Variable | Default | Effect |
+|---|---|---|
+| `CLUSTER` | `argocd-ai-<method>` | kind cluster name |
+| `NS` | `argocd` | Argo CD namespace |
+| `ARGOCD_VERSION` | `stable` | Argo CD branch or tag for the raw method's manifests |
+| `OPERATOR_VERSION` | `v0.18.0` | argocd-operator release for the operator method |
+| `PORT` | `18080` | local port that `verify.sh` forwards to `argocd-server` |
+
+`verify.sh [namespace] [kube-context]` runs the checks on their own against any
+cluster.
+
+## Checks
+
+`verify.sh` checks that:
+
+1. the installer initContainer logged `installed successfully`
+2. the bundle is in `/tmp/extensions/resources/extensions-argocd-ai-assistant/`
+3. the settings file is in `/tmp/extensions/resources/argocd-ai-assistant-settings/`
+4. `/extensions.js` contains the bundle and the settings
+5. a sample Application exists, which the proxy needs to authorise requests
+6. `POST /extensions/assistant/v1/chat/completions` streams a completion through the
+   proxy
+7. the Secret `argocd-ai-assistant-secret` holds the expected `openai-api-key`
+8. the proxy sent that value as the `Authorization` header, which the mock echoes
+9. `GET /extensions/assistant/v1/models` lists exactly one model
+
+## Opening the UI
 
 ```bash
-CLUSTER=my-cluster NS=argocd ARGOCD_VERSION=v3.4.4 ./examples/kind/setup.sh raw
-KEEP=1 ./examples/kind/setup.sh helm     # (reserved) keep cluster after run
-```
-
-## Open the UI manually
-
-```bash
-CTX=kind-argocd-ai-raw   # or -helm / -operator
+CTX=kind-argocd-ai-raw   # or -helm, -operator
 kubectl --context $CTX -n argocd port-forward deploy/argocd-server 8080:8080
-# browse https://localhost:8080  (accept the self-signed cert)
-# user: admin
 kubectl --context $CTX -n argocd get secret argocd-initial-admin-secret \
-  -o jsonpath='{.data.password}' | base64 -d ; echo
-# (operator method: secret is argocd-cluster, key admin.password)
+  -o jsonpath='{.data.password}' | base64 -d; echo
 ```
 
-Open any Application, click a resource, and use the **Assistant** tab.
+Browse to https://localhost:8080 and sign in as `admin`. The operator method keeps the
+password in the `argocd-cluster` Secret under `admin.password`.
 
-## Swap the mock LLM for a real backend
+## A real backend
 
-The mock (`mock-llm/mock-llm.yaml`) just streams a canned OpenAI-style response so
-the path is deterministic. To use a real backend, point `extension.config.assistant`
-at it instead of `http://mock-llm:8000`:
+The mock streams the same reply to every request. To use a real backend, point
+`extension.config.assistant` at it instead of `http://mock-llm:8000`, for example
+`http://ollama.ollama.svc.cluster.local:11434`. An external provider needs its API key
+injected by the proxy, as
+[API token injection](../../docs/deployment/proxy.md#api-token-injection) describes.
 
-- in-cluster Ollama: `http://ollama.ollama.svc.cluster.local:11434`
-- in-cluster vLLM: `http://vllm.vllm.svc.cluster.local:8000`
-- external OpenAI/DeepSeek: route through the proxy with an injected `Authorization`
-  header (see [`docs/deployment/proxy.md`](../../docs/deployment/proxy.md#injecting-the-api-token))
-
-## Tear down
+## Tearing down
 
 ```bash
-kind delete cluster --name argocd-ai-raw
-kind delete cluster --name argocd-ai-helm
-kind delete cluster --name argocd-ai-operator
+kind delete cluster --name argocd-ai-raw   # or -helm, -operator
 ```
 
-## File map
+## Files
 
 | Path | Purpose |
-|------|---------|
-| `setup.sh` | create cluster, build + host tar, deploy mock LLM, install Argo CD via a method, verify |
-| `verify.sh` | the nine end-to-end checks (method-agnostic) |
-| `ext-host.yaml` | nginx serving the locally built tar in-cluster |
-| `mock-llm.yaml` | deterministic OpenAI-compatible mock (SSE streaming) |
-| `settings-configmap.yaml` | the settings extension, mounted into `argocd-server` from a ConfigMap (names no model, so discovery is exercised) |
-| `llm-api-secret.yaml` | dedicated labelled Secret the proxy reads (`$argocd-ai-assistant-secret:openai-api-key`) |
-| `sample-app.yaml` | minimal Application used by the proxy RBAC check |
-| `raw-cm-patch.yaml`, `raw-server-patch.yaml` | raw-method `argocd-cm` + `argocd-server` patches (cmd-params/rbac are inlined in `setup.sh`) |
-| `helm-values.yaml` | Helm values (built-in `server.extensions` block) |
-| `operator-cr.yaml` | ArgoCD custom resource for the argocd-operator |
-
-> The deployment artefacts here are the same ones referenced from
-> [`docs/deployment.md`](../../docs/deployment.md), they have each been verified to
-> pass all nine checks on Argo CD v3.3+/v3.4.
+|---|---|
+| `setup.sh` | Creates the cluster, builds and serves the tar, deploys the mock, installs Argo CD and runs `verify.sh` |
+| `verify.sh` | The nine checks, for any install method |
+| `ext-host.yaml` | nginx serving the locally built tar inside the cluster |
+| `mock-llm.yaml` | OpenAI-compatible mock that streams a fixed reply and echoes the `Authorization` header |
+| `settings-configmap.yaml` | The settings extension without a model, which makes the Assistant ask the backend for one |
+| `llm-api-secret.yaml` | The labelled Secret the proxy reads the API key from |
+| `sample-app.yaml` | A minimal Application for the proxy's authorisation check |
+| `raw-cm-patch.yaml`, `raw-server-patch.yaml` | The `argocd-cm` and `argocd-server` patches for the raw method |
+| `helm-values.yaml` | Values for the Helm method |
+| `operator-cr.yaml` | The ArgoCD resource for the operator method |

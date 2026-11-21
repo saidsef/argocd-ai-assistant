@@ -1,12 +1,10 @@
 # Install with raw manifests
 
-Use this page when you apply Argo CD's own `install.yaml` and patch it. Three ConfigMaps and one Deployment patch.
+Use this page when you apply Argo CD's own `install.yaml`. Steps 1 to 3 change Argo CD's ConfigMaps, and steps 4 and 5 patch the `argocd-server` Deployment. [Applying the changes](#applying-the-changes) gives the commands.
 
-Installing another way? [Argo CD Operator](operator.md) · [Helm chart](helm.md)
+In the snippets, replace `<version>` with a [release](../deployment.md#release-artefacts) and the service URL with your backend.
 
-Replace `<version>` with the [latest release tag](../deployment.md#build-and-package) and `services[].url` with your own backend. [Proxy & Backend Configuration](proxy.md) covers the other backend shapes, API token injection, and the timeouts you can set.
-
-## 1. Enable the proxy extension
+## 1. Proxy extension
 
 ```yaml
 apiVersion: v1
@@ -18,7 +16,7 @@ data:
   server.enable.proxy.extension: "true"
 ```
 
-## 2. Point the proxy at your backend
+## 2. Proxy target
 
 ```yaml
 apiVersion: v1
@@ -32,13 +30,9 @@ data:
     - url: http://ollama.ollama.svc.cluster.local:11434
 ```
 
-The key has to be `extension.config.assistant`. The browser asks for `/extensions/assistant` and that path is compiled into the extension, so a proxy registered under any other name returns 404 on the first question.
+The key must be `extension.config.assistant`, as [Extension name](proxy.md#extension-name) explains. A provider that needs an API key takes a header from a Secret, as described in [API token injection](proxy.md#api-token-injection).
 
-For an external provider that needs an API key, keep the key out of Git and out of the browser: put it in a labelled Secret and have the proxy inject the header - see [Injecting the API token](proxy.md#injecting-the-api-token).
-
-## 3. Grant RBAC
-
-Users need `invoke` on the `assistant` extension, and read access to the Application they are asking about. `role:readonly` covers the second part.
+## 3. RBAC
 
 ```yaml
 apiVersion: v1
@@ -52,9 +46,9 @@ data:
     p, role:readonly, extensions, invoke, assistant, allow
 ```
 
-## 4. Install the extension
+Add the `p` line to your existing policy rather than replacing it. `policy.default` gives every user `role:readonly`. Leave it out if you assign roles yourself, as long as each user of the Assistant can invoke the extension and read the Application. [RBAC](proxy.md#rbac) has the details.
 
-The installer initContainer downloads the tar and extracts it into an `emptyDir`. `argocd-server` can only serve what it extracted if the **same volume is mounted into the server container too**, which is the one step people miss.
+## 4. Extension installer
 
 ```yaml
 apiVersion: apps/v1
@@ -78,8 +72,6 @@ spec:
               mountPath: /tmp/extensions/
       containers:
         - name: argocd-server
-          # The server container must mount the SAME volume to serve the files
-          # the initContainer extracted - without this the extension never loads.
           volumeMounts:
             - name: extensions
               mountPath: /tmp/extensions/
@@ -88,11 +80,11 @@ spec:
           emptyDir: {}
 ```
 
-## 5. Add the settings extension
+The `argocd-server` container's mount is required. Without it, the extension is extracted but never served.
 
-Optional. Every setting has a default, and a backend serving a single model is fully configured by steps 1 to 4 - the Assistant reads the model name off `/v1/models`. Add this when you want to pin a model, override the system prompt, or configure MCP servers.
+## 5. Settings extension
 
-The settings arrive as a second extension: a ConfigMap mounted into `argocd-server`. [Settings Extension](settings.md) has the ConfigMap and every field it accepts, this is where you mount it - the same `argocd-server` patch as step 4, with a second volume and mount:
+This step is optional. Add it to name a model, replace the prompt or add MCP servers. [Settings extension](settings.md) has the ConfigMap, and this adds its volume and mount to the same Deployment:
 
 ```yaml
 spec:
@@ -110,35 +102,29 @@ spec:
             name: argocd-ai-assistant-settings
 ```
 
-A strategic merge patch merges those lists with the ones from step 4, so both volumes and both mounts survive. Apply them as one patch to save a rollout.
+A strategic merge patch merges these lists with those from step 4. Steps 4 and 5 can share one patch file.
 
-## Applying it
+## Applying the changes
 
-Install Argo CD, then patch the three ConfigMaps and the Deployment:
+Save step 2's `data` as `argocd-cm-patch.yaml`, steps 4 and 5 as `argocd-server-patch.yaml`, and the settings ConfigMap as `argocd-ai-assistant-settings.yaml`. Then run:
 
 ```shell
 kubectl -n argocd apply --server-side --force-conflicts \
   -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 
-kubectl -n argocd apply -f settings-configmap.yaml
-kubectl -n argocd patch cm argocd-cm            --type merge     --patch-file cm-patch.yaml
+kubectl -n argocd apply -f argocd-ai-assistant-settings.yaml
+kubectl -n argocd patch cm argocd-cm            --type merge     --patch-file argocd-cm-patch.yaml
 kubectl -n argocd patch cm argocd-cmd-params-cm --type merge -p '{"data":{"server.enable.proxy.extension":"true"}}'
 kubectl -n argocd patch cm argocd-rbac-cm       --type merge -p '{"data":{"policy.default":"role:readonly","policy.csv":"p, role:readonly, extensions, invoke, assistant, allow"}}'
-kubectl -n argocd patch deploy argocd-server    --type strategic --patch-file server-patch.yaml
+kubectl -n argocd patch deploy argocd-server    --type strategic --patch-file argocd-server-patch.yaml
 kubectl -n argocd rollout restart deploy argocd-server
 ```
 
-Tested patch files for the last two, pointed at a mock LLM and with the API token injected from a labelled Secret:
+If the proxy injects an API key, create its Secret before the restart.
+
+The [kind harness](local-testing.md) runs the same commands with these tested files, which point at a mock LLM:
 
 | File | Patches |
-|------|---------|
-| [`examples/kind/raw-cm-patch.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/kind/raw-cm-patch.yaml) | `argocd-cm` - the proxy target |
-| [`examples/kind/raw-server-patch.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/kind/raw-server-patch.yaml) | `argocd-server` - initContainer, both volumes, both mounts |
-
-The [kind harness](local-testing.md) applies them exactly like the commands above on every run.
-
-## Next steps
-
-- [Settings Extension](settings.md) - pin a model, change the prompt, add MCP servers
-- [Proxy & Backend Configuration](proxy.md) - other backends, API token injection, TLS
-- [Verification & Troubleshooting](verification.md) - confirm it loaded and answers
+|---|---|
+| [`examples/kind/raw-cm-patch.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/kind/raw-cm-patch.yaml) | `argocd-cm`, with the proxy target and API key header |
+| [`examples/kind/raw-server-patch.yaml`](https://github.com/saidsef/argocd-ai-assistant/blob/main/examples/kind/raw-server-patch.yaml) | `argocd-server`, with the initContainer and both volumes and mounts |

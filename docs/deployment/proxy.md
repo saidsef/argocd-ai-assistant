@@ -1,21 +1,20 @@
-# Proxy & Backend Configuration
+# Proxy and backend
 
-The Assistant talks to your LLM through the Argo CD **Proxy Extension**, which routes browser traffic through `argocd-server` (avoiding CORS and keeping API keys out of the browser). This page covers where the proxy forwards requests, how to enable it, and the RBAC needed to invoke it.
+The browser sends every LLM request to `/extensions/assistant` on the Argo CD server, and Argo CD's [proxy extension](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/) forwards it to the backend configured here. The API key stays in a Secret on the server. This applies while `data.baseURL` is unset in the [settings](settings.md). With it set, the browser calls that URL directly.
 
-The `extension.config.assistant` block tells the proxy where to forward requests. The value is the same whichever way you install, only its home changes: step 2 of [Operator](operator.md#2-point-the-proxy-at-your-backend), [Helm](helm.md#2-point-the-proxy-at-your-backend) or [raw manifests](raw.md#2-point-the-proxy-at-your-backend).
+## Extension name
 
-!!! important "The name `assistant` is not yours to choose"
-    The browser asks for `/extensions/assistant`, and that path is compiled into the extension rather than read from settings. Three things have to spell it the same way:
+The path `/extensions/assistant` is compiled into the extension. Three places must use the name `assistant`:
 
-    - `extension.config.assistant`, wherever your install method puts it
-    - `assistant` in `p, role:readonly, extensions, invoke, assistant, allow`
-    - `/extensions/assistant`, the path the browser requests
+- the config key `extension.config.assistant`
+- the resource in the RBAC line `p, role:readonly, extensions, invoke, assistant, allow`
+- the path the browser requests, `/extensions/assistant`
 
-    Name the proxy extension after your backend instead and everything looks fine until someone asks a question: the UI loads, the tab appears, and the first request comes back 404.
+A proxy registered under any other name answers every question with a 404.
 
-## Backend examples
+## Backends
 
-Only `services[].url` is required. Point it at anything that speaks the OpenAI API:
+Only `services[].url` is required. The extension appends `/v1/chat/completions` and `/v1/models` to it.
 
 ```yaml
 extension.config.assistant: |
@@ -23,11 +22,9 @@ extension.config.assistant: |
   - url: http://vllm.vllm.svc.cluster.local:8000
 ```
 
-An in-cluster Ollama is `http://ollama.ollama.svc.cluster.local:11434` instead. Both take the plain root - the extension appends `/v1/chat/completions` itself.
+An in-cluster Ollama is `http://ollama.ollama.svc.cluster.local:11434`.
 
-### An external provider
-
-For OpenAI, DeepSeek or anything else off-cluster, keep the traffic on the proxy and have it add the `Authorization` header, so the API key never reaches the browser:
+An external provider needs an `Authorization` header, which the proxy adds from a Secret:
 
 ```yaml
 extension.config.assistant: |
@@ -38,61 +35,26 @@ extension.config.assistant: |
       value: '$argocd-ai-assistant-secret:openai-api-key'
 ```
 
-Each of these providers takes the same header, and serves tool calls on its OpenAI-compatible endpoint:
-
 | Provider | `services[].url` |
 |---|---|
 | OpenAI | `https://api.openai.com` |
 | Anthropic | `https://api.anthropic.com` |
 | DeepSeek | `https://api.deepseek.com` |
 
-Anthropic's compatible endpoint covers chat completions only, so set `model` in the [settings](settings.md) rather than relying on `/v1/models`.
+These providers serve several models. Name one in the `model` [setting](settings.md).
 
-!!! important "Secret value must include the `Bearer` prefix"
-    The `$` prefix is required for Argo CD template injection - without it the value is treated as a literal string. `$argocd-ai-assistant-secret:openai-api-key` is resolved from the `openai-api-key` key of a Secret named `argocd-ai-assistant-secret` - see [Injecting the API token](#injecting-the-api-token) below for how to create it.
+## API token injection
 
-    **The secret value itself must include the `Bearer ` prefix** (e.g. `Bearer <your-api-token>`). The proxy is a generic reverse proxy: it performs raw string substitution and does not inspect, validate, or transform headers. If the secret contains only the token, the proxy forwards `Authorization: <your-api-token>` verbatim, which the LLM backend rejects as malformed. Store the full header value:
-
-    ```
-    Bearer <your-api-token>
-    ```
-
-### Tuning the connection
-
-The proxy has four timeout settings and every one of them has a default, so leave them out until something makes you want them. A model that takes a while to produce its first token is the usual reason - raise `keepAlive` and `idleConnectionTimeout` and the connection survives the wait:
-
-```yaml
-extension.config.assistant: |
-  keepAlive: 360s
-  idleConnectionTimeout: 360s
-  services:
-  - url: http://vllm.vllm.svc.cluster.local:8000
-```
-
-| Key | Default | What it covers |
-|-----|---------|----------------|
-| `connectionTimeout` | 2s | opening the connection to the backend |
-| `keepAlive` | 15s | how long an open connection is held |
-| `idleConnectionTimeout` | 60s | how long an idle connection is kept in the pool |
-| `maxIdleConnections` | 30 | size of that pool |
-
-!!! warning "The browser gives up after 45 seconds of silence"
-    Whatever you set here, the extension aborts a stream that delivers no bytes for 45 seconds and reports `The assistant stopped responding (no data for 45s)`. The limit is compiled in, not a setting. Proxy timeouts govern the connection, so raising them fixes a connection dropped mid-answer - they cannot buy a cold model more than 45 seconds to reach its first token. A backend that slow needs to be kept warm, not waited on.
-
-## Injecting the API token
-
-Argo CD substitutes `$`-prefixed config values from Kubernetes Secrets, so the token never lives in the ConfigMap, `values.yaml`, or the browser. Two forms exist:
+Argo CD replaces a `$`-prefixed config value with a value from a Secret:
 
 | Reference | Resolves from |
-|-----------|---------------|
-| `$key` | the built-in `argocd-secret` |
-| `$secret-name:key` | a **separate Secret** named `secret-name` carrying the label `app.kubernetes.io/part-of: argocd` |
+|---|---|
+| `$key` | the `argocd-secret` Secret |
+| `$secret-name:key` | the Secret `secret-name`, which must carry the label `app.kubernetes.io/part-of: argocd` |
 
-**Prefer the dedicated labelled Secret** (`$argocd-ai-assistant-secret:openai-api-key`, as shown above): it keeps the token out of the chart-owned `argocd-secret`, and with the Operator avoids touching an operator-managed Secret.
+Argo CD substitutes the value as it stands, and the Secret must hold the whole header value, `Bearer <your-api-token>`. A bare token is forwarded as `Authorization: <your-api-token>`, which providers reject.
 
-### Recommended: a managed, labelled Secret
-
-Populate the Secret from a secret manager - never a literal in Git. With the [External Secrets Operator](https://external-secrets.io/):
+A dedicated Secret keeps the key out of `argocd-secret`, which the Helm chart and the Operator manage. Create it from a secret manager rather than from a literal in Git. With the [External Secrets Operator](https://external-secrets.io/):
 
 ```yaml
 apiVersion: external-secrets.io/v1
@@ -103,7 +65,7 @@ metadata:
 spec:
   refreshInterval: 1h
   secretStoreRef:
-    name: my-secret-store          # your (Cluster)SecretStore (Vault/AWS/GCP/...)
+    name: my-secret-store
     kind: ClusterSecretStore
   target:
     name: argocd-ai-assistant-secret
@@ -111,58 +73,54 @@ spec:
     template:
       metadata:
         labels:
-          app.kubernetes.io/part-of: argocd    # required for $secret:key lookup
+          app.kubernetes.io/part-of: argocd
       data:
-        openai-api-key: "Bearer {{ .token }}"  # Bearer prefix required
+        openai-api-key: "Bearer {{ .token }}"
   data:
     - secretKey: token
       remoteRef:
-        key: secret/argocd/assistant           # path/key in your secret backend
+        key: secret/argocd/assistant
         property: api-token
 ```
 
-[Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets) or SOPS work equally well - anything that keeps the plaintext out of Git and produces a Secret named `argocd-ai-assistant-secret` (labelled `app.kubernetes.io/part-of: argocd`) with an `openai-api-key` key. With this approach the **Helm chart never sees the token** - you do not set `configs.secret.extra` or pass the value to the chart at all.
+Sealed Secrets and SOPS work as well, provided the result is a Secret named `argocd-ai-assistant-secret` with the `app.kubernetes.io/part-of: argocd` label and an `openai-api-key` key.
 
-### Alternative: argocd-secret
+## Connection timeouts
 
-If you already secret-manage `argocd-secret` (as the [`argocd-saml`](https://github.com/saidsef/argocd-saml) deployment does), add the `openai-api-key` key there and reference it as `$openai-api-key`. Avoid the literal `configs.secret.extra` / `kubectl patch` forms outside throwaway clusters - they put the token in `values.yaml` (Git history) or on the command line (CI logs).
+Argo CD's proxy has four connection settings, each with a default:
 
-Once resolved, `argocd-server` injects the token into the `Authorization` header server-side, so it never reaches the browser - which is why this is preferred over the browser-readable `data.apiKey` in the [settings extension](settings.md).
+| Key | Default | Meaning |
+|---|---|---|
+| `connectionTimeout` | 2s | longest wait to open a connection to the backend |
+| `keepAlive` | 15s | interval between keep-alive probes on an open connection |
+| `idleConnectionTimeout` | 60s | how long an idle connection stays open |
+| `maxIdleConnections` | 30 | most idle connections kept open |
 
-## Security considerations
+They go at the top of the block:
 
-| Risk | Implication | Mitigation |
-|------|-------------|------------|
-| Secret at rest | base64, not encrypted, readable via `get secret` | etcd encryption-at-rest, restrict Secret RBAC |
-| Token in `values.yaml` | committed to Git history (GitOps) | ESO / Sealed Secrets / SOPS labelled Secret, never commit |
-| Token via `kubectl patch` | leaks to shell history / CI logs / argv | apply a managed Secret, not an inline patch |
-| `data.apiKey` in settings | readable by every UI user (browser) | use proxy injection, not the browser field |
-| `argocd-cm` write access | repoint `services[].url` -> token exfil + SSRF | restrict config / GitOps write, review changes |
-| `invoke` RBAC = all `readonly` | any user can spend the key / egress data | scope `invoke` to specific roles |
-| `EXTENSION_URL` not pinned | MITM / compromise -> arbitrary JS in the UI | pin `EXTENSION_CHECKSUM`, HTTPS, trusted host |
-| External provider key | billing abuse / data egress | scope + spend-limit + rotate, prefer in-cluster LLM |
-| Transport to backend | cleartext token if not TLS | HTTPS, inject CA for self-signed |
-
-## Enabling the proxy extension
-
-The proxy extension is off by default and has to be enabled on `argocd-server`. Step 1 of your install page has the flag: [Operator](operator.md#1-enable-the-proxy-extension), [Helm](helm.md#1-enable-the-proxy-extension), [raw manifests](raw.md#1-enable-the-proxy-extension).
-
-## RBAC requirements
-
-Users must be allowed to invoke the `assistant` proxy extension. The policy is:
-
-```
-p, role:readonly, extensions, invoke, assistant, allow
+```yaml
+extension.config.assistant: |
+  connectionTimeout: 5s
+  services:
+  - url: http://vllm.vllm.svc.cluster.local:8000
 ```
 
-That grants the `readonly` role (and above) access to the Assistant. Step 3 of your install page has where it goes: [Operator](operator.md#3-grant-rbac), [Helm](helm.md#3-grant-rbac), [raw manifests](raw.md#3-grant-rbac).
+The extension also stops a reply that stays silent for longer than its own fixed limit, and shows "The assistant stopped responding". A proxy setting cannot change that limit.
 
-!!! note "The proxy authorises per Application"
-    Every proxied request carries `Argocd-Application-Name` and `Argocd-Project-Name`, and Argo CD checks the user against that Application - so users also need read access to the Application they are asking about. `role:readonly` already covers this. The system-level `/assistant` page - registered only when `data.mcpServers` is set - has no Application of its own and borrows the first one the user can read, so a role scoped to *no* Applications can use the resource tab (via the resource's own Application) but not the system-level page.
+## RBAC
 
-## Proxy with TLS
+A user of the Assistant needs two permissions:
 
-If your LLM backend uses HTTPS with a self-signed certificate, inject the CA certificate into the Argo CD server pod. It mounts in the same place as the settings extension in step 5 of your install page - `spec.server` for the Operator, `server` for Helm, the `argocd-server` Deployment for raw manifests:
+- `invoke` on the `assistant` extension, from `p, role:readonly, extensions, invoke, assistant, allow`
+- read access to the Application they ask about, because the proxy checks each request against an Application
+
+The extension names the Application in the `Argocd-Application-Name` and `Argocd-Project-Name` headers. The system-level `/assistant` page exists only when `data.mcpServers` is set. It does not have an Application of its own, and uses the first one the user can read. A user who cannot read any Application can use the resource tab but not that page.
+
+The policy line grants `invoke` to `role:readonly` and every role above it. Name a narrower role to limit who can spend the API key.
+
+## TLS to the backend
+
+For a backend whose certificate comes from a private CA, mount the CA certificate into `argocd-server`. In Helm values:
 
 ```yaml
 server:
@@ -175,3 +133,18 @@ server:
       configMap:
         name: custom-ca-bundle
 ```
+
+The same volume and mount go under `spec.server` in the Operator's resource, and into the `argocd-server` Deployment for raw manifests.
+
+## Security considerations
+
+| Risk | Effect | Mitigation |
+|---|---|---|
+| API key in a Secret | Secrets are base64-encoded, not encrypted, and readable by anyone allowed to get them | Encrypt etcd at rest and restrict Secret RBAC |
+| API key in `values.yaml` or a `kubectl patch` | The key ends up in Git history, shell history or CI logs | Create the Secret from a secret manager |
+| `data.apiKey` in the settings | Every user can read the key in the browser | Inject the key through the proxy instead |
+| Write access to `argocd-cm` | `services[].url` can be pointed elsewhere, sending the key and user data with it | Restrict who can change Argo CD's config |
+| `invoke` granted to `role:readonly` | Every user can spend the key and send data to the provider | Grant `invoke` to specific roles |
+| Unpinned `EXTENSION_URL` | A changed or tampered tar runs JavaScript in every user's Argo CD session | Pin a version, serve it over HTTPS, and verify it with `EXTENSION_CHECKSUM_URL` |
+| External provider | Cluster data leaves the network, and a leaked key can run up cost | Scope, rotate and cap the key, or use an in-cluster model |
+| Plain HTTP to the backend | The key crosses the network unencrypted | Use HTTPS, with a private CA if needed |

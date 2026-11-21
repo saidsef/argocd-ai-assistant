@@ -1,88 +1,43 @@
 # argocd-ai-assistant [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE.md)
 
-An Argo CD UI extension that adds an **Assistant** tab to the resource view. Open any Kubernetes resource, ask questions about it in natural language, and the extension enriches each query with context:
+An Argo CD UI extension that adds an **Assistant** tab to the resource panel. Ask about a resource in plain language, and the Assistant answers from its live state. With each question it sends the manifest, a summary of the owning Application, events, pod states and, for an OutOfSync resource, any fields that differ from Argo CD's target state. A user can also attach a container's logs.
 
-1. **Resource manifest** - the live object, provided by Argo CD.
-2. **Events** - fetched from the Argo CD API and attached automatically.
-3. **Logs** (optional) - from a single container, via a guided flow (Pod, Deployment, StatefulSet, Job, Rollout).
+It works with any backend that speaks the OpenAI-compatible chat completions API, such as Ollama, [vLLM](https://github.com/vllm-project/vllm), OpenAI, Azure OpenAI, DeepSeek or Anthropic's [OpenAI-compatible endpoint](https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk). Requests go through Argo CD's [proxy extension](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/), which keeps the API key on the server.
 
-## Supported Backends
+## Installation
 
-A single generic provider speaks the **OpenAI-compatible chat completions API**, so it works with any backend that does: a local inference server (e.g. Ollama), [vLLM](https://github.com/vllm-project/vllm), [OpenAI](https://openai.com/), [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service/), [Anthropic](https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk) through its OpenAI-compatible endpoint, or any other OpenAI-compatible endpoint. MCP tools go to the backend as `tools` on that API, with a text protocol for a backend that rejects them. Traffic is routed through the Argo CD [Proxy Extension](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/) to avoid CORS.
-
-## Prerequisites
-
-- [Argo CD](https://argo-cd.readthedocs.io/en/stable/) >= v2.13
-- A running LLM backend with an OpenAI-compatible API accessible from the Argo CD server. If it serves a single model, that is all the configuration there is - the extension reads the name off `/v1/models`
-- A browser supporting CSS nesting and `AbortSignal.any`: Chrome/Edge 116+, Safari 17.4+, Firefox 124+
-
-## Development
-
-```shell
-# Install dependencies (requires --force due to React peer dependency quirks)
-yarn install --force
-
-# Production build
-yarn run build
-
-# Development build
-yarn run build-dev
-```
-
-## Release
-
-Releases are automated: on merge to `main` (once CI passes), a workflow classifies the change, bumps the version, tags it, and publishes a GitHub Release with the extension tar. No manual version bumping. See [Build and Package](docs/deployment.md#build-and-package) for details.
-
-## Deployment
-
-See the [Deployment Guide](docs/deployment.md) for building, packaging and hosting the extension. The install itself has a page per method, so you read one and not three:
-
-- [Argo CD Operator](docs/deployment/operator.md)
-- [Helm chart](docs/deployment/helm.md)
-- [Raw manifests](docs/deployment/raw.md)
-
-### Local testing
-
-To try the extension end to end on a throwaway [kind](https://kind.sigs.k8s.io/) cluster - with a built-in mock LLM, no GPU or API key required - use the harness in [`examples/kind/`](./examples/kind):
-
-```shell
-./examples/kind/setup.sh raw    # or: helm | operator
-```
-
-A successful run installs Argo CD, installs this extension built from source, and verifies the full path (including a streamed proxy request) with `== 9 passed, 0 failed ==`. See [`examples/kind/README.md`](./examples/kind/README.md).
+[Deployment](docs/deployment.md) lists the prerequisites and links to an install page for the Argo CD Operator, the Helm chart and raw manifests. A backend that serves one model works without further settings. [Settings extension](docs/deployment/settings.md) covers the model, the prompt and MCP servers.
 
 ## MCP tool servers
 
-The assistant can call tools on [MCP](https://modelcontextprotocol.io/) servers. Set `data.mcpServers` in the settings extension and each one appears in the header badge:
-
-```yaml
-data:
-  mcpServers:
-    - "https://docs.example.com/mcp"
-    - url: "https://github-mcp.example.com/mcp"
-      name: "github"          # optional - one is derived from the server or hostname otherwise
-```
-
-Each server gets a short name, shown in the badge. Tools are opt-in per message: use that name and its tools are offered for that turn and the next one.
+The Assistant can call tools on [MCP](https://modelcontextprotocol.io/) servers listed in `data.mcpServers`. A question uses a server's tools only when it names the server:
 
 ```text
 docs, what does a sync wave do?
 ```
 
-A question that names no server never triggers a tool call. Ask "which MCP servers are available?" at any time - the assistant knows the full list, each server's state, and which tools it exposes. Servers are called directly from the browser, so each must send CORS headers for the Argo CD origin; type `token` to supply an Argo CD API token for servers that need one.
+[MCP servers](docs/deployment/settings.md#mcp-servers) covers the configuration, including which servers receive the user's Argo CD token. [Architecture](docs/architecture.md#mcp-servers) covers the behaviour.
 
-See [MCP Tool Integration](./docs/architecture.md#mcp-tool-integration) for the full behaviour.
+## Development
+
+```shell
+yarn install --frozen-lockfile
+yarn typecheck
+yarn test
+yarn build-dev    # development build in dist/
+yarn package      # production build and dist/extension-argocd-ai-assistant.tar
+```
+
+[Local testing with kind](docs/deployment/local-testing.md) installs the extension from your working tree on a throwaway cluster:
+
+```shell
+./examples/kind/setup.sh raw    # or helm, operator
+```
 
 ## Documentation
 
-Full documentation is in the [`docs/`](./docs) directory and built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/).
-
-Live docs: [argocd-ai-assistant.readthedocs.io](https://argocd-ai-assistant.readthedocs.io/)
-
-## Source
-
-Source and releases: [github.com/saidsef/argocd-ai-assistant](https://github.com/saidsef/argocd-ai-assistant).
+The [documentation site](https://argocd-ai-assistant.readthedocs.io/) is built from [`docs/`](docs) with MkDocs Material.
 
 ## Contributing
 
-Pull requests welcome - see the [Contribution Guide](./CONTRIBUTING.md).
+See the [contribution guide](CONTRIBUTING.md).

@@ -1,47 +1,36 @@
-# Settings Extension
+# Settings extension
 
-The Assistant needs to know which LLM backend to use. Since Argo CD extensions have no native configuration mechanism, settings are deployed as a **second extension** that sets `globalThis.argocdAssistantSettings`.
+The Assistant reads its settings from `globalThis.argocdAssistantSettings`, which a second extension file sets. Every setting has a default. A backend that serves one model works without a settings extension, because the Assistant reads the model name from its `/v1/models`.
 
-!!! tip "You may not need this page"
-    Every setting has a default. `baseURL` falls back to the Argo CD proxy path, and an unset `model` is looked up from the backend's `/v1/models`, which an in-cluster vLLM or Ollama usually answers with exactly one. A deployment serving one model works with no settings extension at all - come back here when you want a second model, a custom prompt, or MCP servers.
-
-## Create the settings file
-
-Create a JavaScript file named `extension-settings.js`:
+## Settings file
 
 ```javascript
 globalThis.argocdAssistantSettings = {
-    model: "glm-5.3",
+    model: "<model-name>",
     data: {
-        baseURL: "http://ollama.ollama.svc.cluster.local:11434/v1"
+        mcpServers: ["https://mcp.example.com/mcp"]
     }
 };
-
-(() => {
-    console.log("Initializing Argo CD AI Assistant Settings");
-})();
 ```
 
-| Setting | Required | Description |
-|---------|----------|-------------|
-| `provider` | No | Ignored. Accepted for backwards compatibility with existing ConfigMaps; a single generic OpenAI-compatible provider is always used. |
-| `model` | No | Model name (e.g., `glm-5.3`). Left out, the Assistant asks the backend for `/v1/models` and uses the answer when there is exactly one. Several, and it asks you to pick, naming them. |
-| `data.baseURL` | No | OpenAI-compatible API base URL, with or without a trailing `/v1` (both forms resolve to the same `/v1/chat/completions` endpoint). Defaults to the Argo CD proxy path if omitted. |
-| `data.apiKey` | No | API key sent **from the browser** as `Authorization: Bearer …`. It is readable in the browser - **not recommended**, prefer server-side injection via the proxy ([Injecting the API token](proxy.md#injecting-the-api-token)). |
-| `data.mcpServers` | No | MCP servers, each CORS-enabled for the Argo CD origin. An entry is either a URL string or `{url, name, token}`. `name` overrides the short handle the assistant would otherwise derive, and `token: true` sends the user's Argo CD token from the `token` flow to that server (e.g. `["https://mcp.example.com", {url: "https://argocd-mcp.example.com/mcp", name: "argocd", token: true}]`). The assistant always knows which servers are configured, but only offers a server's tools when the user names it in their message or the one before it. See [MCP Tool Integration](../architecture.md#mcp-tool-integration). |
-| `data.toolCalling` | No | How MCP tools reach the model. `auto` (the default) sends them as `tools` on the request, and switches to describing them in the system prompt for a backend that rejects that. `native` never switches, and `text` always describes them in the system prompt. See [Tool-calling modes](../architecture.md#tool-calling-modes). |
-| `maximumLogLines` | No | Max log lines attachable (default: 250, hard ceiling 5000). A value that is not a positive whole number falls back to the default. |
-| `systemPrompt` | No | Overrides the built-in assistant persona/instructions. The default is an Argo CD / Kubernetes expert prompt that grounds answers in the attached manifest, events, and logs, and carries the accuracy rules below. Setting this **replaces** those rules - it does not add to them. The attached context and the MCP server list are appended either way. |
+| Setting | Default | Description |
+|---|---|---|
+| `model` | read from `/v1/models` | The model to use. Without it, the Assistant uses the backend's only model, or lists the models and asks for one when there are several. |
+| `data.baseURL` | the Argo CD proxy at `/extensions/assistant` | An OpenAI-compatible base URL, with or without `/v1`. When set, the browser calls it directly. It must then be reachable from the browser and accept requests from the Argo CD origin. |
+| `data.apiKey` | none | Sent from the browser as `Authorization: Bearer <key>`, where every user can read it. Use [API token injection](proxy.md#api-token-injection) instead. |
+| `data.mcpServers` | none | MCP servers to offer tools from, described in [MCP servers](#mcp-servers). |
+| `data.toolCalling` | `auto` | How MCP tools reach the model. `auto` sends them as `tools` and switches to text for a backend that rejects them, `native` never switches, and `text` always describes them in the system message. Any other value counts as `auto`. |
+| `maximumLogLines` | 250 | The most log lines a user can attach, up to 5000. A value that is not a positive whole number falls back to the default. |
+| `systemPrompt` | the built-in prompt | Replaces the built-in prompt. A blank value keeps the default. |
+| `provider` | ignored | Accepted for compatibility with older ConfigMaps. |
 
-!!! warning "An override replaces the accuracy rules"
-    The default prompt forbids four failure modes by name - guessing, assuming, lying and waffling - and states each as a checkable rule rather than an adjective: a field missing from the live manifest is not set and one missing from a summary is unknown, a `[truncated: …]` marker means the model is reading a fragment, an inference must be labelled as one, and "the context does not show this" is an acceptable answer. Claims about the cluster must come from the attached context or a tool result, and general Argo CD and Kubernetes behaviour may come from the model's own knowledge. A custom `systemPrompt` discards all of it, so carry the equivalent wording across if you set one. The attachments, the rule that attached text and tool results are data, and the MCP server list (with its own tool-calling rules) are appended to whichever prompt is in force.
+## System prompt override
 
-!!! note "Leave `baseURL` unset to route through the proxy"
-    If `data.baseURL` is omitted the Assistant calls the Argo CD proxy path (`/extensions/assistant`), which forwards to the backend you configure in [Proxy & Backend Configuration](proxy.md). This is the recommended setup - it keeps API keys out of the browser.
+`systemPrompt` replaces the whole built-in prompt, including its accuracy rules and the shape it sets for replies. [System prompt](../architecture.md#system-prompt) describes both. Carry equivalent rules into your own prompt. The Assistant still adds the attachments, a rule that attached text is data, and any MCP server list to whichever prompt is in force.
 
-## Deploy the settings extension
+## Deploying the settings
 
-`extension-settings.js` has to land in `/tmp/extensions/resources/argocd-ai-assistant-settings/`. Put it in a ConfigMap and mount that into the `argocd-server` pod - nothing to host, and it version-controls like the rest of your manifests.
+The file must be at `/tmp/extensions/resources/argocd-ai-assistant-settings/extension-settings.js` in `argocd-server`. Put it in a ConfigMap:
 
 ```yaml
 apiVersion: v1
@@ -52,51 +41,39 @@ metadata:
 data:
   extension-settings.js: |
     globalThis.argocdAssistantSettings = {
-        model: "deepseek-v4-flash",
-        data: {
-            baseURL: "https://api.deepseek.com/v1"
-        }
+        model: "<model-name>"
     };
-    (() => { console.log("Argo CD AI Assistant Settings loaded"); })();
 ```
 
-Mount it at `/tmp/extensions/resources/argocd-ai-assistant-settings`. Step 5 of your install page has the snippet: [Operator](operator.md#5-add-the-settings-extension), [Helm](helm.md#5-add-the-settings-extension), [raw manifests](raw.md#5-add-the-settings-extension).
+Step 5 of each install page mounts it: [Operator](operator.md#5-settings-extension), [Helm](helm.md#5-settings-extension), [raw manifests](raw.md#5-settings-extension).
+
+Argo CD serves the file to every browser. It must never hold a secret.
 
 ## MCP servers
 
-Setting `data.mcpServers` is the whole of the client-side setup - there is no feature flag - and it also registers the system-level `/assistant` page and the `token` flow. In the ConfigMap the value is a JavaScript array, so both entry forms go in as they would in the file:
+`data.mcpServers` is a list. Each entry is a URL, or an object with `url`, an optional `name` and an optional `token`:
 
-```yaml
-data:
-  extension-settings.js: |
-    globalThis.argocdAssistantSettings = {
-        data: {
-            mcpServers: [
-                "https://mcp.example.com/mcp",
-                { url: "https://wiki.example.com/mcp", name: "wiki" },
-                { url: "https://argocd-mcp.example.com/mcp", name: "argocd", token: true }
-            ]
-        }
-    };
+```javascript
+mcpServers: [
+    "https://mcp.example.com/mcp",
+    { url: "https://wiki.example.com/mcp", name: "wiki" },
+    { url: "https://argocd-mcp.example.com/mcp", name: "argocd", token: true }
+]
 ```
 
-!!! warning "The token goes only to servers that set `token: true`"
-    The `token` flow stores the user's Argo CD token and sends it as `Authorization: Bearer` on every request, the handshake included, to each server whose entry sets `token: true`. The token carries the user's full Argo CD permissions, so set the flag only on a server that acts on Argo CD for the user. Earlier releases sent the token to every configured server. A deployment that relies on a server receiving it has to add `token: true` to that server's entry.
+- `name` sets the short name users type to use the server's tools. Without it, the Assistant derives one, as [Short names](../architecture.md#short-names) describes.
+- `token: true` sends the user's Argo CD token, from the `token` command, to that server as `Authorization: Bearer`. Set it only for a server that acts on Argo CD for the user, because the token carries all of the user's permissions. Only the literal `true` counts.
+- An entry without a `url` is skipped, and the other entries still load.
 
-The rest of the work is on the servers. The browser calls each one directly rather than through the Argo CD proxy, so a server has to accept cross-origin requests from the Argo CD origin:
+Setting `data.mcpServers` also adds the system-level `/assistant` page and the `token` command.
 
-| Response header | Value it must cover |
-|-----------------|---------------------|
+The browser calls MCP servers directly, not through the proxy. Each server must answer cross-origin requests from the Argo CD origin with these headers:
+
+| Response header | Must include |
+|---|---|
 | `Access-Control-Allow-Origin` | your Argo CD origin |
 | `Access-Control-Allow-Methods` | `POST, OPTIONS` |
 | `Access-Control-Allow-Headers` | `content-type, accept, authorization, mcp-session-id` |
 | `Access-Control-Expose-Headers` | `mcp-session-id` |
 
-!!! warning "`Access-Control-Expose-Headers` is the one that gets missed"
-    A server that issues a session ID returns it in the `Mcp-Session-Id` response header, and the extension replays it on every later request. That header is not CORS-safelisted, so without `Access-Control-Expose-Headers` the browser hides it from the page: `initialize` appears to succeed, the extension never learns the session ID, and every call after it fails on a server that requires one. The console shows the failed calls, not the missing header.
-
-Behaviour once configured - how a server is addressed, how its short name is derived, and what happens when one is unreachable - is on the [MCP Tool Integration](../architecture.md#mcp-tool-integration) page.
-
-## Keep API keys out of the browser
-
-The settings JS file is served to the browser, so anything in it - including `data.apiKey` - is readable by any user. Never put a real API key there. Instead, route requests through the [Argo CD Proxy Extension](proxy.md) and inject the `Authorization` header server-side from a Secret - see [Injecting the API token](proxy.md#injecting-the-api-token).
+Without `Access-Control-Expose-Headers`, the browser hides the `Mcp-Session-Id` response header from the extension. The handshake appears to work, and every later call fails on a server that requires a session.

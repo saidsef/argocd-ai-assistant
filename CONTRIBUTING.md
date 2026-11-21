@@ -1,14 +1,14 @@
 # Contributing
 
-When contributing to this repository, please first discuss the change you wish to make via issue, email, or any other method with the owners of this repository before making a change.
-
-Please note we have a code of conduct, please follow it in all your interactions with the project.
+Open an issue to discuss a change before you start work on it. Everyone taking part follows the [Code of Conduct](#code-of-conduct).
 
 ## Pull Request Process
 
-1. Update `README.md` if your change affects the interface (e.g. new configuration or settings).
-2. Update `docs/` to reflect any behavioural, configuration, or deployment changes.
-3. Merge once you have sign-off from the project team, if you lack merge permission, ask a reviewer to merge for you.
+1. Run `yarn typecheck`, `yarn test` and `yarn build-dev` before you open the pull request. CI runs the tests and a production build.
+2. Give the pull request a [conventional commit](https://www.conventionalcommits.org/) title. Every merge to `main` publishes a release, and the commit titles set its version. A `feat` title gives a minor release, `!` or `BREAKING CHANGE` gives a major one, and any other title gives a patch.
+3. Update `docs/` when the change affects behaviour, settings or installation. `yarn build-docs` builds the site with Podman, and the build fails on a broken link.
+4. Test the pull request on a real cluster with its `pr-<number>` pre-release, which holds the extension tar. The pre-release is deleted when the pull request closes, or after three days.
+5. Merge once a maintainer approves. If you cannot merge, ask a reviewer to merge for you.
 
 ## Code of Conduct
 

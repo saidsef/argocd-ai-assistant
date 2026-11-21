@@ -1,24 +1,21 @@
 # Argo CD AI Assistant
 
-The Argo CD AI Assistant is a UI extension that adds an AI chatbot to the Argo CD interface. It registers as a Resource Tab Extension, providing an "Assistant" tab on every resource slide-out panel so users can ask questions about live manifests, events, and logs.
+The Argo CD AI Assistant adds an **Assistant** tab to the resource panel in Argo CD. Users ask about a resource in plain language, and the Assistant answers from that resource's live state.
 
 ## Features
 
-- **Per-Resource Chat** - Ask questions about any Kubernetes resource directly from its detail panel.
-- **Context-Aware** - Automatically attaches the resource manifest, a distilled Argo CD Application summary, events, and optional container logs to every query.
-- **Generic LLM Backend** - Works with any OpenAI-compatible API (Ollama, vLLM, OpenAI, Azure, DeepSeek, etc.). A backend serving one model needs no settings at all: the name comes from its `/v1/models`.
-- **Streaming Responses** - Real-time streaming replies via Server-Sent Events (SSE).
-- **Proxy Extension** - All backend traffic is routed through the Argo CD server to avoid CORS and keep API keys out of the browser.
-- **Theme-Aware UI** - Chat bubble colours adapt automatically to Argo CD's light and dark themes.
-- **MCP Integration (Experimental)** - Optional Model Context Protocol tool support: configure `data.mcpServers` and the assistant calls a server's tools when you name that server in your message, with an optional per-user Argo CD token sent as an `Authorization: Bearer` credential to the servers configured to accept it.
+- Each question carries the live manifest, a summary of the owning Application, events, pod states and, for an OutOfSync resource, the fields that differ from Argo CD's target state. A user can also attach a container's logs.
+- Any backend with an OpenAI-compatible chat completions API works, such as Ollama, vLLM, OpenAI, Azure OpenAI or DeepSeek. A backend that serves one model does not need any settings.
+- Requests go through Argo CD's proxy extension, which keeps the API key on the server.
+- Replies stream as the model writes them, in Argo CD's light or dark theme.
+- MCP servers can give the model tools, which a question uses only when it names the server.
 
-## Quick Links
+## Where to start
 
-- [Architecture](architecture.md) - How the extension is structured and communicates.
-- [Deployment](deployment.md) - Build, package and host the extension.
-- Install - [Argo CD Operator](deployment/operator.md), [Helm chart](deployment/helm.md) or [raw manifests](deployment/raw.md), a page each.
-- [Settings Extension](deployment/settings.md) - Pin a model, change the prompt, add MCP servers.
+- [Deployment](deployment.md) for prerequisites, install methods and release artefacts.
+- [Settings extension](deployment/settings.md) for the model, prompt and MCP servers.
+- [Proxy and backend](deployment/proxy.md) for backends, API keys, timeouts and RBAC.
+- [Verification and troubleshooting](deployment/verification.md) to confirm it works.
+- [Architecture](architecture.md) for what the Assistant sends and how it uses tools.
 
-## Repository
-
-Source code and releases: [github.com/saidsef/argocd-ai-assistant](https://github.com/saidsef/argocd-ai-assistant)
+The source and releases are on [GitHub](https://github.com/saidsef/argocd-ai-assistant).
