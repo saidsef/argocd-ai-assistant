@@ -46,9 +46,9 @@ Earlier messages in the conversation go with each query as history. Each message
 
 ### System prompt
 
-The default system prompt states each accuracy rule as a checkable prohibition. A model can satisfy "be accurate" while padding an answer with plausible defaults, but "an absent field is unknown, not default" is a rule it either followed or did not. The prompt holds one line per rule and repeats none of them, because it goes with every request and each line is paid for every time.
+The default system prompt states each accuracy rule as a checkable prohibition. A model can satisfy "be accurate" while padding an answer with plausible defaults, but "a field missing from the live manifest is not set" is a rule it either followed or did not. The prompt holds one line per rule and repeats none of them, because it goes with every request and each line is paid for every time.
 
-The answer rules fix the shape of a reply. The first sentence answers the question, and a factual question gets one to three sentences. The model cites only the evidence its answer rests on, adds a caveat only when it changes what the user does next, and does not raise questions of its own.
+The answer rules give every reply one shape, whichever model writes it: a sentence that answers the question, up to three bullets of quoted evidence, and a command only when the user has to act. A reply stays under 120 words unless the user asks for detail, and does not use headings or bold. The model adds a caveat only when the context shows a problem, and does not raise questions, fixes or what-if scenarios of its own. When a tool returns documentation, the model quotes the sentence it relies on instead of paraphrasing it.
 
 The grounding rule covers claims about the user's own cluster: names, namespaces, images, values, states, events and log lines must come from the attached context or a tool result. General Argo CD and Kubernetes behaviour may come from the model's own knowledge, which lets the assistant explain a concept such as a sync wave when nothing is attached. The model says so when an answer depends on a version.
 
