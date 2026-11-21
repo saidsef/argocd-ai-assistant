@@ -5,8 +5,10 @@ import { argocdFetch, Kinds } from "../util/util";
 
 export const MAX_LINES = 250;
 
-// The logs endpoint is a stream, so its deadline has to cover the whole read, not just the headers.
-// `follow=false` plus `tailLines` bounds it to `tailLines` entries per pod, so this is generous.
+/**
+ * This deadline covers the whole read, because the logs endpoint is a stream. `follow=false` and
+ * `tailLines` bound the read to `tailLines` entries per pod, which leaves it generous.
+ */
 const LOGS_REQUEST_MS = 60000;
 
 export function hasLogs(resource: any): boolean {
@@ -19,24 +21,23 @@ export function restartCount(pod: any, container: string): number {
     return Number(statuses.find((s: any) => s?.name === container)?.restartCount) || 0;
 }
 
-// The API group of an apiVersion: "apps/v1" -> "apps", and "v1" -> "" (core resources have no
-// group; returning "v1" as the group made the logs API reject core-group non-Pod workloads).
+/**
+ * The API group of an apiVersion: "apps/v1" gives "apps", and "v1" gives "", because core
+ * resources do not have a group. See #123.
+ */
 export function getGroup(apiVersion: string): string {
     const index = apiVersion.indexOf("/");
     return index > 0 ? apiVersion.substring(0, index) : "";
 }
 
-// Distil log entries into the plain-text block that goes into the prompt.
-//
-// The wire format carries five fields per line, of which one is the log: `timeStampStr` duplicates
-// `timeStamp` at higher precision, `podName` repeats on every line of a pod, and `first`/`last`
-// are stream-control flags. Attaching the raw array spends 2-3x the tokens for no extra signal
-// (measured on a real pod: 1,521 bytes of JSON for 972 bytes of log content, and short application
-// log lines are far worse). One `pod` header line plus `<timestamp> <content>` per line carries the
-// same information, in a shape the model reads more naturally than JSON.
+/**
+ * Log entries as the plain-text block that goes into the prompt: one header line, then
+ * `<timestamp> <content>` per line. Each raw entry also carries a second timestamp and two stream
+ * flags, which add tokens without adding information.
+ */
 export function summariseLogs(entries: LogEntry[], container?: string, previous = false): string {
     const all = Array.isArray(entries) ? entries : [];
-    // The stream ends with an empty-content sentinel entry; it is protocol, not a log line.
+    // The stream ends with an empty sentinel entry, which is protocol rather than a log line.
     const lines = all.filter((e) => (e?.content ?? "").length > 0);
     // A workload's log interleaves its pods, so each line names its pod once there is more than one.
     // A line Argo CD writes itself, such as a Kubernetes error, carries no pod name.
@@ -85,9 +86,8 @@ export const getLogs = async (application: any, resource: any, container: string
         throw new Error("The Pod logs API returned no response body.");
     }
 
-    // The logs endpoint is a grpc-gateway server stream, so each line is the RPC envelope
-    // `{"result": {...}}` rather than a bare entry - unwrap it. (Verified against a live Argo CD;
-    // casting the envelope straight to LogEntry, as this used to, embedded the wrapper in the prompt.)
+    // Each line is an RPC envelope `{"result": {...}}` rather than a bare entry, because the logs
+    // endpoint is a grpc-gateway server stream. See #119.
     const results: LogEntry[] = [];
     for await (const line of readLines(response.body)) {
         try {

@@ -8,7 +8,7 @@ import { ChatTools, createToolCallAccumulator, parseArguments, toChatTools, tool
 import { parseToolCalls, TOOL_OPEN } from "./toolCall";
 import { createToolMarkerFilter } from "./toolMarker";
 
-// Names the cause of an empty reply from finish_reason, since each value points at a different fix.
+/** Names the cause of an empty reply from finish_reason, since each value points at a different fix. */
 export function emptyReplyMessage(finishReason?: string): string {
     switch (finishReason) {
         case "content_filter":
@@ -23,7 +23,7 @@ export function emptyReplyMessage(finishReason?: string): string {
     }
 }
 
-// The user's own previous message, not the last turn of any role, since replies name every server.
+/** The user's own previous message, not the last turn of any role, since replies name every server. */
 function lastUserTurn(history?: ChatTurn[]): string {
     for (let i = (history?.length ?? 0) - 1; i >= 0; i--) {
         if (history![i].role === "user") return history![i].content;
@@ -31,13 +31,13 @@ function lastUserTurn(history?: ChatTurn[]): string {
     return "";
 }
 
-// Same URLs and token opt-ins in the same order. serverIndex values rely on it, and names may change.
+/** Same URLs and token opt-ins in the same order. serverIndex values rely on it, and names may change. */
 const serverKey = (s: McpServerConfig): string => `${s.url}\u0000${s.token === true}`;
 function sameServers(a: string[] | undefined, b: McpServerConfig[]): boolean {
     return !!a && a.length === b.length && a.every((k, i) => k === serverKey(b[i]));
 }
 
-// Accepts a baseURL with or without a trailing /v1, since the documented examples include it.
+/** Accepts a baseURL with or without a trailing /v1, since the documented examples include it. */
 const apiRoot = (baseURL: string): string => baseURL.replace(/\/+$/, "").replace(/\/v1$/i, "");
 
 export function chatCompletionsUrl(baseURL: string): string {
@@ -48,7 +48,7 @@ export function modelsUrl(baseURL: string): string {
     return `${apiRoot(baseURL)}/v1/models`;
 }
 
-// Ids from a /v1/models body, dropping anything that is not a non-empty string.
+/** Ids from a /v1/models body, dropping anything that is not a non-empty string. */
 export function parseModelList(body: any): string[] {
     if (!Array.isArray(body?.data)) return [];
     return body.data
@@ -56,14 +56,14 @@ export function parseModelList(body: any): string[] {
         .filter((id: any): id is string => typeof id === "string" && id.trim().length > 0);
 }
 
-// Names the backend's models when it serves several, so one can be copied into the settings.
+/** Names the backend's models when it serves several, which lets the user copy one into the settings. */
 export function modelChoiceMessage(found: string[]): string {
     return found.length
         ? `The LLM backend serves ${found.length} models, so one has to be chosen: set \`model\` in argocdAssistantSettings to one of ${found.join(", ")}.`
         : "LLM model is not configured, and the backend did not report one to fall back on. Set the model field in argocdAssistantSettings.";
 }
 
-// Accuracy rules as checkable prohibitions, one per line: see docs/architecture.md#system-prompt.
+/** Accuracy rules as checkable prohibitions, one per line: see docs/architecture.md#system-prompt. */
 export const DEFAULT_SYSTEM_PROMPT = `You are the Argo CD AI Assistant: an expert in Argo CD, Kubernetes and GitOps, helping users troubleshoot the resources they manage with Argo CD.
 
 Accuracy:
@@ -89,19 +89,22 @@ Answering:
 - Use the "Argo CD Application" summary for source, sync, health and deployment questions.
 - Reply in Markdown, and fence commands, manifests and log excerpts with a language tag.`;
 
-// Tools per question, counted per tool. The completion after the last one is forced tool-free.
+/** Tools per question, counted per tool. The completion after the last one is forced tool-free. */
 const MAX_TOOL_ITERATIONS = 3;
 
-// Per-result cap when one reply runs several tools, so a batch cannot crowd out the other context.
+/** Per-result cap when one reply runs several tools, which stops a batch crowding out the other context. */
 const MAX_BATCH_RESULT_CHARS = Math.floor(MAX_TOOL_RESULT_CHARS / 2);
 
-// Silence between bytes that aborts a stream, generous enough for a slow first token.
+/** Silence between bytes that aborts a stream, generous enough for a slow first token. */
 const STREAM_INACTIVITY_MS = 45000;
 
-// What a completion request adds to `{model, messages, stream}`.
+/** What a completion request adds to `{model, messages, stream}`. */
 type CompletionOptions = { tools?: any[]; toolChoice?: string };
 
-// Backends that rejected `tools`, keyed by base URL and model. Module level, so it outlives a remount.
+/**
+ * Backends that rejected `tools`, keyed by base URL and model. It lives at module level, because it
+ * must outlive a remount.
+ */
 const textOnlyBackends = new Set<string>();
 
 export class LlmProvider implements QueryProvider {

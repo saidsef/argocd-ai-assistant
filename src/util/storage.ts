@@ -1,10 +1,13 @@
 import type { ChatMessage } from "../components/useChat";
 import { ExtensionScope } from "./extensions";
 
-// Every key this extension owns starts with this, so a quota failure can prune its own leftovers
-// (one set of keys accumulates per resource visited in the session) without touching Argo CD's.
+/**
+ * Every key this extension owns starts with this. A quota failure can then prune the extension's
+ * own leftovers, one set per resource visited, without touching Argo CD's keys.
+ */
 const KEY_MARKER = "argocd-assistant";
 
+/** The conversation, attached log and MCP token of one resource, kept in the tab's sessionStorage. */
 export class ManageStorage {
     private CHAT_HISTORY_KEY: string;
     private LOGS_KEY: string;
@@ -15,11 +18,11 @@ export class ManageStorage {
         this._namespace = namespace;
         const prefix = namespace ? `${scope}-${namespace}` : scope;
         this.CHAT_HISTORY_KEY = `${prefix}-${KEY_MARKER}-chat-history-v2`;
-        // v2: logs are now stored distilled (see service/logs.ts summariseLogs) rather than as the
-        // raw API envelope, so a session carrying the old shape must not be read back.
+        // The v2 key holds distilled log text. Raw API envelopes stored under the old key are never
+        // read back. See #119.
         this.LOGS_KEY = `${prefix}-${KEY_MARKER}-logs-v2`;
-        // Carries KEY_MARKER like every other key: without it pruneOtherKeys could never reclaim a
-        // stale token, so one token key per resource visited accumulated for the whole session.
+        // Carries KEY_MARKER like every other key, because pruneOtherKeys must be able to reclaim a
+        // stale token.
         this.ARGOCD_MCP_TOKEN = `${prefix}-${KEY_MARKER}-mcp-token`;
     }
 
@@ -57,10 +60,8 @@ export class ManageStorage {
         return this.read(this.LOGS_KEY);
     }
 
-    // Methods rather than a setter, because both outcomes matter to the caller: the attached log is
-    // re-sent with every subsequent question, so a dropped write must be reported (it used to be
-    // probed by reading the key back, which returned a *previous* container's log as success), and
-    // "New chat" needs a way to detach one.
+    // Methods rather than a setter, because setLogs reports a dropped write, and "New chat" needs a
+    // way to detach the log. See #123.
     setLogs(value: string): boolean {
         return this.write(this.LOGS_KEY, value);
     }

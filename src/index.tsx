@@ -5,8 +5,10 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ResourceAssistantExtension } from "./resourceExtension";
 import { SystemAssistantExtension } from "./systemExtension";
 
-// Both extensions render inside the Argo CD console, so each is wrapped at the point Argo CD mounts
-// it: an uncaught throw would otherwise unmount part of Argo CD's own tree, not just the assistant.
+/**
+ * Each extension is wrapped where Argo CD mounts it, because both render inside the Argo CD
+ * console, and an uncaught throw would otherwise unmount part of Argo CD's own tree.
+ */
 const guard = (Component: (props: any) => React.ReactNode) => (props: any) =>
     React.createElement(ErrorBoundary, null, React.createElement(Component, props));
 

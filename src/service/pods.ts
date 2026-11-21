@@ -6,13 +6,16 @@ import { capText } from "../util/context";
 import { argocdFetch, Kinds } from "../util/util";
 import { summariseEvents } from "./events";
 
-// Pods listed by name. The rest are counted, so a large workload costs the same as a small one.
+/** Pods listed by name. The rest are counted, which makes a large workload cost the same as a small one. */
 export const MAX_PODS = 20;
 
-// Events of the first unhealthy pod, which carry the probe and scheduling messages.
+/** Events of the first unhealthy pod, which carry the probe and scheduling messages. */
 export const MAX_POD_EVENTS = 10;
 
-// A pod's health message is free text from the controller, so one long message cannot crowd out the list.
+/**
+ * A pod's health message is free text from the controller. The cap stops one long message crowding
+ * out the list.
+ */
 const MAX_HEALTH_MESSAGE_CHARS = 300;
 
 export interface PodState {

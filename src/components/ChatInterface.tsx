@@ -6,13 +6,15 @@ import ChatInput from "./ChatInput";
 import ChatMessage from "./ChatMessage";
 import { useChat, type ChatMessage as ChatMessageType, type ChatChunk, type UseChatOptions } from "./useChat";
 
-// Cap the history sent with each request so token usage stays bounded (~10 exchanges).
+/** Cap the history sent with each request so token usage stays bounded (~10 exchanges). */
 const MAX_HISTORY_MESSAGES = 20;
 
 const pluralTools = (n: number) => `${n} ${n === 1 ? "tool" : "tools"}`;
 
-// The initial assistant welcome bubble (a UI-only message), or none when there is no welcome text.
-// Shared by first-mount seeding and the "New chat" reset so the two stay in sync.
+/**
+ * The welcome bubble as a UI-only message, or an empty list without welcome text. First-mount
+ * seeding and the "New chat" reset share it.
+ */
 const buildWelcome = (welcomeMessage?: string): ChatMessageType[] =>
     welcomeMessage
         ? [{
@@ -23,8 +25,7 @@ const buildWelcome = (welcomeMessage?: string): ChatMessageType[] =>
         }]
         : [];
 
-// How a user turns a configured server into a usable one. Stated here because nothing else in the
-// UI says it - it used to live only in docs/architecture.md.
+/** How a user turns a configured server into a usable one, for the MCP chip's tooltip and label. */
 const ADDRESSING_HINT = "Name a server in your message to use its tools.";
 
 /** State dot for a header chip: neutral, healthy, or failing. */
@@ -33,9 +34,8 @@ export type ChipState = "idle" | "on" | "error";
 /**
  * One compact header chip: icon, ellipsising label, state dot.
  *
- * role="img" so the aria-label is honoured: on a bare <span> the role is `generic`, which prohibits
- * naming, so screen readers ignored the label entirely and the detail was mouse-only. `title` and
- * `aria-label` are separate because the tooltip is multi-line and the accessible name must not be.
+ * `role="img"` lets the chip carry an accessible name, which the `generic` role of a bare `<span>`
+ * does not allow. `title` and `aria-label` differ because the tooltip spans several lines.
  */
 const Chip = React.memo(({ icon, label, state, title, ariaLabel }: {
     icon: string;
@@ -63,17 +63,16 @@ export interface ContextStatus {
     detail: string;
 }
 
-// Compact indicator that MCP is active, shown left of "New chat" when servers are configured. Starts
-// as the configured hostname (grey dot), then upgrades to the server-reported name + tool count +
-// green dot once the provider has connected, or a red dot with the reason if a server was
-// unreachable.
+/**
+ * The MCP chip, shown left of "New chat" when servers are configured. Its dot turns green when a
+ * server connects, and red when a server has failed and none has connected.
+ */
 const McpBadge = React.memo(({ servers }: { servers: McpServerStatus[] }) => {
     const anyConnected = servers.some((s) => s.connected && !s.error);
     const anyFailed = servers.some((s) => s.error);
     const totalTools = servers.reduce((n, s) => n + s.toolCount, 0);
-    // Handles inline, not "N MCP servers" and not the reported names: the handle is the string a
-    // user has to type, and hiding it in a hover tooltip put it out of reach of keyboard and touch
-    // entirely. The label ellipsises.
+    // The label shows each handle, because it is the string a user types, and a tooltip is out of
+    // reach of keyboard and touch users.
     const handles = servers.map((s) => s.handle).join(" · ");
     const label = totalTools > 0 ? `${handles} · ${pluralTools(totalTools)}` : handles;
     // The reported name is worth showing when it differs, so a server whose handle was shortened (or
@@ -104,9 +103,8 @@ export interface ChatInterfaceProps {
     /** What is grounding the answer, for the header chip. Omitted where there is no context (the
      *  system-level page attaches none). */
     contextStatus?: ContextStatus;
-    /** One-off message to post into the transcript when it becomes non-null - used to tell the user
-     *  a context source failed. Posted once per distinct value; the parent's effects cannot reach
-     *  this component's message state any other way. */
+    /** One-off message posted into the transcript when it becomes non-null, such as a failed context
+     *  source. The parent's effects cannot reach this component's messages any other way. */
     notice?: string | null;
     children?: React.ReactNode | ((helpers: { setMessages: React.Dispatch<React.SetStateAction<ChatMessageType[]>> }) => React.ReactNode);
 }
@@ -130,9 +128,9 @@ const ChatInterface = ({
     const providerRef = React.useRef(provider);
     providerRef.current = provider;
 
-    // Lazy-init (??=) so the transport object and its async closure are built once, not re-allocated on
-    // every render — during streaming this component re-renders each animation frame. The closure reads
-    // getContextRef/providerRef at call time, so one stable instance always sees the latest values.
+    // Built once, because this component re-renders every animation frame while a reply streams.
+    // The closure reads getContextRef and providerRef at call time, and always sees the latest
+    // values.
     const transportRef = React.useRef<UseChatOptions["transport"] | null>(null);
     transportRef.current ??= {
         async sendMessages({ messages, abortSignal }) {
@@ -159,10 +157,8 @@ const ChatInterface = ({
                     const msgId = generateId();
 
                     let lastText = "";
-                    // Emit text-start lazily, on the first visible token, so status stays "submitted"
-                    // (the thinking indicator) during the wait for the model's first output instead of
-                    // flipping to "streaming" against an empty bubble. Tool-status labels still surface
-                    // independently via the onStatus channel while a tool runs.
+                    // text-start waits for the first visible token. Until then the thinking
+                    // indicator stays up instead of an empty bubble.
                     let started = false;
                     const ensureStarted = () => {
                         if (!started) {
@@ -238,10 +234,9 @@ const ChatInterface = ({
         messages: initialMessages
     });
 
-    // The welcome names the configured MCP servers, and their handles are only known once the
-    // mount-time warm-up connects - after this bubble was first written. Refresh it while it is
-    // still the whole conversation; once a real turn exists the transcript is history and is not
-    // rewritten under the user.
+    // Server handles are known only once the mount-time connection finishes, after the welcome was
+    // written. The welcome is refreshed while it is the whole conversation, and never once a real
+    // turn exists.
     const welcomeRef = React.useRef(welcomeMessage);
     React.useEffect(() => {
         if (welcomeRef.current === welcomeMessage) return;
@@ -251,11 +246,9 @@ const ChatInterface = ({
         );
     }, [welcomeMessage, setMessages]);
 
-    // Post a context-failure notice into the transcript, once per distinct message. Keyed on the text
-    // rather than a boolean so a *different* failure after the first still gets said, while a
-    // re-render with the same one does not repeat itself.
-    // Seeded null, not `notice`: seeding from the prop meant a notice already present at mount was
-    // silently swallowed, and this component remounts (key={chatKey}) on every resource change.
+    // Keyed on the notice text, because a different failure must still be posted and a re-render
+    // must not repeat one. It starts at null, because a notice present at mount must be posted too.
+    // See #124.
     const noticeRef = React.useRef<string | null | undefined>(null);
     React.useEffect(() => {
         if (noticeRef.current === notice) return;
@@ -301,24 +294,16 @@ const ChatInterface = ({
         if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
     }, []);
 
-    // Persist on settle, not on every streamed frame: during streaming `messages` updates
-    // once per animation frame, so serialising the whole conversation to sessionStorage each
-    // time is pure waste. The just-sent user turn still saves promptly (status "submitted"),
-    // and the final reply persists when status leaves "streaming".
+    // Saving waits for a streamed reply to finish, because `messages` changes every animation frame
+    // while it streams. The user's own message still saves at once.
     React.useEffect(() => {
         if (status === "streaming") return;
         storage.saveMessages(messages);
     }, [messages, status, storage]);
 
-    // Follow the content, not the message list.
-    //
-    // A `messages`-keyed effect is not enough: MarkedWrapper re-parses on a trailing 120ms timer, so
-    // the bubble grows *after* the last state update lands and the final paragraph of every reply
-    // ends up below the fold. Observing the list's own size catches every growth, whatever caused it.
-    //
-    // Built once and kept. Keying this on `messages` re-created the observer and re-observed every
-    // child on each animation frame of a stream - O(messages) teardown/setup ~60x a second. A
-    // MutationObserver resyncs the children only when one is actually added or removed.
+    // Follows the list's size rather than `messages`, because MarkedWrapper re-parses on a trailing
+    // timer and the bubble grows after the last state update. The observers are built once, and the
+    // children are observed again only when one is added or removed. See #123.
     React.useEffect(() => {
         const el = listRef.current;
         if (!el) return;
@@ -344,15 +329,12 @@ const ChatInterface = ({
     const wasBusyRef = React.useRef(false);
     React.useEffect(() => {
         if (wasBusyRef.current && !isBusy) {
-            // The newest message, not "the last assistant message anywhere": a reply stopped before
-            // its first token leaves no new bubble, and searching backwards then re-announced the
-            // *previous* answer. (It also copied the whole array to do it.)
+            // Only the newest message counts, because a reply stopped before its first token does
+            // not leave a bubble, and the previous answer must not be announced again.
             const last = messages[messages.length - 1];
             const done = last && last.role === "assistant" && !last.local && status !== "error" ? last : undefined;
-            // Announce *that* the reply landed, not the reply itself. Piping a 2,000-word answer
-            // through a live region reads the whole thing aloud, uninterruptibly, on top of whatever
-            // the user was already reading. The transcript is a role="log" region they navigate at
-            // their own pace.
+            // Only the word count is announced, because a live region reads its whole text aloud and
+            // the user cannot stop it. The reply itself stays in the role="log" transcript.
             const words = done
                 ? (done.parts || []).map((p) => p.text).join("").trim().split(/\s+/).filter(Boolean).length
                 : 0;
@@ -362,10 +344,9 @@ const ChatInterface = ({
         wasBusyRef.current = isBusy;
     }, [isBusy, messages, status]);
 
-    // Escape stops a running reply - the same action as the Stop button, without reaching for it.
-    // Scoped to this extension's subtree, not window: Argo CD uses Escape to close its own sliding
-    // panels and modals, and a window listener meant one keystroke did both. The composer is never
-    // disabled, so focus stays inside here for the whole reply and the event reaches us.
+    // Escape stops a running reply. The listener sits on this subtree rather than on window, because
+    // Argo CD also closes its panels on Escape. The composer stays enabled during a reply, which
+    // keeps focus inside the subtree. See #123.
     const rootRef = React.useRef<HTMLDivElement>(null);
     React.useEffect(() => {
         if (!isBusy) return;
@@ -384,9 +365,9 @@ const ChatInterface = ({
         setInput(e.target.value);
     }, []);
 
-    // The send path. Honours a parent onCommand (guided flows) before dispatching to the model, and
-    // always follows the reply. Stable identity, so the memoised composer does not re-render every
-    // animation frame of a stream; the latest messages/isBusy are read from a ref.
+    // The send path runs a parent onCommand before the model, and always follows the reply. It
+    // reads messages and isBusy from a ref, which keeps the memoised composer from re-rendering
+    // while a reply streams.
     const sendStateRef = React.useRef({ messages, isBusy });
     sendStateRef.current = { messages, isBusy };
     const wrappedSubmit = React.useCallback((e?: React.SubmitEvent<HTMLFormElement>) => {
@@ -406,8 +387,7 @@ const ChatInterface = ({
         setInput("");
     }, [onCommand, setMessages, scrollToBottom, sendMessage]);
 
-    // Re-run the failed turn and follow it, exactly as a fresh send does (setting stickToBottomRef
-    // alone left `pinned` false, so "↓ Latest" stayed on screen while auto-follow was back on).
+    // A retry follows the reply as a fresh send does, which also hides "↓ Latest".
     const handleRetry = React.useCallback(() => {
         scrollToBottom();
         retry();
@@ -422,9 +402,8 @@ const ChatInterface = ({
         onClear?.();
     }, [stop, setMessages, welcomeMessage, onClear, scrollToBottom]);
 
-    // Recomputed when a query settles, which is when the provider has new names/tools to report -
-    // not on every render, which during a stream meant re-allocating a status object per server per
-    // animation frame.
+    // Recomputed when a query settles, which is when the provider has new names and tools to report,
+    // rather than on every streamed frame.
     const mcpStatus = React.useMemo(() => getMcpStatus?.(), [getMcpStatus, status]);
 
     return (
@@ -450,10 +429,9 @@ const ChatInterface = ({
                     New chat
                 </button>
             </div>
-            {/* aria-live is explicitly off: role="log" implies aria-live="polite", and the streaming
-                bubble's subtree is replaced several times a second, so the implied region re-announced
-                the whole growing reply. Completion is announced once, from the dedicated region below
-                the composer. tabIndex makes this scrollable region reachable by keyboard (WCAG 2.1.1). */}
+            {/* aria-live is off because role="log" implies "polite", and a streaming bubble changes
+                several times a second. The region below the composer announces each reply once.
+                tabIndex lets keyboard users scroll the list (WCAG 2.1.1). */}
             <div
                 className="chat-message-list"
                 ref={listRef}
@@ -468,8 +446,7 @@ const ChatInterface = ({
                 ))}
             </div>
             {/* Progress and errors sit outside the scroller, so Stop and the failure reason stay on
-                screen when the user scrolls back through a long reply. Inside the list they scrolled
-                away, leaving no way to cancel but the keyboard and no sign anything had failed. */}
+                screen when the user scrolls back through a long reply. */}
             {isBusy && (
                 <div className="chat-loading" role="status" aria-live="polite">
                     {(status === "submitted" || toolStatus) && (

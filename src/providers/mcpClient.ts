@@ -27,25 +27,31 @@ interface McpServerInfo {
     name?: string;
 }
 
-// Abort a JSON-RPC request that gets no response within this window, so a hung MCP server
-// surfaces as a tracked error / LLM-only fallback instead of freezing the assistant.
+/**
+ * Deadline for a JSON-RPC request. A hung MCP server then counts as a failed server, and the
+ * assistant answers without its tools instead of freezing.
+ */
 const MCP_REQUEST_MS = 30000;
 
-// A user Stop is not a server failure, and the two arrive through the same channel: `AbortSignal.any`
-// propagates the reason of whichever signal fired first, so a caller cancel surfaces as AbortError
-// and the MCP_REQUEST_MS deadline as TimeoutError. Recording the former as `unreachable` painted
-// every configured server red on the badge - and, because those errors feed the MCP roster, told the
-// model in the system prompt that every server was down.
+/**
+ * A user Stop arrives as AbortError and the MCP_REQUEST_MS deadline as TimeoutError, through one
+ * combined signal. A Stop is not a server failure, and must not mark the server unreachable on the
+ * badge or in the roster. See #124.
+ */
 const isAbort = (err: unknown): boolean => err instanceof Error && err.name === "AbortError";
 
-// One transient gateway failure should not lose a tool call. An MCP server behind an ingress returns
-// 503 for however long it has no ready endpoint - a rollout, a restart, a scale event - and a single
-// fetch turns that moment into "the tool never ran" with nothing to distinguish it from a quiet model.
+/**
+ * One transient gateway failure should not lose a tool call. An MCP server behind an ingress
+ * returns 503 while it lacks a ready endpoint, such as during a rollout, a restart or a scale
+ * event.
+ */
 const MCP_ATTEMPTS = 3;
 const MCP_RETRY_BACKOFF_MS = 250;
 
-// Carries the status so the retry policy can decide on it rather than parsing the message. The
-// message is unchanged: it is what the user sees in a tool-failure notice.
+/**
+ * Carries the status for the retry policy, which then does not parse the message. The message stays
+ * as it is, because the user sees it in a tool-failure notice.
+ */
 class McpHttpError extends Error {
     constructor(public readonly status: number, serverIndex: number) {
         super(`MCP server ${serverIndex} returned HTTP ${status}`);

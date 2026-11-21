@@ -39,8 +39,10 @@ type FlowNode =
     | "get_logs"
     | TokenFlowNode;
 
-// Upper bound on the configurable log-line count, whatever the settings ConfigMap asks for. Every
-// attached line is also re-sent with each subsequent question, so this is a cost ceiling too.
+/**
+ * Upper bound on the configurable log-line count, whatever the settings ConfigMap asks for. It also
+ * caps cost, because every attached line goes with each later question.
+ */
 const MAX_LOG_LINES_CEILING = 5000;
 
 export const ResourceAssistantExtension = (props: any) => {
@@ -57,10 +59,8 @@ export const ResourceAssistantExtension = (props: any) => {
     const [flowNode, setFlowNode] = React.useState<FlowNode>("start");
     const [flowError, setFlowError] = React.useState<string | null>(null);
     const [appSummary, setAppSummary] = React.useState<ApplicationSummary | null>(null);
-    // Why the events fetch failed, or null. This used to be a console.warn and nothing else, which
-    // is the worst failure mode a troubleshooting assistant has: with no Events block in the prompt
-    // the model happily answers "no events indicate a problem" about a resource whose events simply
-    // did not load. Now it reaches the model, the header chip and a one-off notice.
+    // Why the events fetch failed, or null. The failure reaches the model, header chip and a
+    // notice, because the model must not read missing events as a clean result. See #124.
     const [eventsError, setEventsError] = React.useState<string | null>(null);
     // The pods behind a workload and why fetching them failed, handled the same way as the events.
     const [pods, setPods] = React.useState<{ list: PodState[]; text: string } | null>(null);
@@ -72,8 +72,7 @@ export const ResourceAssistantExtension = (props: any) => {
     // detached; sessionStorage is not reactive.
     const [logsAttached, setLogsAttached] = React.useState(false);
     const linesInputRef = React.useRef<HTMLInputElement>(null);
-    // The in-flight log fetch, so Cancel / "cancel" / unmount can actually drop it. Without this the
-    // request ran to its 60s deadline with no way to stop it.
+    // The log fetch in flight, which Cancel, "cancel" and unmount can drop before its deadline.
     const logAbortRef = React.useRef<AbortController | null>(null);
 
     // Focus the log-lines field when its flow node appears, mirroring TokenPrompt/ChatInput.
@@ -89,9 +88,8 @@ export const ResourceAssistantExtension = (props: any) => {
     const resourceID = getResourceIdentifier(resource);
     // Read from the Application's status, so a Synced resource does not cost a request.
     const outOfSync = isOutOfSync(application, resource);
-    // Clamped, not trusted: the value comes from a hand-edited ConfigMap, and a 0/negative/NaN made
-    // every input unsatisfiable ("needs to be more than 0 and 0 or less"). Also capped, so a typo
-    // cannot ask argocd-server for a million lines.
+    // Clamped, because the value comes from a hand-edited ConfigMap. A value that is not a positive
+    // integer falls back to the default, and the ceiling stops a typo asking for a million lines.
     const configuredLogLines = Number(settings.maximumLogLines);
     const maxLogLines: number = Number.isInteger(configuredLogLines) && configuredLogLines > 0
         ? Math.min(configuredLogLines, MAX_LOG_LINES_CEILING)
@@ -112,15 +110,9 @@ export const ResourceAssistantExtension = (props: any) => {
         setChatKey(resourceID);
     }, [resourceID]);
 
-    // Distilled Argo CD Application summary (the `argocd app get` review view). Fetched into state
-    // asynchronously; until it lands we fall back to summarising an Application object we already
-    // hold, so grounding is never empty on first paint. The fallback only ever summarises an actual
-    // Application (the resource when it is one, else the owning `application` prop) - never a child
-    // resource, which would yield a misleading, mostly-empty "Application" summary.
-    //
-    // Lifted out of getContext so the header chip reads the *same* value: derived separately, the
-    // chip could claim an Application summary the prompt never carried, which is exactly the kind of
-    // quiet inaccuracy the chip exists to prevent.
+    // The fetched Application summary or, until it arrives, a summary of the Application in props,
+    // never of a child resource. getContext and the header chip both read this value, because the
+    // chip must not claim a summary that the prompt lacks.
     const isApplication = resource?.kind === "Application";
     const summary = React.useMemo(
         () => appSummary ?? summariseApplication(isApplication ? (application ?? resource) : application),
@@ -130,12 +122,8 @@ export const ResourceAssistantExtension = (props: any) => {
     const getContext = React.useCallback(() => {
         const attachments: Attachment[] = [];
 
-        // Every attachment is capped by size as well as by item count: the distillers bound how many
-        // entries go in, these bound how large a single entry can be (see util/context.ts).
-        //
-        // capText slices the serialised string, so an over-cap attachment is cut mid-token and is no
-        // longer parseable - report it as text/plain rather than telling the model a fragment is
-        // valid JSON. The truncation itself is already announced inside the text by capText.
+        // A cut attachment is labelled text/plain rather than JSON, because capText cuts it
+        // mid-token. See util/context.ts for the caps.
         const json = (value: any, max: number, what: string) => {
             const full = JSON.stringify(value);
             const content = capText(full, max, what);
@@ -173,8 +161,8 @@ export const ResourceAssistantExtension = (props: any) => {
                 type: AttachmentType.EVENTS
             });
         } else if (events?.items?.length > 0) {
-            // Cap + distil to the most recent MAX_EVENTS (kubectl-style signal only), so events -
-            // previously the one unbounded context source - can't blow up the prompt on a busy resource.
+            // Distilled to the most recent MAX_EVENTS and capped by size, because a busy resource
+            // could otherwise flood the prompt.
             attachments.push({
                 ...json(summariseEvents(events.items, MAX_EVENTS), MAX_EVENTS_CHARS, "the events"),
                 type: AttachmentType.EVENTS
@@ -227,11 +215,8 @@ export const ResourceAssistantExtension = (props: any) => {
         };
     }, [application, resource, isApplication, summary, events, eventsError, pods, podsError, drift, driftError, settings]);
 
-    // Memoised because getMcpStatus allocates a status object per server and re-derives every
-    // handle (up to three `new URL()` each), and the Argo CD host hands down fresh resource and
-    // application objects on every poll - so calling it inline re-ran all of that on every poll.
-    // getMcpStatus is a stable useCallback whose identity changes only when a probe completes,
-    // which is exactly when there is something new to report.
+    // Memoised because getMcpStatus re-derives every handle, and the Argo CD host passes fresh props
+    // on every poll. Its identity changes only when a probe completes.
     const mcpHint = React.useMemo(
         () => mcpWelcomeHint((getMcpStatus?.() ?? []).map((s) => s.handle)),
         [getMcpStatus]
@@ -296,11 +281,11 @@ export const ResourceAssistantExtension = (props: any) => {
         setFlowError(null);
     }, []);
 
-    // Drop an in-flight log fetch when the slide-out closes; mirrors useChat's unmount abort.
+    // Drops a log fetch in flight when the slide-out closes, as useChat does for its reply.
     React.useEffect(() => () => logAbortRef.current?.abort(), []);
 
-    // "New chat" must also detach the attached log. It is up to MAX_LOG_CHARS that the user believes
-    // they discarded, and it rode along on every request for the rest of the session.
+    // "New chat" also detaches the log, because the user expects it gone and it would otherwise go
+    // with every later request. See #123.
     const handleClear = React.useCallback(() => {
         storageRef.current?.clearLogs();
         setLogsAttached(false);
@@ -311,9 +296,7 @@ export const ResourceAssistantExtension = (props: any) => {
         (input: string, _messages: ChatMessage[], setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>) => {
             if (flowNode !== "start" && flowNode !== "loop" && flowNode !== "token_saved") {
                 if (isCancelRequest(input)) {
-                    // Delegated rather than repeated inline: this branch used to duplicate
-                    // handleCancel's body without the abort, so typing "cancel" during a log fetch
-                    // left the request running and still injected "Attached N log lines" when it landed.
+                    // handleCancel also aborts a log fetch in flight. See #124.
                     handleCancel();
                     return true;
                 }
@@ -402,9 +385,8 @@ export const ResourceAssistantExtension = (props: any) => {
             }
             setFlowError(null);
             setFlowNode("get_logs");
-            // Capture the storage instance now. storageRef is replaced whenever the user opens a
-            // different resource, so resolving the ref inside the callback wrote this resource's log
-            // under the *next* resource's key - and it was then attached to every question about it.
+            // Captured now, because storageRef changes when the user opens another resource, and the
+            // log belongs to this one. See #123.
             const storage = storageRef.current!;
             // Drop any previous fetch before taking the slot, so an earlier one cannot land later and
             // announce "Attached N log lines" for a container the user has moved on from.
@@ -428,8 +410,7 @@ export const ResourceAssistantExtension = (props: any) => {
                 .catch((error) => {
                     if (storageRef.current !== storage) return;
                     logAbortRef.current = null;
-                    // Cancel already returned the flow to "loop" and is not a failure to report;
-                    // without this it injected "Could not fetch the logs: signal is aborted...".
+                    // Cancel has already returned the flow to "loop", and is not a failure to report.
                     if (error instanceof Error && error.name === "AbortError") return;
                     setMessages(injectMessage("Could not fetch the logs: " + errorMessage(error)));
                     setFlowNode("loop");
@@ -448,8 +429,8 @@ export const ResourceAssistantExtension = (props: any) => {
     );
 
     React.useEffect(() => {
-        // An AbortController rather than a `cancelled` flag: ignoring a superseded response still
-        // left the request running against argocd-server for up to its full deadline.
+        // An AbortController rather than a `cancelled` flag, because a flag leaves the superseded
+        // request running against argocd-server. See #124.
         const controller = new AbortController();
         // Clear the previous resource's events on switch. Clearing the error is required, not
         // cosmetic: without it a failure follows the user to every resource they open next.
@@ -458,11 +439,8 @@ export const ResourceAssistantExtension = (props: any) => {
         // Guard against a transient undefined resource so the effect never throws before fetch
         // (the sibling mount effect already skips via getResourceIdentifier === "Undefined").
         if (!resource?.metadata) return;
-        // Encode the path + query params (names/namespaces may contain characters that need
-        // escaping). appNamespace names which Application is meant on an "applications in any
-        // namespace" install - service/application.ts and service/logs.ts both send it, and omitting
-        // it here resolved against the wrong app (or 404'd) for an Application outside the default
-        // controller namespace.
+        // appNamespace selects the Application on an "applications in any namespace" install, as in
+        // service/application.ts and service/logs.ts. See #123.
         const params = new URLSearchParams();
         if (application?.metadata?.namespace) params.set("appNamespace", application.metadata.namespace);
         if (resource.kind !== "Application") {
@@ -484,10 +462,8 @@ export const ResourceAssistantExtension = (props: any) => {
                 setEventsError(errorMessage(err));
             });
         return () => controller.abort();
-        // Keyed on the stable resource identity, not the `application`/`resource` object identities:
-        // the Argo CD host hands down fresh objects as it polls, which re-ran this effect (and so
-        // re-fetched, after blanking the events) on every poll. This matches both the sibling
-        // app-summary effect below and the documented "cached, not continuously updated" behaviour.
+        // Keyed on the resource identity rather than the objects, because the Argo CD host passes
+        // fresh objects on every poll. See #119.
     }, [resourceID, application_name]);
 
     // The pods behind a workload, from the resource tree, plus the events of the first unhealthy one.
@@ -536,11 +512,8 @@ export const ResourceAssistantExtension = (props: any) => {
         return () => controller.abort();
     }, [resourceID, application_name, outOfSync]);
 
-    // Fetch the owning Application's distilled summary (chart/source, sync, health, resource
-    // rollup) once per application, mirroring the events effect's cancellation guard. Keyed on the
-    // stable app name (not the object identity) so a snapshot is fetched once and not re-fetched on
-    // every host re-render. getApplicationSummary never rejects (it falls back to props internally),
-    // so a failure just yields null.
+    // Fetches the owning Application's summary once per application, with the same cancellation as
+    // the events effect.
     React.useEffect(() => {
         const controller = new AbortController();
         setAppSummary(null);
@@ -625,10 +598,8 @@ export const ResourceAssistantExtension = (props: any) => {
                         </div>
                     );
                 case "get_logs":
-                    // Fetching a container log takes a visible moment; without this the flow UI
-                    // vanished on submit and left the user with no sign anything was happening.
-                    // Cancel is here because the fetch has a 60s deadline: this was the only node in
-                    // the flow with no way out.
+                    // This node shows progress and offers Cancel, because a log fetch takes a
+                    // moment and has a deadline. See #124.
                     return (
                         <div className="chat-flow-ui" role="status">
                             <span className="chat-typing" aria-hidden="true"><span /><span /><span /></span>

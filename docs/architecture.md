@@ -41,6 +41,19 @@ The answer rules give every reply one shape: a sentence that answers the questio
 
 The extension appends the attachments and a data rule to the prompt. When MCP servers are configured, it also appends a list of them. When the user names a server, it adds the rules for calling that server's tools. A [`systemPrompt` setting](deployment/settings.md#system-prompt-override) replaces the built-in prompt, and the extension still appends these parts.
 
+## Rendering
+
+The chat renders each reply as Markdown. marked converts the reply to HTML, and DOMPurify then keeps only the tags and attributes that Markdown produces. A reply can quote text from the cluster, such as annotations, event messages and log lines, and marked passes raw HTML through unchanged.
+
+| Rule | Reason |
+|---|---|
+| Forms, inputs and images are removed. | A reply cannot draw a credential prompt or load a tracking pixel. |
+| `div` and `span` are removed, and `class` survives only as a `language-*` class on `code`. | A reply cannot draw a copy button that looks like the extension's own. |
+| Links point only to `http`, `https`, `mailto`, a fragment or a same-origin path. | `javascript:` and `data:` links cannot run. |
+| Links to other sites open in a new tab with `rel="noopener noreferrer"`, and same-origin links stay in the tab. | The new page cannot reach the console's window, and Argo CD links navigate the console. |
+
+The allow-list does not include `button`, because the extension adds the copy buttons and language labels after sanitising.
+
 ## Conversation commands
 
 Each command is a message on its own.

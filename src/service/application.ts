@@ -1,10 +1,7 @@
 import { argocdFetch } from "../util/util";
 
-// Curated, token-efficient view of an Argo CD Application - the essence of `argocd app get`.
-// The raw Application manifest for a real app carries its entire resource tree (dozens of entries),
-// history, and operationState; dumping it wastes tokens and buries the signal a reviewer wants
-// (chart/version, sync, health, what is broken). This distils that to the fields that matter and
-// lists only the resources needing attention (out-of-sync / unhealthy) instead of the whole tree.
+// A compact view of an Argo CD Application, like `argocd app get`. It lists only the resources that
+// are out of sync or unhealthy, because the raw object carries the whole resource tree and history.
 
 const MAX_LIST = 15;    // per resource sub-list (out-of-sync / unhealthy)
 const MAX_IMAGES = 20;
@@ -52,8 +49,10 @@ export interface ApplicationSummary {
     history?: Array<{ revision?: string; deployedAt?: string; chart?: string; targetRevision?: string }>;
 }
 
-// Distil an Argo CD Application object into ApplicationSummary. Pure and defensive: tolerates
-// partial/missing fields and never throws (returns null only when the input is not an Application).
+/**
+ * An Argo CD Application distilled into an ApplicationSummary, or null when the input is not an
+ * Application. It tolerates missing fields and never throws.
+ */
 export function summariseApplication(app: any): ApplicationSummary | null {
     if (!app || typeof app !== "object" || !app.metadata) return null;
 
@@ -143,11 +142,10 @@ export function summariseApplication(app: any): ApplicationSummary | null {
     };
 }
 
-// Fetch the authoritative, current Application from the Argo CD REST API (same pattern as
-// service/logs.ts: same-origin, argocd.token cookie via credentials:'include') and distil it.
-// Read-only: no `refresh` param, so this never triggers a reconcile. On any failure it falls back
-// to summarising the Application object already held in props, so the assistant never loses
-// grounding just because the extra fetch failed.
+/**
+ * The current Application from the Argo CD API, distilled. The request does not ask for a refresh,
+ * and never triggers a reconcile. Any failure falls back to the Application already in props.
+ */
 export async function getApplicationSummary(application: any, signal?: AbortSignal): Promise<ApplicationSummary | null> {
     const name = application?.metadata?.name;
     const namespace = application?.metadata?.namespace;
@@ -163,8 +161,7 @@ export async function getApplicationSummary(application: any, signal?: AbortSign
         const fresh = await response.json();
         return summariseApplication(fresh) ?? summariseApplication(application);
     } catch (err) {
-        // A caller cancel (resource switch / unmount) is not a failure worth reporting - without this
-        // every resource switch logged a spurious warning.
+        // A caller cancel, from a resource switch or unmount, is not a failure worth logging.
         if (!(err instanceof Error && err.name === "AbortError")) {
             console.warn("Failed to fetch Argo CD application summary, falling back to cached manifest:", err);
         }

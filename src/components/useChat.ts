@@ -5,20 +5,19 @@ export interface ChatMessage {
     id: string;
     role: "user" | "assistant";
     parts: Array<{ type: "text"; text: string }>;
-    /** UI-only message (welcome banner, flow prompts) — excluded from LLM history. */
+    /** UI-only message, such as the welcome banner or a flow prompt, left out of LLM history. */
     local?: boolean;
     /**
-     * The reply was cut short by Stop. Unlike `local` this is still a real turn that counts as
-     * history — it is just a truncated one, so it is marked rather than passed off as a complete
-     * answer. Deliberately a flag and not appended text: the partial reply is genuine history that
-     * flows into the next request, and a synthetic "_Stopped._" would be re-sent to the model as
-     * something the assistant actually said.
+     * The reply was cut short by Stop. Unlike `local`, it still counts as history. It is a flag
+     * rather than appended text, because appended text would go back to the model as something the
+     * assistant said.
      */
     stopped?: boolean;
 }
 
 type ChatStatus = "submitted" | "streaming" | "ready" | "error";
 
+/** One event in the stream a transport returns, such as a text delta, a status label or an error. */
 export interface ChatChunk {
     type: string;
     id?: string;
@@ -52,6 +51,7 @@ interface UseChatHelpers {
     clearError: () => void;
 }
 
+/** Chat state for one conversation, which streams each reply from the transport into `messages`. */
 export function useChat(options: UseChatOptions): UseChatHelpers {
     const [messages, setMessages] = React.useState<ChatMessage[]>(options.messages);
     const [status, setStatus] = React.useState<ChatStatus>("ready");
@@ -83,14 +83,11 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
 
         let assistantText = "";
         let assistantId = "";
-        // Mirror of the current tool/progress label so we clear it exactly once per phase
-        // (on the first answer token) instead of dispatching setToolStatus(null) per delta.
+        // Mirrors the current tool label, which lets the first answer token clear it once rather
+        // than on every delta.
         let toolLabel: string | null = null;
-        // True while this invocation still owns the abort controller. Stop-then-send, and a resource
-        // switch mid-reply, interleave two invocations: without this, the older one's unwinding
-        // `finally` nulled the newer one's controller (disabling Stop, Escape and the unmount abort)
-        // and its `setStatus("ready")` landed after the newer "submitted", freeing the composer for a
-        // second concurrent send.
+        // Stop-then-send and a resource switch mid-reply both run two invocations at once. Only the
+        // invocation that owns the abort controller may reset it or the status. See #123.
         const isCurrent = () => abortControllerRef.current === controller;
 
         // Coalesce streaming updates to one render per frame to avoid per-token re-parses.
@@ -164,10 +161,8 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
         }
     }, []); // stable - reads messages/transport via refs
 
-    // Re-run generation for the most recent user turn after a failure. Drops the failed
-    // exchange (the trailing user message + any partial assistant bubble) and resubmits the
-    // same prompt. messagesRef is trimmed first so sendMessage appends onto that base;
-    // sendMessage then commits the truncated list and clears the error itself.
+    // Retries the last user turn after a failure. The failed exchange is trimmed from messagesRef
+    // first, and sendMessage appends the prompt to that base and commits the shorter list.
     const retry = React.useCallback(() => {
         const msgs = messagesRef.current;
         let i = msgs.length - 1;
@@ -186,8 +181,8 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
         abortControllerRef.current?.abort();
         abortControllerRef.current = null;
         setStatus("ready");
-        // Cleared here rather than in the aborted invocation's finally: releasing ownership above is
-        // what stops that invocation writing over a newer send's state, so it no longer clears this.
+        // Cleared here, because the aborted invocation has lost ownership above and leaves shared
+        // state alone.
         setToolStatus(null);
         // Mark the bubble as truncated. Done here rather than in sendMessage's finally because this
         // is the only path that knows a *user* cancelled - the unmount effect below aborts the
@@ -203,10 +198,8 @@ export function useChat(options: UseChatOptions): UseChatHelpers {
 
     const clearError = React.useCallback(() => setError(undefined), []);
 
-    // Abort any in-flight reply when the hook unmounts. The resource extension remounts this tree
-    // (key={chatKey}) whenever the user opens a different resource, so without this, switching
-    // resources mid-reply leaves the fetch, the SSE reader loop and its setMessages calls running
-    // against a dead tree - burning tokens for output nobody will ever see.
+    // Aborts any reply in flight on unmount. The resource extension remounts this tree for each
+    // resource, and an orphaned stream would keep spending tokens on output nobody sees.
     React.useEffect(() => () => abortControllerRef.current?.abort(), []);
 
     return { messages, setMessages, status, toolStatus, error, sendMessage, retry, stop, clearError };

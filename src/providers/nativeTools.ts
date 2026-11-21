@@ -5,7 +5,7 @@ import type { ChatMessage, ChatToolCall, ToolCallingMode } from "../model/provid
 import type { McpTool } from "./mcpClient";
 import { resultsNote } from "./mcpPrompt";
 
-// OpenAI's function-name rule. MCP tool names are not held to it.
+/** OpenAI's function-name rule. MCP tool names are not held to it. */
 const MAX_NAME_CHARS = 64;
 const UNSAFE_NAME_CHARS = /[^A-Za-z0-9_-]/g;
 
@@ -53,7 +53,7 @@ function uniqueName(base: string, taken: Map<string, unknown>): string {
     }
 }
 
-// Function parameters are a JSON Schema object, so a missing or partial schema is completed as one.
+/** Function parameters must be a JSON Schema object, and a missing or partial schema is completed as one. */
 function objectSchema(schema: any): any {
     const s = schema && typeof schema === "object" && !Array.isArray(schema) ? { ...schema } : {};
     if (!s.type) s.type = "object";

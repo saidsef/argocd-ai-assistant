@@ -3,29 +3,24 @@ import { AssistantSettings, McpServerStatus, QueryProvider } from "../model/prov
 import { LlmProvider } from "../providers/llmProvider";
 import { mcpConfigured, parseMcpServers } from "../util/util";
 
-// Settings + provider bootstrap shared by both extension entry points. Reads the host-injected
-// globalThis.argocdAssistantSettings, creates the query provider once, and derives the configured
-// MCP server list plus the header-badge status getter.
-//
-// The settings global is written by the settings extension before this bundle's entry point runs, so
-// one read at mount is enough. (There used to be a re-sync effect here, but it re-read the same
-// object reference the initialiser had already stored, so setSettings always bailed - it never
-// picked up a late injection, and it never polled or subscribed to make that possible.)
+/**
+ * Settings, query provider and MCP status shared by both extension entry points. One read of
+ * `globalThis.argocdAssistantSettings` at mount is enough, because the settings extension writes it
+ * before this bundle runs. See #123.
+ */
 export function useAssistantSettings(mcpToken?: string) {
     const [settings] = React.useState<AssistantSettings>(
         () => globalThis.argocdAssistantSettings ?? {}
     );
     const [provider] = React.useState<QueryProvider>(() => new LlmProvider());
 
-    // Parsed once, not cast: the setting is hand-written and reaches us as `any`, and a bad entry
-    // used to surface as a TypeError deep inside a query rather than as one missing server.
+    // Parsed rather than cast, because the setting is hand-written. A bad entry costs one server
+    // instead of failing a query.
     const mcpServers = React.useMemo(() => parseMcpServers(settings.data?.mcpServers), [settings]);
     const mcpEnabled = mcpConfigured(mcpServers);
 
-    // Connect as the tab opens rather than on the first message. A server's short handle - shown on
-    // the badge, suggested in the welcome message and used by the roster - comes from the name it
-    // reports during the handshake, so without this the user is told to type a URL hostname until
-    // they have already sent a message. Bumping the counter is what lets the UI re-read the result.
+    // Connects as the tab opens, because each server's handle comes from its reported name, and the
+    // welcome message suggests it. Bumping the counter makes the UI read it again.
     const [mcpProbe, setMcpProbe] = React.useState(0);
     React.useEffect(() => {
         if (!mcpEnabled) return;
