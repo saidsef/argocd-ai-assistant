@@ -269,6 +269,18 @@ const RESULTS_RULE = `Answer from tool results and the context already provided.
 export const FILL_GAP_RULE = "When the context lacks something an attached tool can supply, call the tool instead of saying it is missing.";
 
 /**
+ * Names the built-in tools and counts them. Native mode sends them only in `tools`, and a model
+ * asked to list them from there gave a different count in each reply.
+ */
+export function builtInRoster(tools: McpTool[]): string {
+    const names = tools.filter(t => t.serverIndex === BUILT_IN_SERVER).map(t => t.name);
+    if (names.length === 0) return "";
+    const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0];
+    const count = `${names.length} built-in Argo CD tool${names.length === 1 ? "" : "s"}`;
+    return `\n\nYou have ${count}: ${list}. When the user asks which tools you have, list every one of them, even past the word limit: these ${names.length} built-in tools by name, then each MCP server listed above with all of its tool names.`;
+}
+
+/**
  * The callable tool block, for the server(s) named in the conversation. Grouping by server lets the
  * model attribute a result to one. Tool names are reproduced exactly, because parseToolCall matches
  * on them.
@@ -276,14 +288,14 @@ export const FILL_GAP_RULE = "When the context lacks something an attached tool 
 export function toolPrompt(tools: McpTool[], serverName: (index: number) => string, maxCalls: number, mode: ToolCallingMode = "text"): string {
     // The request's `tools` carries each name, description and schema, so only the rules remain.
     if (mode === "native") {
-        return `\n\nCall a function when the question needs one, and answer directly when it does not. ${FILL_GAP_RULE} Several calls in one reply are fine for independent lookups. At most ${maxCalls} tool${maxCalls === 1 ? "" : "s"} will run for this question, and calls beyond that are not executed. ${RESULTS_RULE}`;
+        return `${builtInRoster(tools)}\n\nCall a function when the question needs one, and answer directly when it does not. ${FILL_GAP_RULE} Several calls in one reply are fine for independent lookups. At most ${maxCalls} tool${maxCalls === 1 ? "" : "s"} will run for this question, and calls beyond that are not executed. ${RESULTS_RULE}`;
     }
-    let text = "\n\nAvailable tools:\n";
+    let text = `${builtInRoster(tools)}\n\nAvailable tools:\n`;
     for (const index of [...new Set(tools.map(t => t.serverIndex))]) {
         const group = tools.filter(t => t.serverIndex === index);
         if (group.length === 0) continue;
         text += index === BUILT_IN_SERVER
-            ? "\nBuilt-in Argo CD tools, which read the Application the user has open:\n"
+            ? "\nBuilt-in Argo CD tools:\n"
             : `\nFrom the ${clean(serverName(index), MAX_SERVER_NAME_CHARS)} server:\n`;
         for (const tool of group) {
             text += `- ${tool.name}: ${tool.description || "No description"}\n`;

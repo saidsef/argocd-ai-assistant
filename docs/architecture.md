@@ -42,7 +42,7 @@ The accuracy rules require every claim about the cluster to come from an attachm
 
 The answer rules give every reply one shape: a sentence that answers the question, a few bullets of quoted evidence, and a command only when the user has to act, within a word limit. They rule out headings, bold text, what-if scenarios and fixes nobody asked for.
 
-The extension appends the attachments and a data rule to the prompt. In the resource tab, it adds the rules for calling the built-in tools. When MCP servers are configured, it also appends a list of them. When the user names a server, it adds that server's tools to the rules. A [`systemPrompt` setting](deployment/settings.md#system-prompt-override) replaces the built-in prompt, and the extension still appends these parts.
+The extension appends the attachments and a data rule to the prompt. It names and counts the built-in tools, and adds the rules for calling them. When MCP servers are configured, it also appends a list of them. When the user names a server, it adds that server's tools to the rules. A [`systemPrompt` setting](deployment/settings.md#system-prompt-override) replaces the built-in prompt, and the extension still appends these parts.
 
 ## Rendering
 
@@ -69,17 +69,23 @@ Each command is a message on its own.
 
 ## Built-in tools
 
-The resource tab offers five read-only tools with every question, whether or not MCP servers are configured. The browser answers each call through the Argo CD API with the user's own session, and argocd-server applies the user's RBAC. Every call reads the Application that the open resource belongs to, and the model cannot name another one. The `/assistant` page does not offer them.
+Both pages offer read-only tools with every question, whether or not MCP servers are configured. The browser answers each call through the Argo CD API with the user's own session, and argocd-server applies the user's RBAC.
+
+| Page | Application a call reads |
+|---|---|
+| Resource tab | the one the open resource belongs to, and the model cannot name another one |
+| `/assistant` | the one the call names in its `application` argument, which `list_applications` helps the model find |
 
 | Tool | Returns | Argo CD API |
 |---|---|---|
 | `get_current_datetime` | the current time in UTC and in the browser's time zone | none |
+| `list_applications` | every Application the user can read, with its project, sync status and health, on the `/assistant` page only | `applications` |
 | `get_resource` | the live manifest and recent events of any resource in the Application | `resource-tree`, `resource`, `events` |
 | `get_logs` | recent log lines from a pod, or from every pod of a workload, optionally only the lines that contain a string | `resource-tree`, `logs` |
 | `get_change_history` | recent deployments with each revision's commit or Helm chart details, and every resource's result in the last sync | `applications/{name}`, `revisions/{revision}/metadata`, `chartdetails` or `ocimetadata` |
 | `get_resource_diff` | the fields where an OutOfSync resource differs from the target state | `applications/{name}`, `managed-resources` |
 
-Each tool's description is its skill. It says what the tool returns, when the model should call it and what to pass. Both tool-calling modes send the description. The source is `BUILT_IN_TOOLS` in [`src/providers/builtInTools.ts`](https://github.com/saidsef/argocd-ai-assistant/blob/main/src/providers/builtInTools.ts).
+Each tool's description is its skill. It says what the tool returns, when the model should call it and what to pass. Both tool-calling modes send the description. The system message also names the built-in tools and tells the model to list every tool, MCP tools included, when the user asks which tools it has. The definitions are in [`src/providers/builtInTools.ts`](https://github.com/saidsef/argocd-ai-assistant/blob/main/src/providers/builtInTools.ts).
 
 - `get_resource` and `get_logs` find a resource by kind and name in the Application's resource tree, which supplies the group and version. When nothing matches, the result lists the names the model could have meant.
 - `get_resource` replaces every Secret value. Argo CD masks them as well.

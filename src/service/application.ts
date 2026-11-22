@@ -161,6 +161,19 @@ export async function getApplicationSummary(application: any, signal?: AbortSign
     }
 }
 
+/**
+ * Fields of each listed Application. Other ways to name the two status fields drop one of them on
+ * Argo CD 3.6 (verified against a live server).
+ */
+const LIST_FIELDS = "items.metadata.name,items.metadata.namespace,items.spec.project,items.status.sync.status,items.status.health";
+
+/** Every Application the user can read, with its project, sync status and health only. */
+export async function listApplications(signal?: AbortSignal): Promise<any[]> {
+    const response = await argocdFetch(`/api/v1/applications?fields=${LIST_FIELDS}`, undefined, "Applications", { signal });
+    const items = (await response.json())?.items;
+    return Array.isArray(items) ? items : [];
+}
+
 /** The current Application object from the Argo CD API. It throws when the request fails. */
 export async function getApplication(application: any, signal?: AbortSignal): Promise<any> {
     const params = new URLSearchParams();

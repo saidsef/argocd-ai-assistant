@@ -212,7 +212,7 @@ export const ResourceAssistantExtension = (props: any) => {
             attachments,
             settings: globalThis.argocdAssistantSettings ?? settings,
             mcpToken: storageRef.current?.mcpToken ?? undefined,
-            builtInTools: true
+            builtInTools: "open-application" as const
         };
     }, [application, resource, isApplication, summary, events, eventsError, pods, podsError, drift, driftError, settings]);
 

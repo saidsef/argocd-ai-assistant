@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { McpServerStatus } from "../model/provider";
-import { clean, deriveHandle, FILL_GAP_RULE, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, QUOTE_RULE, resolveHandles, resultsNote, serverHandles, toolFailureNotice, toolPrompt } from "./mcpPrompt";
+import { builtInRoster, clean, deriveHandle, FILL_GAP_RULE, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, QUOTE_RULE, resolveHandles, resultsNote, serverHandles, toolFailureNotice, toolPrompt } from "./mcpPrompt";
 import type { McpTool } from "./mcpClient";
 
 describe("toolFailureNotice", () => {
@@ -262,5 +262,18 @@ describe("serverHandles", () => {
     it("de-duplicates when the handle equals the hostname", () => {
         const handles = serverHandles({ handle: "a.example.com", name: "a.example.com", url: "https://a.example.com" });
         assert.equal(new Set(handles).size, handles.length);
+    });
+});
+
+describe("builtInRoster", () => {
+    const tool = (name: string, serverIndex: number) => ({ name, serverIndex });
+
+    it("names and counts only the built-in tools", () => {
+        const text = builtInRoster([tool("get_logs", -1), tool("docs_search", 0), tool("get_resource", -1)]);
+        assert.equal(text, "\n\nYou have 2 built-in Argo CD tools: get_logs and get_resource. When the user asks which tools you have, list every one of them, even past the word limit: these 2 built-in tools by name, then each MCP server listed above with all of its tool names.");
+    });
+
+    it("adds nothing when only MCP tools are attached", () => {
+        assert.equal(builtInRoster([tool("docs_search", 0)]), "");
     });
 });

@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import { BUILT_IN_TOOLS, currentTime, runBuiltInTool } from "./builtInTools";
+import { builtInTools, builtInToolsOf, currentTime, runBuiltInTool } from "./builtInTools";
 import { findNodes, logSources, redactManifest } from "../service/resource";
 import { summariseLastOperation } from "../service/history";
 
@@ -38,16 +38,38 @@ function argocd(routes: Record<string, (url: URL) => Response>) {
     return urls;
 }
 
-const ctx = { application: app, maxChars: 16000 };
+const ctx = { application: app, scope: "open-application" as const, maxChars: 16000 };
+
+/** The /assistant page, where `application` only routes the proxy. */
+const anyCtx = { application: { metadata: { name: "router", namespace: "argocd" }, spec: { project: "default" } }, scope: "any-application" as const, maxChars: 16000 };
 
 describe("built-in tool definitions", () => {
     it("gives every tool a skill and an object schema", () => {
-        assert.deepEqual(BUILT_IN_TOOLS.map((t) => t.name), ["get_current_datetime", "get_resource", "get_logs", "get_change_history", "get_resource_diff"]);
-        for (const tool of BUILT_IN_TOOLS) {
+        assert.deepEqual(builtInToolsOf("open-application").map((t) => t.name), ["get_current_datetime", "get_resource", "get_logs", "get_change_history", "get_resource_diff"]);
+        for (const tool of [...builtInToolsOf("open-application"), ...builtInToolsOf("any-application")]) {
             assert.match(tool.description ?? "", /Call it /, tool.name);
             assert.equal(tool.inputSchema.type, "object", tool.name);
             assert.equal(tool.serverIndex, -1, tool.name);
         }
+    });
+
+    it("asks for an Application only on the /assistant page, where it adds a way to list them", () => {
+        const any = builtInToolsOf("any-application");
+        assert.deepEqual(any.map((t) => t.name), ["get_current_datetime", "list_applications", "get_resource", "get_logs", "get_change_history", "get_resource_diff"]);
+        for (const tool of any.filter((t) => !["get_current_datetime", "list_applications"].includes(t.name))) {
+            assert.equal(tool.inputSchema.required[0], "application", tool.name);
+            assert.doesNotMatch(tool.description ?? "", /this Argo CD Application|did not open/, tool.name);
+        }
+        for (const tool of builtInToolsOf("open-application")) {
+            assert.equal(tool.inputSchema.properties.application, undefined, tool.name);
+        }
+    });
+
+    it("offers none in the resource tab until its Application resolves, and none when unset", () => {
+        assert.deepEqual(builtInTools({ builtInTools: "open-application" }), []);
+        assert.equal(builtInTools({ builtInTools: "open-application", application: app }).length, 5);
+        assert.equal(builtInTools({ builtInTools: "any-application" }).length, 6);
+        assert.deepEqual(builtInTools({ application: app }), []);
     });
 });
 
@@ -122,7 +144,7 @@ describe("get_resource", () => {
     it("lists the resources of the kind when the name matches nothing", async () => {
         argocd({ "/resource-tree": () => json(tree) });
         const out = await runBuiltInTool("get_resource", { kind: "Service", name: "web" }, ctx);
-        assert.equal(out, "This Application does not have a Service named web. Its resources of that kind are Service web/api.");
+        assert.equal(out, "argocd/shop does not have a Service named web. Its resources of that kind are Service web/api.");
         const none = await runBuiltInTool("get_resource", { kind: "Ingress", name: "web" }, ctx);
         assert.match(none, /It does not have any Ingress\. Its resource kinds are ConfigMap, Deployment, Pod, ReplicaSet, Secret, Service\./);
     });
@@ -183,7 +205,7 @@ describe("get_logs", () => {
         argocd({ "/resource-tree": () => json(tree) });
         assert.equal(
             await runBuiltInTool("get_logs", { name: "api-config" }, ctx),
-            "This Application does not have a pod or workload named api-config. Its workloads are Deployment web/api.",
+            "argocd/shop does not have a pod or workload named api-config. Its workloads are Deployment web/api.",
         );
     });
 });
@@ -299,7 +321,7 @@ describe("get_resource_diff", () => {
         argocd({ "/applications/shop": () => json(fresh) });
         assert.equal(
             await runBuiltInTool("get_resource_diff", { kind: "Deployment", name: "web" }, ctx),
-            "Argo CD does not manage a Deployment named web in this Application. Its OutOfSync resources are Deployment web/api.",
+            "Argo CD does not manage a Deployment named web in argocd/shop. Its OutOfSync resources are Deployment web/api.",
         );
     });
 });
@@ -312,5 +334,62 @@ describe("runBuiltInTool", () => {
     it("passes an Argo CD failure on as an error", async () => {
         argocd({ "/resource-tree": () => json({ error: "permission denied" }, 403) });
         await assert.rejects(runBuiltInTool("get_resource", { kind: "Service", name: "api" }, ctx), /Resource tree API returned 403/);
+    });
+});
+
+describe("the /assistant page", () => {
+    const shop = { ...app, status: { history: [], operationState: { phase: "Succeeded" } } };
+
+    it("reads the Application a call names, fetching it once", async () => {
+        const urls = argocd({ "/applications/shop": () => json(shop) });
+        const out = JSON.parse(await runBuiltInTool("get_change_history", { application: "argocd/shop" }, anyCtx));
+        assert.equal(out.lastOperation.phase, "Succeeded");
+        assert.equal(urls.length, 1);
+        assert.equal(urls[0].pathname, "/api/v1/applications/shop");
+        assert.equal(urls[0].searchParams.get("appNamespace"), "argocd");
+    });
+
+    it("never reads the Application that only routes the proxy", async () => {
+        const urls = argocd({ "/resource-tree": () => json(tree), "/applications/shop": () => json(shop) });
+        await runBuiltInTool("get_logs", { application: "shop", name: "api-config" }, anyCtx);
+        assert.ok(urls.every((u) => !u.pathname.includes("router")));
+        assert.equal(urls[1].pathname, "/api/v1/applications/shop/resource-tree");
+    });
+
+    it("asks for the Application before calling Argo CD", async () => {
+        const urls = argocd({});
+        assert.equal(
+            await runBuiltInTool("get_resource", { kind: "Service", name: "api" }, anyCtx),
+            "Not run: application is required. Call list_applications for the names.",
+        );
+        assert.equal(urls.length, 0);
+    });
+
+    it("points the model at list_applications for a name Argo CD refuses", async () => {
+        argocd({ "/applications/nope": () => json({ message: "permission denied" }, 403) });
+        assert.equal(
+            await runBuiltInTool("get_resource_diff", { application: "nope", kind: "Deployment", name: "api" }, anyCtx),
+            "The user cannot read an Argo CD Application named nope, or it does not exist. Call list_applications for the names.",
+        );
+    });
+
+    it("lists the Applications that need attention first", async () => {
+        const urls = argocd({
+            "/api/v1/applications": () => json({
+                items: [
+                    { metadata: { name: "web", namespace: "argocd" }, spec: { project: "default" }, status: { sync: { status: "Synced" }, health: { status: "Healthy" } } },
+                    { metadata: { name: "api", namespace: "argocd" }, spec: { project: "team" }, status: { sync: { status: "OutOfSync" }, health: { status: "Degraded" } } },
+                ],
+            }),
+        });
+        assert.equal(
+            await runBuiltInTool("list_applications", {}, anyCtx),
+            "2 Applications, 1 of them OutOfSync or not Healthy, listed first:\n- argocd/api (project team): OutOfSync, Degraded\n- argocd/web (project default): Synced, Healthy",
+        );
+        assert.match(urls[0].searchParams.get("fields") ?? "", /items\.status\.sync\.status,items\.status\.health$/);
+    });
+
+    it("offers list_applications only where no Application is open", async () => {
+        await assert.rejects(runBuiltInTool("list_applications", {}, ctx), /list_applications is not a built-in tool/);
     });
 });
