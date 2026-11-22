@@ -4,6 +4,8 @@ An Argo CD UI extension that adds an **Assistant** tab to the resource panel. As
 
 It works with any backend that speaks the OpenAI-compatible chat completions API, such as Ollama, [vLLM](https://github.com/vllm-project/vllm), OpenAI, Azure OpenAI, DeepSeek or Anthropic's [OpenAI-compatible endpoint](https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk). Requests go through Argo CD's [proxy extension](https://argo-cd.readthedocs.io/en/stable/developer-guide/extensions/proxy-extensions/), which keeps the API key on the server.
 
+[Questions for the Assistant](docs/assistant.md) lists what users can ask, with examples.
+
 ## Installation
 
 [Deployment](docs/deployment.md) lists the prerequisites and links to an install page for the Argo CD Operator, the Helm chart and raw manifests. A backend that serves one model works without further settings. [Settings extension](docs/deployment/settings.md) covers the model, the prompt and MCP servers.

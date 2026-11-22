@@ -13,6 +13,7 @@ The Argo CD AI Assistant adds an **Assistant** tab to the resource panel in Argo
 
 ## Where to start
 
+- [Questions for the Assistant](assistant.md) for what users can ask, in the resource tab and on the Assistant page.
 - [Deployment](deployment.md) for prerequisites, install methods and release artefacts.
 - [Settings extension](deployment/settings.md) for the model, prompt and MCP servers.
 - [Proxy and backend](deployment/proxy.md) for backends, API keys, timeouts and RBAC.
