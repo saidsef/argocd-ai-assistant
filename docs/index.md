@@ -8,7 +8,8 @@ The Argo CD AI Assistant adds an **Assistant** tab to the resource panel in Argo
 - Any backend with an OpenAI-compatible chat completions API works, such as Ollama, vLLM, OpenAI, Azure OpenAI or DeepSeek. A backend that serves one model does not need any settings.
 - Requests go through Argo CD's proxy extension, which keeps the API key on the server.
 - Replies stream as the model writes them, in Argo CD's light or dark theme.
-- MCP servers can give the model tools, which a question uses only when it names the server.
+- Built-in tools let the model read other resources, logs, recent deployments and drift in the same Application, with the user's own Argo CD permissions.
+- MCP servers can give the model more tools, which a question uses only when it names the server.
 
 ## Where to start
 

@@ -35,7 +35,7 @@ export function getGroup(apiVersion: string): string {
  * `<timestamp> <content>` per line. Each raw entry also carries a second timestamp and two stream
  * flags, which add tokens without adding information.
  */
-export function summariseLogs(entries: LogEntry[], container?: string, previous = false): string {
+export function summariseLogs(entries: LogEntry[], container?: string, previous = false, max: number = MAX_LOG_CHARS): string {
     const all = Array.isArray(entries) ? entries : [];
     // The stream ends with an empty sentinel entry, which is protocol rather than a log line.
     const lines = all.filter((e) => (e?.content ?? "").length > 0);
@@ -55,18 +55,30 @@ export function summariseLogs(entries: LogEntry[], container?: string, previous 
 
     // Keep the tail: when a log is too long to attach whole, the recent lines are the ones that
     // explain the failure.
-    return `${header}\n${capText(rows.join("\n"), MAX_LOG_CHARS, "container log", "end")}`;
+    return `${header}\n${capText(rows.join("\n"), max, "container log", "end")}`;
 }
 
-export const getLogs = async (application: any, resource: any, container: string, count: number, signal?: AbortSignal, previous = false): Promise<LogEntry[]> => {
+/**
+ * Lines read from each pod when a filter is set. Argo CD tails each pod first and filters after, so
+ * a search over only `count` lines would miss most matches.
+ */
+export const FILTER_WINDOW_LINES = 1000;
+
+/**
+ * The newest `count` log lines of a Pod, or of every pod of a workload. An empty `container` lets
+ * Kubernetes pick the only container of a single-container pod. `filter` keeps the lines that
+ * contain it, ignoring case.
+ */
+export const getLogs = async (application: any, resource: any, container: string, count: number, signal?: AbortSignal, previous = false, filter?: string): Promise<LogEntry[]> => {
     const params = new URLSearchParams({
         appNamespace: application?.metadata?.namespace ?? "",
         namespace: resource?.metadata?.namespace ?? "",
-        container: container,
-        tailLines: String(count),
+        tailLines: String(filter ? Math.max(count, FILTER_WINDOW_LINES) : count),
         follow: "false",
         sinceSeconds: "0"
     });
+    if (container) params.set("container", container);
+    if (filter) params.set("filter", filter);
     // Argo CD passes this to Kubernetes for every pod. A pod with no previous instance answers with
     // a "previous terminated container ... not found" line, not an error status.
     if (previous) params.append("previous", "true");

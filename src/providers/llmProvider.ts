@@ -2,6 +2,7 @@ import { AttachmentType, ChatMessage, ChatToolCall, ChatTurn, McpServerConfig, M
 import { budgetHistory, capText, DATA_RULE, dataBlock, MAX_HISTORY_TURN_CHARS, MAX_TOOL_RESULT_CHARS } from "../util/context";
 import { readLines, sseData } from "../util/stream";
 import { argocdHeaders, bearer, canRouteToProxy, containsWord, errorMessage, mcpConfigured, parseMcpServers } from "../util/util";
+import { BUILT_IN_TOOLS, isBuiltIn, isBuiltInName, runBuiltInTool } from "./builtInTools";
 import { McpClient, McpTool } from "./mcpClient";
 import { clean, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, noToolFallback, noToolNote, resolveHandles, resultsNote, serverHandles, toolErrorNote, toolFailureNotice, toolPrompt, toolResult } from "./mcpPrompt";
 import { ChatTools, createToolCallAccumulator, parseArguments, toChatTools, toolCallingSetting, toolsRejected, toTextMessages } from "./nativeTools";
@@ -263,18 +264,24 @@ export class LlmProvider implements QueryProvider {
             if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         }
 
-        // Tools only for servers the user named, so a normal question never triggers a call.
+        // The resource view offers the built-in tools on every question. See docs/architecture.md#built-in-tools.
+        const builtIns = context.builtInTools && context.application?.metadata?.name ? BUILT_IN_TOOLS : [];
+
+        // MCP tools only for servers the user named, so a normal question never calls a third party.
         const serverStatus = mcpConfigured(mcpServers) ? this.getMcpStatus(mcpServers) : [];
         const previousPrompt = lastUserTurn(history);
         const addressedSet = this.addressedServers(prompt, previousPrompt, serverStatus);
+        // A built-in tool keeps its name, because the text protocol finds a tool by name alone.
         const addressed = (mcpTools && mcpTools.length)
-            ? mcpTools.filter(t => addressedSet.has(t.serverIndex))
+            ? mcpTools.filter(t => addressedSet.has(t.serverIndex) && !isBuiltInName(t.name))
             : [];
-        const toolsForModel = addressed.length ? addressed : undefined;
+        const offered = [...builtIns, ...addressed];
+        const toolsForModel = offered.length ? offered : undefined;
+        const callableServers = new Set(addressed.map(t => t.serverIndex));
 
         // Every configured server is listed whether or not it was named, so MCP questions have an answer.
         const systemFor = (mode: ToolCallingMode) => this.systemText(context, toolsForModel, serverStatus.length
-            ? mcpRoster(serverStatus, this.mcpTools ?? [], toolsForModel ? addressedSet : new Set<number>(), mode)
+            ? mcpRoster(serverStatus, this.mcpTools ?? [], callableServers, mode, builtIns.length > 0)
             : "", serverStatus, mode);
 
         // Native calls by default. A backend that rejected `tools` this session goes straight to text.
@@ -321,20 +328,20 @@ export class LlmProvider implements QueryProvider {
 
         // One native call, answered with the text its tool message carries.
         const runNativeCall = async (name: string, tool: McpTool | undefined, args: ReturnType<typeof parseArguments>, resultCap: number): Promise<string> => {
-            if (!tool || !this.mcpClient) {
-                console.warn(`MCP tool '${name}' was requested but not available; answering without it.`);
+            if (!tool || (!isBuiltIn(tool) && !this.mcpClient)) {
+                console.warn(`Tool '${name}' was requested but not available; answering without it.`);
                 noticeFailure(name, "it is not available");
                 return `The tool ${name} is not available and returned nothing.`;
             }
             if (args.error) return `The tool ${name} was not run: ${args.error}.`;
             onStatus?.(`Running ${name}…`);
             try {
-                const output = capText(await this.mcpClient.callTool(tool.serverIndex, tool.name, args.value, signal), resultCap, `the ${name} result`);
+                const output = capText(await this.callTool(tool, args.value, context, resultCap, signal), resultCap, `the ${name} result`);
                 return output ? toolResult(name, output) : "";
             } catch (err) {
                 if (err instanceof Error && err.name === "AbortError") throw err;
                 const errMsg = errorMessage(err);
-                console.warn(`MCP tool '${name}' failed, answering without it: ${errMsg}`);
+                console.warn(`Tool '${name}' failed, answering without it: ${errMsg}`);
                 noticeFailure(name, errMsg);
                 return toolErrorNote(name, errMsg);
             }
@@ -431,21 +438,21 @@ export class LlmProvider implements QueryProvider {
             for (const call of runnable) {
                 const tool = toolsForModel?.find(t => t.name === call.name);
                 toolsRun++;
-                if (tool && this.mcpClient) {
+                if (tool && (isBuiltIn(tool) || this.mcpClient)) {
                     onStatus?.(`Running ${call.name}…`);
                     try {
-                        const output = await this.mcpClient.callTool(tool.serverIndex, call.name, call.arguments, signal);
+                        const output = await this.callTool(tool, call.arguments, context, resultCap, signal);
                         notes.push(toolResult(call.name, capText(output, resultCap, `the ${call.name} result`)));
                     } catch (err) {
                         // Stop mid-tool is a cancellation, not a tool failure, so let it unwind.
                         if (err instanceof Error && err.name === "AbortError") throw err;
                         const errMsg = errorMessage(err);
-                        console.warn(`MCP tool '${call.name}' failed, answering without it: ${errMsg}`);
+                        console.warn(`Tool '${call.name}' failed, answering without it: ${errMsg}`);
                         noticeFailure(call.name, errMsg);
                         notes.push(toolErrorNote(call.name, errMsg));
                     }
                 } else {
-                    console.warn(`MCP tool '${call.name}' was requested but not available; answering without it.`);
+                    console.warn(`Tool '${call.name}' was requested but not available; answering without it.`);
                     noticeFailure(call.name, "it is not available");
                     notes.push(`The tool ${call.name} is not available and returned nothing.`);
                 }
@@ -468,6 +475,15 @@ export class LlmProvider implements QueryProvider {
         }
         // Unreachable: the forced tool-free final iteration always returns above.
         return { success: true };
+    }
+
+    /** Runs one offered tool: a built-in one in the browser, any other on its MCP server. */
+    private callTool(tool: McpTool, args: any, context: QueryContext, resultCap: number, signal?: AbortSignal): Promise<string> {
+        if (isBuiltIn(tool)) {
+            return runBuiltInTool(tool.name, args, { application: context.application, signal, maxChars: resultCap });
+        }
+        if (!this.mcpClient) return Promise.reject(new Error("it is not available"));
+        return this.mcpClient.callTool(tool.serverIndex, tool.name, args, signal);
     }
 
     // GET /v1/models, cached per base URL. Never throws, and logs the reason to the console.
