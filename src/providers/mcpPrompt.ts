@@ -1,9 +1,10 @@
 // Everything MCP adds to the system prompt. A roster lists every configured server, which the model
-// can describe but not call. A tool block lists the tools of each server the user named, which it
-// can call. See docs/architecture.md#mcp-servers.
+// can describe but not call. A tool block lists the built-in tools and the tools of each server the
+// user named, which it can call. See docs/architecture.md#mcp-servers.
 
 import { McpServerStatus, mcpState, ToolCallingMode } from "../model/provider";
 import { capText, DATA_RULE, dataBlock, MAX_MCP_ROSTER_CHARS } from "../util/context";
+import { BUILT_IN_SERVER } from "./builtInTools";
 import { McpTool } from "./mcpClient";
 import { exampleArgs } from "./toolCall";
 
@@ -165,7 +166,7 @@ export function serverHandles(status: Pick<McpServerStatus, "handle" | "name" | 
  * are left out here, because the tool block repeats them with schemas. Two lists of the same names
  * invite the model to trust the wrong one.
  */
-export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addressed: Set<number>, mode: ToolCallingMode = "text"): string {
+export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addressed: Set<number>, mode: ToolCallingMode = "text", builtIns = false): string {
     if (servers.length === 0) return "";
 
     const lines = servers.map((s, i) => {
@@ -207,11 +208,11 @@ export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addresse
     // that quotes a server back to the user quotes the name they can actually type.
     const header = anyAddressed
         ? "\n\nMCP servers configured for this conversation. Each is addressed by the name at the start of its line:\n"
-        : "\n\nMCP servers configured for this conversation, each addressed by the name at the start of its line (reference only - no tool can be called in this reply):\n";
+        : `\n\nMCP servers configured for this conversation, each addressed by the name at the start of its line (reference only - ${builtIns ? "their tools cannot" : "no tool can"} be called in this reply):\n`;
 
     // Only the list is capped, because it grows with each deployment, and the guidance after it
     // must survive. See #132.
-    return capText(header + lines.join("\n"), MAX_MCP_ROSTER_CHARS, "the MCP server list") + "\n" + guidance(anyAddressed, mode);
+    return capText(header + lines.join("\n"), MAX_MCP_ROSTER_CHARS, "the MCP server list") + "\n" + guidance(anyAddressed, mode, builtIns);
 }
 
 /**
@@ -221,16 +222,27 @@ export function mcpRoster(servers: McpServerStatus[], tools: McpTool[], addresse
  */
 const COMPLETE_SET = `This list is complete: when the user asks about MCP, answer from it in prose - which servers exist, their state and which tools they expose - and never say you have no information about MCP. When they ask anything else, do not recite it: no preamble, aside or closing note about which servers are attached or how many tools they have.`;
 
-function guidance(anyAddressed: boolean, mode: ToolCallingMode): string {
+/** Only an MCP server's tools need the server's name in the message, so the rules say whose tools are attached. */
+function guidance(anyAddressed: boolean, mode: ToolCallingMode, builtIns: boolean): string {
+    const owners = builtIns
+        ? "are the built-in Argo CD tools and those of the server(s) named in the conversation"
+        : "belong to the server(s) named in the conversation";
     if (anyAddressed && mode === "native") {
         return `
-Only the functions attached to this request can be called in this reply. They belong to the server(s) named in the conversation.
+Only the functions attached to this request can be called in this reply. They ${owners}.
 ${COMPLETE_SET}`;
     }
     if (anyAddressed) {
         return `
-Only the tools under "Available tools:" below can be called in this reply; they belong to the server(s) named in the conversation. Naming any other tool in a tool block will not run it, and the user will see the raw text instead of an answer.
+Only the tools under "Available tools:" below can be called in this reply; they ${owners}. Naming any other tool in a tool block will not run it, and the user will see the raw text instead of an answer.
 ${COMPLETE_SET}`;
+    }
+    if (builtIns) {
+        return `
+Only the built-in Argo CD tools can be called in this reply. An MCP server's tools need the server's name in the user's message.
+- ${COMPLETE_SET}
+- Refer to an MCP tool only by the name shown. Do not state what it does, what arguments it takes, or what it returns - that is not given here.
+- If answering needs an MCP tool, ask the user to include that server's name - exactly as written at the start of its line above - in their next message, then answer as far as you can without it.`;
     }
     // The header already says "reference only - no tool can be called in this reply", so this opens
     // with the instruction rather than repeating the state.
@@ -270,7 +282,9 @@ export function toolPrompt(tools: McpTool[], serverName: (index: number) => stri
     for (const index of [...new Set(tools.map(t => t.serverIndex))]) {
         const group = tools.filter(t => t.serverIndex === index);
         if (group.length === 0) continue;
-        text += `\nFrom the ${clean(serverName(index), MAX_SERVER_NAME_CHARS)} server:\n`;
+        text += index === BUILT_IN_SERVER
+            ? "\nBuilt-in Argo CD tools, which read the Application the user has open:\n"
+            : `\nFrom the ${clean(serverName(index), MAX_SERVER_NAME_CHARS)} server:\n`;
         for (const tool of group) {
             text += `- ${tool.name}: ${tool.description || "No description"}\n`;
             if (tool.inputSchema) {

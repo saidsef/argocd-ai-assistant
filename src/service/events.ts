@@ -2,6 +2,7 @@
 // happened, how often, over what window, to which container and who reported it.
 
 import { capText } from "../util/context";
+import { argocdFetch } from "../util/util";
 
 export const MAX_EVENTS = 20;
 
@@ -80,4 +81,22 @@ export function summariseEvents(items: any[], max: number = MAX_EVENTS): EventsS
     });
 
     return { total: all.length, items: summary };
+}
+
+/** The events of one resource in the Application's tree, identified by its UID, namespace and name. */
+export async function getEvents(
+    application: any,
+    ref: { uid?: string; namespace?: string; name: string },
+    what: string,
+    signal?: AbortSignal
+): Promise<any[]> {
+    const params = new URLSearchParams();
+    if (application?.metadata?.namespace) params.set("appNamespace", application.metadata.namespace);
+    params.set("resourceUID", ref.uid ?? "");
+    params.set("resourceNamespace", ref.namespace ?? "");
+    params.set("resourceName", ref.name);
+    const url = `/api/v1/applications/${encodeURIComponent(application?.metadata?.name ?? "")}/events?${params.toString()}`;
+    const response = await argocdFetch(url, application, what, { signal });
+    // Argo CD returns `items: null` when there are no events.
+    return (await response.json())?.items ?? [];
 }

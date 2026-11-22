@@ -54,6 +54,11 @@ export type QueryContext = {
     settings: AssistantSettings;
     /** User-provided Argo CD token (via the token flow), sent as a Bearer header to the MCP servers that set `token`; undefined when unset. */
     mcpToken?: string;
+    /**
+     * Offers the built-in Argo CD tools. Only the resource view sets it, because only there is
+     * `application` the Application the user has open.
+     */
+    builtInTools?: boolean;
 }
 
 export type QueryError = {

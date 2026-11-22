@@ -19,7 +19,7 @@ globalThis.argocdAssistantSettings = {
 | `data.baseURL` | the Argo CD proxy at `/extensions/assistant` | An OpenAI-compatible base URL, with or without `/v1`. When set, the browser calls it directly. It must then be reachable from the browser and accept requests from the Argo CD origin. |
 | `data.apiKey` | none | Sent from the browser as `Authorization: Bearer <key>`, where every user can read it. Use [API token injection](proxy.md#api-token-injection) instead. |
 | `data.mcpServers` | none | MCP servers to offer tools from, described in [MCP servers](#mcp-servers). |
-| `data.toolCalling` | `auto` | How MCP tools reach the model. `auto` sends them as `tools` and switches to text for a backend that rejects them, `native` never switches, and `text` always describes them in the system message. Any other value counts as `auto`. |
+| `data.toolCalling` | `auto` | How built-in and MCP tools reach the model. `auto` sends them as `tools` and switches to text for a backend that rejects them, `native` never switches, and `text` always describes them in the system message. Any other value counts as `auto`. |
 | `maximumLogLines` | 250 | The most log lines a user can attach, up to 5000. A value that is not a positive whole number falls back to the default. |
 | `systemPrompt` | the built-in prompt | Replaces the built-in prompt. A blank value keeps the default. |
 | `provider` | ignored | Accepted for compatibility with older ConfigMaps. |

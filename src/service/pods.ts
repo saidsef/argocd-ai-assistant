@@ -4,7 +4,7 @@
 
 import { capText } from "../util/context";
 import { argocdFetch, Kinds } from "../util/util";
-import { summariseEvents } from "./events";
+import { getEvents, summariseEvents } from "./events";
 
 /** Pods listed by name. The rest are counted, which makes a large workload cost the same as a small one. */
 export const MAX_PODS = 20;
@@ -124,13 +124,5 @@ export async function getResourceTree(application: any, signal?: AbortSignal): P
 }
 
 export async function getPodEvents(application: any, pod: PodState, signal?: AbortSignal): Promise<any[]> {
-    const params = new URLSearchParams();
-    if (application?.metadata?.namespace) params.set("appNamespace", application.metadata.namespace);
-    params.set("resourceUID", pod.uid ?? "");
-    params.set("resourceNamespace", pod.namespace ?? "");
-    params.set("resourceName", pod.name);
-    const url = `/api/v1/applications/${encodeURIComponent(application?.metadata?.name ?? "")}/events?${params.toString()}`;
-    const response = await argocdFetch(url, application, "Pod events", { signal });
-    // Argo CD returns `items: null` when there are no events.
-    return (await response.json())?.items ?? [];
+    return getEvents(application, pod, "Pod events", signal);
 }

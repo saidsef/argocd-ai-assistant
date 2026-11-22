@@ -139,12 +139,26 @@ export function summariseDrift(item: any, kind?: string, max: number = MAX_DRIFT
 
 /** The managed-resources entry for one resource, which holds its target and live state. */
 export async function getManagedResource(application: any, resource: any, signal?: AbortSignal): Promise<any> {
+    return getManagedResourceByRef(application, {
+        kind: resource?.kind ?? "",
+        group: getGroup(resource?.apiVersion ?? ""),
+        name: resource?.metadata?.name ?? "",
+        namespace: resource?.metadata?.namespace ?? "",
+    }, signal);
+}
+
+/** As getManagedResource, for a resource known by its kind, group, name and namespace. */
+export async function getManagedResourceByRef(
+    application: any,
+    ref: { kind: string; group: string; name: string; namespace: string },
+    signal?: AbortSignal
+): Promise<any> {
     const params = new URLSearchParams();
     if (application?.metadata?.namespace) params.set("appNamespace", application.metadata.namespace);
-    params.set("kind", resource?.kind ?? "");
-    params.set("group", getGroup(resource?.apiVersion ?? ""));
-    params.set("name", resource?.metadata?.name ?? "");
-    params.set("namespace", resource?.metadata?.namespace ?? "");
+    params.set("kind", ref.kind);
+    params.set("group", ref.group);
+    params.set("name", ref.name);
+    params.set("namespace", ref.namespace);
     const url = `/api/v1/applications/${encodeURIComponent(application?.metadata?.name ?? "")}/managed-resources?${params.toString()}`;
     const response = await argocdFetch(url, application, "Managed resources", { signal });
     const items = (await response.json())?.items;

@@ -147,18 +147,10 @@ export function summariseApplication(app: any): ApplicationSummary | null {
  * and never triggers a reconcile. Any failure falls back to the Application already in props.
  */
 export async function getApplicationSummary(application: any, signal?: AbortSignal): Promise<ApplicationSummary | null> {
-    const name = application?.metadata?.name;
-    const namespace = application?.metadata?.namespace;
-    if (!name) return summariseApplication(application);
+    if (!application?.metadata?.name) return summariseApplication(application);
 
     try {
-        const params = new URLSearchParams();
-        if (namespace) params.set("appNamespace", namespace);
-        const qs = params.toString();
-        const url = `/api/v1/applications/${encodeURIComponent(name)}${qs ? `?${qs}` : ""}`;
-
-        const response = await argocdFetch(url, application, "Application", { signal });
-        const fresh = await response.json();
+        const fresh = await getApplication(application, signal);
         return summariseApplication(fresh) ?? summariseApplication(application);
     } catch (err) {
         // A caller cancel, from a resource switch or unmount, is not a failure worth logging.
@@ -167,4 +159,14 @@ export async function getApplicationSummary(application: any, signal?: AbortSign
         }
         return summariseApplication(application);
     }
+}
+
+/** The current Application object from the Argo CD API. It throws when the request fails. */
+export async function getApplication(application: any, signal?: AbortSignal): Promise<any> {
+    const params = new URLSearchParams();
+    if (application?.metadata?.namespace) params.set("appNamespace", application.metadata.namespace);
+    const qs = params.toString();
+    const url = `/api/v1/applications/${encodeURIComponent(application?.metadata?.name ?? "")}${qs ? `?${qs}` : ""}`;
+    const response = await argocdFetch(url, application, "Application", { signal });
+    return response.json();
 }
