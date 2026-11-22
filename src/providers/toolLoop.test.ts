@@ -225,7 +225,7 @@ describe("built-in tools", () => {
     function resourceContext(baseURL: string, options: { toolCalling?: string; mcp?: boolean } = {}): QueryContext {
         return {
             application: APP,
-            builtInTools: true,
+            builtInTools: "open-application",
             attachments: [],
             settings: { model: "test-model", data: { baseURL, mcpServers: options.mcp ? [MCP_URL] : [], toolCalling: options.toolCalling } },
         };
@@ -242,6 +242,7 @@ describe("built-in tools", () => {
         await ask(resourceContext(freshBaseUrl()), "is the pod healthy?");
         assert.deepEqual(wire.requests[0].tools.map((t: any) => t.function.name), BUILT_INS);
         assert.match(wire.requests[0].tools[1].function.description, /Call it when the answer depends on a resource the user did not open/);
+        assert.match(wire.requests[0].messages[0].content, /You have 5 built-in Argo CD tools: get_current_datetime, get_resource, get_logs, get_change_history and get_resource_diff\. When the user asks which tools you have, list every one of them, even past the word limit: these 5 built-in tools by name, then each MCP server listed above with all of its tool names\./);
     });
 
     it("answers a call in the browser through the Argo CD API", async () => {
@@ -301,8 +302,25 @@ describe("built-in tools", () => {
 
         assert.equal(streamed, "It restarted two hours ago.");
         assert.equal(wire.requests[0].tools, undefined);
-        assert.match(wire.requests[0].messages[0].content, /Built-in Argo CD tools, which read the Application the user has open:\n- get_current_datetime: /);
+        assert.match(wire.requests[0].messages[0].content, /Built-in Argo CD tools:\n- get_current_datetime: /);
         assert.match(wire.requests[1].messages.at(-1).content, /^<tool_result name="get_current_datetime">\nCurrent time: \d{4}-\d{2}-\d{2}T/);
+    });
+
+    it("are offered on the /assistant page, where each call names its Application", async () => {
+        const wire = backend([
+            calls([{ id: "call_1", name: "list_applications", args: "{}" }]),
+            text("One Application is degraded."),
+        ], {
+            argocd: {
+                "/api/v1/applications": () => json({ items: [{ metadata: { name: "shop", namespace: "argocd" }, spec: { project: "default" }, status: { sync: { status: "Synced" }, health: { status: "Degraded" } } }] }),
+            },
+        });
+        const { streamed } = await ask({ ...resourceContext(freshBaseUrl(), { mcp: true }), builtInTools: "any-application" }, "which apps are degraded?");
+
+        assert.equal(streamed, "One Application is degraded.");
+        assert.deepEqual(wire.requests[0].tools.map((t: any) => t.function.name), ["get_current_datetime", "list_applications", ...BUILT_INS.slice(1)]);
+        assert.match(wire.requests[0].messages[0].content, /You have 6 built-in Argo CD tools: get_current_datetime, list_applications, get_resource/);
+        assert.match(wire.requests[1].messages.at(-1).content, /- argocd\/shop \(project default\): Synced, Degraded/);
     });
 
     it("are not offered without the open Application", async () => {

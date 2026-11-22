@@ -2,7 +2,7 @@ import { AttachmentType, ChatMessage, ChatToolCall, ChatTurn, McpServerConfig, M
 import { budgetHistory, capText, DATA_RULE, dataBlock, MAX_HISTORY_TURN_CHARS, MAX_TOOL_RESULT_CHARS } from "../util/context";
 import { readLines, sseData } from "../util/stream";
 import { argocdHeaders, bearer, canRouteToProxy, containsWord, errorMessage, mcpConfigured, parseMcpServers } from "../util/util";
-import { BUILT_IN_TOOLS, isBuiltIn, isBuiltInName, runBuiltInTool } from "./builtInTools";
+import { builtInTools, isBuiltIn, isBuiltInName, runBuiltInTool } from "./builtInTools";
 import { McpClient, McpTool } from "./mcpClient";
 import { clean, hostnameOf, MAX_SERVER_NAME_CHARS, mcpRoster, noToolFallback, noToolNote, resolveHandles, resultsNote, serverHandles, toolErrorNote, toolFailureNotice, toolPrompt, toolResult } from "./mcpPrompt";
 import { ChatTools, createToolCallAccumulator, parseArguments, toChatTools, toolCallingSetting, toolsRejected, toTextMessages } from "./nativeTools";
@@ -264,8 +264,8 @@ export class LlmProvider implements QueryProvider {
             if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
         }
 
-        // The resource view offers the built-in tools on every question. See docs/architecture.md#built-in-tools.
-        const builtIns = context.builtInTools && context.application?.metadata?.name ? BUILT_IN_TOOLS : [];
+        // Both pages offer the built-in tools on every question. See docs/architecture.md#built-in-tools.
+        const builtIns = builtInTools(context);
 
         // MCP tools only for servers the user named, so a normal question never calls a third party.
         const serverStatus = mcpConfigured(mcpServers) ? this.getMcpStatus(mcpServers) : [];
@@ -480,7 +480,7 @@ export class LlmProvider implements QueryProvider {
     /** Runs one offered tool: a built-in one in the browser, any other on its MCP server. */
     private callTool(tool: McpTool, args: any, context: QueryContext, resultCap: number, signal?: AbortSignal): Promise<string> {
         if (isBuiltIn(tool)) {
-            return runBuiltInTool(tool.name, args, { application: context.application, signal, maxChars: resultCap });
+            return runBuiltInTool(tool.name, args, { application: context.application, scope: context.builtInTools!, signal, maxChars: resultCap });
         }
         if (!this.mcpClient) return Promise.reject(new Error("it is not available"));
         return this.mcpClient.callTool(tool.serverIndex, tool.name, args, signal);

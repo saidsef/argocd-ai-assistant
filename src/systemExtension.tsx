@@ -33,7 +33,9 @@ export const SystemAssistantExtension = (_props: any) => {
         application: routingApp,
         attachments: [],
         settings: globalThis.argocdAssistantSettings ?? settings,
-        mcpToken: storageRef.current?.mcpToken ?? undefined
+        mcpToken: storageRef.current?.mcpToken ?? undefined,
+        // This page has no open Application, so each built-in tool names the one it reads.
+        builtInTools: "any-application" as const
     }), [settings, routingApp]);
 
     // Memoised on the stable getMcpStatus identity - see the same note in resourceExtension.tsx.
